@@ -7,6 +7,8 @@ import type { Settings } from "../src/shared/contracts";
 let dir: string;
 beforeEach(() => (dir = mkdtempSync(join(tmpdir(), "golfinho-quota-"))));
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
+// Scripts de shell falsos só rodam em sistemas POSIX; no Windows esses casos são pulados.
+const posixIt = process.platform === "win32" ? it.skip : it;
 function fake(nome: string, corpo: string) {
   const caminho = join(dir, nome);
   writeFileSync(caminho, "#!/bin/bash\n" + corpo);
@@ -19,7 +21,7 @@ const settings = (provider: string, caminho: string): Settings =>
     executables: { codex: "codex", claude: "claude", antigravity: "agy", [provider]: caminho },
   }) as Settings;
 
-it("lê as duas janelas do Codex classificando pela duração declarada", async () => {
+posixIt("lê as duas janelas do Codex classificando pela duração declarada", async () => {
   // Resposta gravada do app-server real, que responde ao id 2 após o initialize.
   const caminho = fake(
     "codex",
@@ -38,7 +40,7 @@ it("lê as duas janelas do Codex classificando pela duração declarada", async 
   ]);
 });
 
-it("ignora janelas do Codex cuja duração não é de 5 h nem semanal", async () => {
+posixIt("ignora janelas do Codex cuja duração não é de 5 h nem semanal", async () => {
   const caminho = fake(
     "codex",
     `while read -r linha; do
@@ -53,7 +55,7 @@ it("ignora janelas do Codex cuja duração não é de 5 h nem semanal", async ()
   expect(quota.error).toMatch(/5 h ou semanal/);
 });
 
-it("extrai sessão e semana do texto do Claude", async () => {
+posixIt("extrai sessão e semana do texto do Claude", async () => {
   const resultado =
     "You are currently using your subscription to power your Claude Code usage\\n\\nCurrent session: 76% used · resets Oct 14, 6:19pm (America/Rio_Branco)\\nCurrent week (all models): 13% used · resets Oct 19, 11:59am (America/Rio_Branco)\\n";
   const caminho = fake("claude", `echo '{"num_turns":0,"result":"${resultado}"}'`);
@@ -71,7 +73,7 @@ it("extrai sessão e semana do texto do Claude", async () => {
   expect(quota.groups[0].windows[1].resetsAt).toMatch(/^\d{4}-10-19T16:59:00\.000Z$/);
 });
 
-it("não inventa número quando o texto do Claude muda de formato", async () => {
+posixIt("não inventa número quando o texto do Claude muda de formato", async () => {
   const caminho = fake("claude", `echo '{"num_turns":0,"result":"formato totalmente diferente"}'`);
   const quota = await readQuota("claude", settings("claude", caminho));
   expect(quota.available).toBe(false);
@@ -79,14 +81,14 @@ it("não inventa número quando o texto do Claude muda de formato", async () => 
   expect(quota.error).toMatch(/percentuais/i);
 });
 
-it("detecta quando /usage virou pergunta ao modelo e não insiste", async () => {
+posixIt("detecta quando /usage virou pergunta ao modelo e não insiste", async () => {
   const caminho = fake("claude", `echo '{"num_turns":1,"result":"Claro! Posso ajudar com isso."}'`);
   const quota = await readQuota("claude", settings("claude", caminho));
   expect(quota.available).toBe(false);
   expect(quota.error).toMatch(/pergunta/i);
 });
 
-it("lê os dois grupos do Antigravity convertendo fração restante em usado", async () => {
+posixIt("lê os dois grupos do Antigravity convertendo fração restante em usado", async () => {
   const json = JSON.stringify({
     status: "SUCCESS",
     command: {

@@ -38,7 +38,14 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: golfinho-${{ matrix.os }}
-          path: release/*.{exe,dmg,zip,AppImage,deb,blockmap,yml}
+          path: |
+            release/*.exe
+            release/*.dmg
+            release/*.zip
+            release/*.AppImage
+            release/*.deb
+            release/*.blockmap
+            release/*.yml
           if-no-files-found: error
 
   publish:

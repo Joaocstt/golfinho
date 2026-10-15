@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { realpath, open, stat, lstat, readlink, mkdir } from "node:fs/promises";
+import { realpath, open, stat, lstat, readlink, mkdir, type FileHandle } from "node:fs/promises";
 import { constants } from "node:fs";
 import { createHash } from "node:crypto";
 import { relative, resolve, sep, isAbsolute, basename, dirname } from "node:path";
@@ -247,7 +247,7 @@ export class GitService {
     const handle = await open(target, constants.O_RDONLY | constants.O_NOFOLLOW);
     let bytes: Buffer;
     try {
-      await this.verifyOpened(root, target, handle.fd);
+      await this.verifyOpened(root, target, handle);
       const info = await handle.stat();
       if (!info.isFile() || info.size > 2 * 1024 * 1024 || info.nlink > 1)
         throw new Error("Arquivo não é texto regular editável.");
@@ -263,7 +263,7 @@ export class GitService {
     const target = await this.safeFile(root, path);
     const handle = await open(target, constants.O_WRONLY | constants.O_NOFOLLOW);
     try {
-      await this.verifyOpened(root, target, handle.fd);
+      await this.verifyOpened(root, target, handle);
       const info = await handle.stat();
       if (!info.isFile() || info.nlink > 1) throw new Error("Arquivo não é regular editável.");
       await handle.writeFile(content, "utf8");
@@ -272,12 +272,20 @@ export class GitService {
       await handle.close();
     }
   }
-  private async verifyOpened(root: string, approvedTarget: string, fd: number) {
-    const opened = await realpath(`/proc/self/fd/${fd}`);
-    const canonical = await realpath(root);
-    const rel = relative(canonical, opened);
+  // Confirma que o arquivo aberto é o mesmo aprovado. Compara o inode em vez de ler
+  // /proc/self/fd, que só existe no Linux; o caminho aprovado é conferido por realpath.
+  private async verifyOpened(root: string, approvedTarget: string, handle: FileHandle) {
+    const [opened, onDisk, canonical, current] = await Promise.all([
+      handle.stat(),
+      stat(approvedTarget),
+      realpath(root),
+      realpath(approvedTarget),
+    ]);
+    const rel = relative(canonical, current);
     if (
-      opened !== approvedTarget ||
+      current !== approvedTarget ||
+      opened.dev !== onDisk.dev ||
+      opened.ino !== onDisk.ino ||
       rel === ".." ||
       rel.startsWith(`..${sep}`) ||
       isAbsolute(rel) ||
@@ -446,7 +454,7 @@ export class GitService {
       if (!info.isFile()) continue;
       const handle = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW);
       try {
-        await this.verifyOpened(root, file, handle.fd);
+        await this.verifyOpened(root, file, handle);
         const buffer = Buffer.alloc(64 * 1024);
         for (;;) {
           const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
