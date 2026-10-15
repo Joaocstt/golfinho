@@ -12,3 +12,25 @@ it("reads and writes explicit clipboard text and rejects oversized pastes", asyn
  await expect(service.request({action:"writeClipboard",text:"é".repeat(2*1024*1024)})).rejects.toThrow(/2 MiB/);
  store.close();
 });
+it("cola uma imagem da área de transferência como caminho do arquivo salvo", async () => {
+  const store = new Store(":memory:");
+  const service = new Service(store, {} as GitService, {} as Coordinator, {append(){},replay(){return{data:"",nextOffset:0};},remove(){}}, ()=>{}, async()=>null, {
+    read: () => "",
+    write: () => {},
+    image: async () => Buffer.from("png"),
+    saveImage: async (png) => `/dados/clipboard/x-${png.length}.png`,
+  });
+  expect(await service.request({ action: "pasteImage" } as never)).toBe("/dados/clipboard/x-3.png");
+  store.close();
+});
+it("sem imagem na área de transferência, pasteImage não devolve caminho", async () => {
+  const store = new Store(":memory:");
+  const service = new Service(store, {} as GitService, {} as Coordinator, {append(){},replay(){return{data:"",nextOffset:0};},remove(){}}, ()=>{}, async()=>null, {
+    read: () => "",
+    write: () => {},
+    image: async () => null,
+    saveImage: async () => "nunca",
+  });
+  expect(await service.request({ action: "pasteImage" } as never)).toBeNull();
+  store.close();
+});

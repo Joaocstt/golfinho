@@ -35,6 +35,7 @@ const settings = z
   .strict();
 export const requestSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("readClipboard") }).strict(),
+  z.object({ action: z.literal("pasteImage") }).strict(),
   z.object({ action: z.literal("writeClipboard"), text: z.string().max(2*1024*1024).refine(text => Buffer.byteLength(text,"utf8") <= 2*1024*1024, "Seleção excede 2 MiB.") }).strict(),
   z.object({ action: z.literal("snapshot") }).strict(),
   z
@@ -73,9 +74,9 @@ export const requestSchema = z.discriminatedUnion("action", [
       "terminal",
       "publish",
       "finish",
-      "wait",
-      "continue",
       "activate",
+      "stashPending",
+      "retryStart",
     ] as const
   ).map((action) => z.object({ action: z.literal(action), taskId: id }).strict()),
   z.object({ action: z.literal("input"), taskId: id, data: z.string().max(65536) }).strict(),

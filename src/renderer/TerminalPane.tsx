@@ -1,3 +1,5 @@
+import { TerminalMenu } from "./TerminalMenu";
+import { clipboardToPaste } from "./clipboardPaste";
 import React, { useEffect, useRef, useState } from "react";
 import { Terminal, type IBufferRange } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
@@ -92,6 +94,7 @@ export function TerminalPane({ taskId, active = false, provider, status, onError
   const [reading, setReading] = useState(false);
   const [hasSelection, setHasSelection] = useState(false);
   const [clipboardBusy, setClipboardBusy] = useState(false);
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   function zoom(amount: number | "reset") {
     setFontSize((size) => (amount === "reset" ? DEFAULT_FONT : clamp(size + amount)));
   }
@@ -127,11 +130,11 @@ export function TerminalPane({ taskId, active = false, provider, status, onError
     }
     setClipboardBusy(true);
     try {
-      const text = await request<string>({ action: "readClipboard" });
+      const text = await clipboardToPaste(request);
       if (terminalRef.current !== current || !ready.current) return;
       if (new TextEncoder().encode(text).length > 64 * 1024)
         throw new Error("O texto para colar excede 64 KiB.");
-      current.paste(text);
+      if (text) current.paste(text);
       current.focus();
     } catch (e) {
       error.current(e);
@@ -369,9 +372,22 @@ export function TerminalPane({ taskId, active = false, provider, status, onError
         // Clique direito cola, como no shell. O xterm não tem menu de contexto próprio.
         onContextMenu={(e) => {
           e.preventDefault();
-          void commands.current.paste();
+          setMenu({ x: e.clientX, y: e.clientY });
         }}
       />
+      {menu && (
+        <TerminalMenu
+          x={menu.x}
+          y={menu.y}
+          onClose={() => setMenu(null)}
+          items={[
+            { label: "Copiar", shortcut: "Ctrl+Shift+C", disabled: !hasSelection, onSelect: () => void commands.current.copy() },
+            { label: "Colar", shortcut: "Ctrl+Shift+V", onSelect: () => void commands.current.paste() },
+            { label: "Selecionar tudo", onSelect: () => terminalRef.current?.selectAll() },
+            { label: "Buscar", shortcut: "Ctrl+Shift+F", onSelect: () => commands.current.openSearch() },
+          ]}
+        />
+      )}
       <div className="terminal-chrome">
         {flag && (
           <span className="terminal-flag">

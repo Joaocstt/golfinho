@@ -37,6 +37,7 @@ import type {
 } from "../shared/contracts";
 import { TerminalPane, DiffPane, FileEditor, FileTree } from "./Editors";
 import { ShellPane } from "./ShellPane";
+import { AgentIcon } from "./agentIcons";
 import { SshPanel } from "./SshPanel";
 import { RemoteTree } from "./RemoteTree";
 import { RemoteViewer } from "./RemoteViewer";
@@ -458,8 +459,6 @@ export default function App() {
       | "cancel"
       | "finish"
       | "publish"
-      | "wait"
-      | "continue"
       | "activate"
       | "endSession"
       | "testActivate"
@@ -593,7 +592,7 @@ export default function App() {
                           </div>
                           <div className="branch-task-title">
                             <span>{t.title}</span>
-                            <small>{t.provider}</small>
+                            <small><AgentIcon provider={t.provider} /> {t.provider}</small>
                           </div>
                         </button>
                         <button
@@ -743,7 +742,7 @@ export default function App() {
                         navigate(() => addGeneral(agent.label, agent.provider));
                       }}
                     >
-                      {agent.label}
+                      <AgentIcon provider={agent.provider} /> {agent.label}
                     </button>
                   ))}
                 </div>
@@ -887,7 +886,7 @@ export default function App() {
                           {t.branch}
                         </small>
                       </span>
-                      <span>{t.provider}</span>
+                      <span><AgentIcon provider={t.provider} /> {t.provider}</span>
                       <span className={"status " + t.status}>{labels[t.status]}</span>
                     </button>
                   ))}
@@ -1016,7 +1015,7 @@ export default function App() {
                                 navigate(() => addSession(task.id, agent.label, agent.provider));
                               }}
                             >
-                              {agent.label}
+                              <AgentIcon provider={agent.provider} /> {agent.label}
                             </button>
                           ))}
                         </div>
@@ -1113,24 +1112,6 @@ export default function App() {
                       Encerrar e revisar
                     </button>
                   )}
-                  {task.status === "running" && (
-                    <button
-                      disabled={busy}
-                      title="Só muda o rótulo da tarefa, para você achá-la na lista. A CLI segue como está."
-                      onClick={() => act("wait")}
-                    >
-                      Marcar aguardando
-                    </button>
-                  )}
-                  {task.status === "waiting" && (
-                    <button
-                      disabled={busy}
-                      title="Só desfaz o rótulo. A CLI nunca parou — para falar com ela, escreva no terminal."
-                      onClick={() => act("continue")}
-                    >
-                      Desmarcar aguardando
-                    </button>
-                  )}
                   {task.branchCreated && !["running", "waiting", "queued"].includes(task.status) && (
                     <button disabled={busy} onClick={openReview}>
                       Revisar alterações
@@ -1149,6 +1130,33 @@ export default function App() {
                   {task.published && <span className="published">Branch publicada</span>}
                 </div>
               </div>
+              {task.status === "queued" &&
+                events.at(-1)?.message.startsWith("Aguardando: a pasta do projeto") && (
+                  <div className="notice">
+                    <p>{events.at(-1)?.message}</p>
+                    <div className="notice-actions">
+                      <button
+                        disabled={busy}
+                        onClick={() => perform(() => request({ action: "retryStart", taskId: task.id }))}
+                      >
+                        Tentar agora
+                      </button>
+                      <button
+                        disabled={busy}
+                        onClick={() => {
+                          if (
+                            window.confirm(
+                              "Guardar as alterações da pasta do projeto com git stash? Para recuperar depois: git stash pop.",
+                            )
+                          )
+                            perform(() => request({ action: "stashPending", taskId: task.id }));
+                        }}
+                      >
+                        Guardar alterações (stash)
+                      </button>
+                    </div>
+                  </div>
+                )}
               {task.status === "interrupted" && (
                 <p className="notice">
                   Processo interrompido. A sessão anterior não é recuperável: revise os arquivos ou
@@ -1422,7 +1430,7 @@ export default function App() {
             {snapshot?.agents.map((a) => (
               <span key={a.provider} title={a.executable}>
                 <i className={a.available ? "ready" : "unavailable"} />
-                {a.label}
+                <AgentIcon provider={a.provider} /> {a.label}
               </span>
             ))}
           </div>
@@ -1489,7 +1497,7 @@ export default function App() {
                   <dt>Projeto</dt>
                   <dd>{snapshot?.projects.find((p) => p.id === task.projectId)?.name}</dd>
                   <dt>Agente</dt>
-                  <dd>{task.provider}</dd>
+                  <dd><AgentIcon provider={task.provider} /> {task.provider}</dd>
                   <dt>Branch</dt>
                   <dd>{task.branch}</dd>
                   <dt>Base</dt>

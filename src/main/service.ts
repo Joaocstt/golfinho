@@ -27,7 +27,12 @@ export class Service {
     private logs: Logs,
     private changed: () => void,
     private chooseFolder: () => Promise<string | null>,
-    private clipboard?: { read(): string | Promise<string>; write(text: string): void | Promise<void> },
+    private clipboard?: {
+      read(): string | Promise<string>;
+      write(text: string): void | Promise<void>;
+      image?(): Promise<Buffer | null>;
+      saveImage?(png: Buffer): Promise<string>;
+    },
     private shells?: Shells,
     private vault?: Vault,
   ) {}
@@ -136,6 +141,12 @@ export class Service {
       case "readClipboard": {
         if (!this.clipboard) throw new Error("Clipboard indisponível neste ambiente.");
         const text = await this.clipboard.read(); if (Buffer.byteLength(text,"utf8") > 65536) throw new Error("Texto a colar excede 64 KiB. Cole em partes menores."); return text;
+      }
+      case "pasteImage": {
+        const png = await this.clipboard?.image?.();
+        if (!png || !this.clipboard?.saveImage) return null;
+        if (png.length > 10 * 1024 * 1024) throw new Error("Imagem excede 10 MiB.");
+        return this.clipboard.saveImage(png);
       }
       case "writeClipboard": {
         if (!this.clipboard) throw new Error("Clipboard indisponível neste ambiente.");
@@ -335,12 +346,6 @@ export class Service {
         const { root } = await this.treeRoot(r.taskId);
         return this.git.uncommitted(root);
       }
-      case "wait":
-        this.coordinator.wait(r.taskId, true);
-        return null;
-      case "continue":
-        this.coordinator.wait(r.taskId, false);
-        return null;
       case "input":
         this.coordinator.input(r.taskId, r.data);
         return null;
@@ -370,6 +375,30 @@ export class Service {
       case "runCheck":
         await this.coordinator.runCheck(r.taskId, r.command);
         return null;
+      case "retryStart": {
+        this.store.task(r.taskId);
+        this.coordinator.kick();
+        return null;
+      }
+      case "stashPending":
+        return this.coordinator.exclusive(r.taskId, async () => {
+          const t = this.store.task(r.taskId);
+          if (t.status !== "queued")
+            throw new Error("Só é possível guardar alterações de uma tarefa na fila.");
+          const p = this.store.project(t.projectId);
+          if ((await this.git.run(p.path, ["status", "--porcelain=v1", "-z"])).length === 0) {
+            this.coordinator.kick();
+            return null;
+          }
+          await this.git.run(p.path, ["stash", "push", "--include-untracked", "-m", `golfinho: antes de ${t.branch}`]);
+          this.store.note(
+            t.id,
+            "Alterações da pasta do projeto guardadas em git stash. Para recuperar: git stash pop.",
+          );
+          this.coordinator.kick();
+          this.changed();
+          return null;
+        });
       case "activate":
         return this.coordinator.exclusive(r.taskId, async () => {
           const t = this.store.task(r.taskId);

@@ -5,6 +5,8 @@ import "@xterm/xterm/css/xterm.css";
 import type { Provider, Request, Signal } from "../shared/contracts";
 type ShellSignal = Extract<Signal, { kind: "shell" | "shellEnded" }>;
 import { terminalTheme } from "./TerminalPane";
+import { TerminalMenu } from "./TerminalMenu";
+import { clipboardToPaste } from "./clipboardPaste";
 const request = <T,>(r: Request) => window.golfinho.request(r) as Promise<T>;
 // Aberturas em andamento por sessão, para o efeito duplicado do StrictMode reaproveitar a mesma.
 const starts = new Map<string, Promise<string>>();
@@ -22,6 +24,8 @@ export function ShellPane({
   const host = useRef<HTMLDivElement>(null);
   const [ended, setEnded] = useState<number | null>(null);
   const [restart, setRestart] = useState(0);
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const terminalRef = useRef<Terminal | null>(null);
   const errorRef = useRef(onError);
   errorRef.current = onError;
   const openRef = useRef(openSession);
@@ -79,7 +83,7 @@ export function ShellPane({
       const key = event.key.toLowerCase();
       if (key === "v") {
         event.preventDefault();
-        void request<string>({ action: "readClipboard" })
+        void clipboardToPaste(request)
           .then((text) => {
             if (text) terminal.paste(text);
           })
@@ -95,15 +99,12 @@ export function ShellPane({
       }
       return true;
     });
-    // Clique direito cola, como em outros terminais. O xterm não tem menu de contexto próprio.
+    // Clique direito abre o menu, como no terminal dos agentes.
     const hostElement = host.current!;
+    terminalRef.current = terminal;
     const rightClick = (event: MouseEvent) => {
       event.preventDefault();
-      void request<string>({ action: "readClipboard" })
-        .then((text) => {
-          if (text) terminal.paste(text);
-        })
-        .catch((e) => errorRef.current(e));
+      setMenu({ x: event.clientX, y: event.clientY });
     };
     hostElement.addEventListener("contextmenu", rightClick);
     const sendSize = () => {
@@ -143,6 +144,7 @@ export function ShellPane({
       unsubscribe();
       typed.dispose();
       hostElement.removeEventListener("contextmenu", rightClick);
+      terminalRef.current = null;
       observer.disconnect();
       if (shellId && !endedNow) {
         starts.delete(key);
@@ -167,6 +169,36 @@ export function ShellPane({
         </div>
       )}
       <div ref={host} className="shell-host" />
+      {menu && (
+        <TerminalMenu
+          x={menu.x}
+          y={menu.y}
+          onClose={() => setMenu(null)}
+          items={[
+            {
+              label: "Copiar",
+              shortcut: "Ctrl+Shift+C",
+              disabled: !terminalRef.current?.hasSelection(),
+              onSelect: () => {
+                const text = terminalRef.current?.getSelection();
+                if (text)
+                  void request({ action: "writeClipboard", text }).catch((e) => errorRef.current(e));
+              },
+            },
+            {
+              label: "Colar",
+              shortcut: "Ctrl+Shift+V",
+              onSelect: () =>
+                void clipboardToPaste(request)
+                  .then((text) => {
+                    if (text) terminalRef.current?.paste(text);
+                  })
+                  .catch((e) => errorRef.current(e)),
+            },
+            { label: "Selecionar tudo", onSelect: () => terminalRef.current?.selectAll() },
+          ]}
+        />
+      )}
     </div>
   );
 }

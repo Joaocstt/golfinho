@@ -24,7 +24,7 @@ function setup() {
   run(repo, "branch", "feature/login");
   const store = new Store(":memory:");
   store.addProject({ id: "p", name: "Repo", path: repo, remotes: ["origin"] });
-  const coordinator = { exclusive: async (_i: string, op: () => Promise<unknown>) => op(), pump() {} } as unknown as Coordinator;
+  const coordinator = { exclusive: async (_i: string, op: () => Promise<unknown>) => op(), pump() {}, kick() {} } as unknown as Coordinator;
   const service = new Service(store, new GitService(), coordinator, { remove() {} } as never, () => {}, async () => null);
   const create = (branch: string, adopt: boolean) =>
     service.request({
@@ -119,6 +119,21 @@ it("publica a branch existente sem force e recusa quando o remoto está à frent
     run(f.repo, "add", "-A");
     run(f.repo, "commit", "-qm", "local");
     await expect(publish()).rejects.toThrow(/commit\(s\) que não estão nesta branch/);
+  } finally {
+    f.store.close();
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
+it("guarda as alterações pendentes em git stash e deixa a pasta limpa", async () => {
+  const f = setup();
+  try {
+    const task = (await f.create("golfinho/guarda", false)) as { id: string };
+    f.store.transition(task.id, "queued", "x");
+    writeFileSync(join(f.repo, "sujo.txt"), "x\n");
+    await f.service.request({ action: "stashPending", taskId: task.id } as never);
+    expect(run(f.repo, "status", "--porcelain")).toBe("");
+    expect(run(f.repo, "stash", "list")).toContain("golfinho: antes de golfinho/guarda");
   } finally {
     f.store.close();
     rmSync(f.root, { recursive: true, force: true });

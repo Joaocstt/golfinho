@@ -33,6 +33,21 @@ function identity(pid: number) {
     return null;
   }
 }
+// Variáveis de sessão do Claude Code herdadas de quem abriu o Golfinho. Com elas, a CLI filha
+// acha que é sessão filha e não grava a transcrição, então não há o que retomar.
+const PARENT_SESSION = /^CLAUDE_CODE_(CHILD_SESSION|SESSION_ID|SESSION_ATTENDED|MESSAGING_)/;
+// Ambiente da CLI do agente: sem resíduo da sessão de quem abriu o app, e com a transcrição
+// do Claude sempre gravada, para a retomada funcionar.
+export function childEnv(
+  base: NodeJS.ProcessEnv,
+  extra: Record<string, string>,
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(base)) {
+    if (value !== undefined && !PARENT_SESSION.test(key)) out[key] = value;
+  }
+  return { ...out, CLAUDE_CODE_FORCE_SESSION_PERSISTENCE: "1", ...extra };
+}
 export const ptyDriver: Driver = {
   async start(command, args, cwd, data, exit, env) {
     const path = executablePath(command);
@@ -46,10 +61,7 @@ export const ptyDriver: Driver = {
       cols: 100,
       rows: 28,
       name: "xterm-256color",
-      env: { ...process.env, ...env, TERM: "xterm-256color", COLORTERM: "truecolor" } as Record<
-        string,
-        string
-      >,
+      env: childEnv(process.env, { ...env, TERM: "xterm-256color", COLORTERM: "truecolor" }),
     });
     const owned = identity(child.pid);
     let ended = false;

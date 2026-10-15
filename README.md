@@ -101,9 +101,12 @@ npm start
 1. **Criar a tarefa** com título, instrução, agente, base e remoto. A branch
    `golfinho/...` é sugerida automaticamente. A base precisa ser uma referência local
    existente; o Golfinho não faz `fetch` implícito.
-2. **Colocar na fila.** O Golfinho cria a branch local e uma pasta própria para ela
-   (um `git worktree`), roda o setup do projeto e inicia o CLI do agente no terminal
-   da tarefa.
+2. **Colocar na fila.** Numa tarefa nova, o Golfinho cria a branch `golfinho/...` a
+   partir da base e a torna ativa na pasta do projeto. Numa tarefa com branch existente,
+   a tarefa entra nessa branch e trabalha diretamente nela. Cada projeto roda uma tarefa
+   por vez, na pasta do projeto. Se a pasta tiver alterações não commitadas, a tarefa
+   continua na fila com um aviso e os botões **Tentar agora** e **Guardar alterações
+   (stash)**, que usa `git stash -u` e pode ser desfeito com `git stash pop`.
 3. **Interagir no terminal** para responder perguntas, aprovar ações e dar instruções
    adicionais. Quando o agente pedir algo, a própria CLI mostra a solicitação.
 4. **Revisar.** Ao encerrar o CLI, a tarefa vai para revisão. Você vê o diff, os
@@ -122,8 +125,7 @@ npm start
 não commitadas, a exclusão é recusada para que nenhum trabalho seja perdido. Arquivos
 ignorados (como `node_modules`) são removidos junto com a pasta.
 
-**Tarefas antigas:** tarefas criadas antes da mudança para worktrees continuam no
-checkout do projeto, uma por vez. Use **Ativar branch** para voltar a elas.
+**Tarefas antigas:** tarefas criadas antes desta versão com pasta própria continuam nela.
 
 ## Funcionalidades
 
@@ -133,11 +135,11 @@ checkout do projeto, uma por vez. Use **Ativar branch** para voltar a elas.
 - Limite global de execuções simultâneas (padrão: 2). Checks também contam para esse
   limite; o que passar do limite entra em fila.
 - Prazo opcional por tarefa. Zero desativa o prazo.
-- Marcação manual de "aguardando", útil para lembrar que a tarefa depende de você.
 
 **Terminal**
 - Terminal real (pseudoterminal) para cada CLI de agente, com copiar e colar, busca,
-  redimensionamento e atalhos.
+  redimensionamento e atalhos. O clique direito abre um menu (Copiar, Colar, Selecionar
+  tudo, Buscar). Colar uma imagem da área de transferência insere o caminho do arquivo salvo.
 - **Shell avulso** na pasta da tarefa, sem o agente, sem fila e sem bloqueio.
 - **Terminal geral** para operar fora de uma tarefa específica.
 
@@ -209,8 +211,10 @@ ajustados na interface.
   - macOS: `~/Library/Application Support/golfinho/`
 - **Pasta de dados alternativa:** defina a variável `GOLFINHO_DATA_DIR` para usar outro
   diretório, por exemplo em testes.
-- **Pastas das tarefas:** criadas como `git worktree` dentro da pasta de dados, em
-  `worktrees/<projeto>/<tarefa>`.
+- **Pastas de tarefas antigas:** criadas como `git worktree` em
+  `worktrees/<projeto>/<tarefa>`. Tarefas novas usam a pasta do projeto.
+- **Imagens coladas:** salvas em `clipboard/` na pasta de dados, e o caminho do arquivo
+  é colado no terminal.
 
 ## Estrutura do código
 

@@ -117,6 +117,8 @@ export interface FileChange {
   original: string;
   modified: string;
   binary: boolean;
+  // Falha ao ler este arquivo: mostrada no lugar do diff, sem marcar como binário.
+  error?: string;
 }
 export interface Review {
   files: FileChange[];
@@ -188,9 +190,9 @@ export type Request =
         | "terminal"
         | "publish"
         | "finish"
-        | "wait"
-        | "continue"
-        | "activate";
+        | "activate"
+        | "stashPending"
+        | "retryStart";
       taskId: string;
     }
   | { action: "input"; taskId: string; data: string }
@@ -221,6 +223,7 @@ export type Request =
   | { action: "summary"; taskId: string; summary: string }
   | { action: "settings"; settings: Settings }
   | { action: "readClipboard" }
+  | { action: "pasteImage" }
   | { action: "writeClipboard"; text: string };
 export interface TerminalReplay {
   data: string;

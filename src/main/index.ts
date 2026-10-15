@@ -2,6 +2,8 @@ import { app, BrowserWindow, dialog, ipcMain, clipboard } from "electron";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { mkdirSync } from "node:fs";
+import { mkdir } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { Store } from "./store";
 import { GitService } from "./git";
 import { Coordinator } from "./coordinator";
@@ -61,7 +63,27 @@ else {
           properties: ["openDirectory"],
         });
         return result.canceled ? null : result.filePaths[0];
-      }, { read: () => clipboard.readText(), write: text => clipboard.writeText(text) }, shells, vaultFrom(safeStorage));
+      }, {
+        read: () => clipboard.readText(),
+        write: (text) => clipboard.writeText(text),
+        // Imagem da área de transferência: salva em arquivo, para o caminho ser colado no terminal.
+        image: async () => {
+          for (const item of await clipboard.read()) {
+            const type = item.types.find((t) => t.startsWith("image/"));
+            if (!type) continue;
+            const blob = await item.getType(type);
+            if ("arrayBuffer" in blob) return Buffer.from(await blob.arrayBuffer());
+          }
+          return null;
+        },
+        saveImage: async (png) => {
+          const dir = join(app.getPath("userData"), "clipboard");
+          await mkdir(dir, { recursive: true });
+          const file = join(dir, `${randomUUID()}.png`);
+          await writeFile(file, png);
+          return file;
+        },
+      }, shells, vaultFrom(safeStorage));
       window = new BrowserWindow({
         width: 1400,
         height: 950,

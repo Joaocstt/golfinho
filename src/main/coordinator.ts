@@ -74,6 +74,10 @@ export class Coordinator {
       since: number,
     ) => Promise<string | null> = findSession,
   ) {}
+  // Tenta iniciar as tarefas da fila agora, sem esperar a próxima liberação de vaga.
+  kick() {
+    this.pump();
+  }
   queue(id: string) {
     this.store.transition(id, "queued", "Aguardando vaga e checkout livre.");
     this.changed();
@@ -105,7 +109,9 @@ export class Coordinator {
       const e: Execution = { path: legacy ? project.path : "", cancelled: false };
       if (legacy) this.owners.set(project.path, task.id);
       this.active.set(task.id, e);
-      this.store.transition(task.id, "running", "Preparando branch e CLI.");
+      // Tarefa na pasta do projeto só vira "rodando" depois que a pasta estiver pronta; antes,
+      // uma pasta com alterações deixa a tarefa na fila, sem registrar uma troca de status a cada tentativa.
+      if (!legacy) this.store.transition(task.id, "running", "Preparando branch e CLI.");
       this.changed();
       const launch = this.launch(task.id, e);
       this.pending.add(launch);
@@ -160,6 +166,11 @@ export class Coordinator {
         e.path = dir;
         this.owners.set(dir, id);
       }
+      if (legacy && this.store.task(id).status === "queued") {
+        this.store.transition(id, "running", "Preparando branch e CLI.");
+        this.changed();
+      }
+      this.blocked.delete(id);
       const patch: Parameters<Store["update"]>[1] = {};
       if (!t.branchCreated) Object.assign(patch, { branchCreated: true, baseCommit: base });
       if (!legacy && !t.worktreePath) patch.worktreePath = e.path;
@@ -222,12 +233,15 @@ export class Coordinator {
       this.changed();
     } catch (error) {
       if (error instanceof PendingChangesError && !this.stopping && !e.cancelled) {
-        // Alterações pendentes na pasta do projeto: a tarefa volta à fila com aviso e tenta de novo.
-        this.store.transition(
-          id,
-          "queued",
-          "Aguardando: a pasta do projeto tem alterações não commitadas. Faça commit ou guarde-as; a tarefa começa quando a pasta estiver limpa.",
-        );
+        // Alterações pendentes na pasta do projeto: a tarefa continua na fila, com um aviso só
+        // na primeira vez, e tenta de novo sem repetir o registro.
+        if (!this.blocked.has(id)) {
+          this.blocked.add(id);
+          this.store.note(
+            id,
+            "Aguardando: a pasta do projeto tem alterações não commitadas. Faça commit ou guarde-as; a tarefa começa quando a pasta estiver limpa.",
+          );
+        }
         this.release(id, e, false);
         this.retry();
         return;
@@ -294,6 +308,7 @@ export class Coordinator {
     }
   }
   // Tenta de novo depois de um intervalo; sem isso, a tarefa só voltaria com outro evento.
+  private blocked = new Set<string>();
   private retry() {
     const timer = setTimeout(() => {
       if (!this.stopping) this.pump();
@@ -335,15 +350,6 @@ export class Coordinator {
     e.exitTimer = setTimeout(() => {
       if (this.active.get(id) === e) e.handle?.stop();
     }, EXIT_GRACE_MS);
-    this.changed();
-  }
-  wait(id: string, waiting: boolean) {
-    if (!this.active.get(id)?.handle) throw new Error("Não há sessão ativa para esta tarefa.");
-    this.store.transition(
-      id,
-      waiting ? "waiting" : "running",
-      waiting ? "Usuário marcou a sessão como aguardando resposta." : "Sessão continua executando.",
-    );
     this.changed();
   }
   input(id: string, data: string) {

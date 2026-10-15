@@ -405,6 +405,7 @@ export class GitService {
       let original = "";
       let modified = "";
       let binary = false;
+      let failure: string | undefined;
       try {
         original = await this.show(root, baseSha, path);
         if (active) {
@@ -421,14 +422,15 @@ export class GitService {
       } catch (e) {
         const code = (e as NodeJS.ErrnoException).code;
         if (code === "ENOENT") modified = "";
-        else binary = true;
+        else failure = (e as Error).message;
       }
       changes.push({
         path,
         status: !original ? "added" : !modified ? "deleted" : "modified",
-        original: binary ? "" : original,
-        modified: binary ? "" : modified,
+        original: binary || failure ? "" : original,
+        modified: binary || failure ? "" : modified,
         binary,
+        ...(failure ? { error: failure } : {}),
       });
     }
     return { files: changes, branch, overlaps: [] };

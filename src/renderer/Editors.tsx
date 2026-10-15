@@ -34,7 +34,7 @@ function ensureDiffTheme() {
 export function DiffPane({ file }: { file: FileChange }) {
   const host = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (file.binary) return;
+    if (file.binary || file.error) return;
     ensureDiffTheme();
     const original = monaco.editor.createModel(file.original);
     const modified = monaco.editor.createModel(file.modified);
@@ -52,6 +52,7 @@ export function DiffPane({ file }: { file: FileChange }) {
       modified.dispose();
     };
   }, [file]);
+  if (file.error) return <div className="empty">Não foi possível ler este arquivo: {file.error}</div>;
   return file.binary ? (
     <div className="empty">Arquivo binário: revisão textual indisponível.</div>
   ) : (

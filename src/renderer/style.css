@@ -2277,3 +2277,53 @@ select {
 .pane-close:hover {
   background: #404040;
 }
+/* Ícones de agente: alinhados ao texto ao lado. */
+.agent-icon {
+  display: inline-block;
+  vertical-align: -2px;
+  margin-right: 3px;
+  flex-shrink: 0;
+}
+
+/* Menu do clique direito no terminal */
+.ctx-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 99;
+}
+.ctx-menu {
+  position: fixed;
+  z-index: 100;
+  min-width: 210px;
+  padding: 4px;
+  background: #2a2b2e;
+  border: 1px solid #ffffff1f;
+  border-radius: 6px;
+  box-shadow: 0 8px 24px #00000066;
+}
+.ctx-menu button {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  width: 100%;
+  padding: 6px 10px;
+  background: none;
+  border: 0;
+  border-radius: 4px;
+  color: inherit;
+  font: inherit;
+  font-size: var(--text-sm);
+  text-align: left;
+  cursor: pointer;
+}
+.ctx-menu button:hover:not(:disabled) {
+  background: #ffffff14;
+}
+.ctx-menu button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.ctx-menu kbd {
+  opacity: 0.6;
+  font-size: 11px;
+}
