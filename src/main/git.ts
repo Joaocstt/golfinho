@@ -283,7 +283,6 @@ export class GitService {
     ]);
     const rel = relative(canonical, current);
     if (
-      current !== approvedTarget ||
       opened.dev !== onDisk.dev ||
       opened.ino !== onDisk.ino ||
       rel === ".." ||
