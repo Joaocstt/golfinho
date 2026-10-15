@@ -2,7 +2,7 @@ import { createReadStream } from "node:fs";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { createInterface } from "node:readline";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import type { Provider } from "../shared/contracts";
 // A sessão já existe no disco assim que a CLI sobe; o id dela é o que permite
 // retomar a conversa em vez de reenviar o prompt original numa conversa nova.
@@ -59,7 +59,7 @@ async function codex(cwd: string, since: number, home: string) {
 // Claude nomeia o arquivo com o id da sessão; o cwd confirma o projeto, porque o
 // nome do diretório é um slug com perdas.
 async function claude(cwd: string, since: number, home: string) {
-  const directory = join(home, ".claude", "projects", cwd.replace(/\//g, "-"));
+  const directory = join(home, ".claude", "projects", cwd.replace(/[\\/:]/g, "-"));
   for (const file of await recent(directory, since, 0)) {
     try {
       for await (const line of createInterface({ input: createReadStream(file, "utf8") })) {
@@ -67,7 +67,7 @@ async function claude(cwd: string, since: number, home: string) {
         const entry = JSON.parse(line);
         if (typeof entry?.cwd !== "string") continue;
         if (entry.cwd !== cwd) break;
-        const name = file.slice(file.lastIndexOf("/") + 1).replace(/\.jsonl$/, "");
+        const name = basename(file).replace(/\.jsonl$/, "");
         return name || null;
       }
     } catch {

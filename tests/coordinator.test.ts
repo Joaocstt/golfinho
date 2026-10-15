@@ -69,7 +69,7 @@ it("runs tasks of the same repository in their own worktrees, limited only by co
   // Duas vagas (padrão): as duas primeiras rodam em pastas distintas, sem disputar o checkout.
   expect(started.length).toBe(2);
   expect(new Set(started.map((s) => s.cwd)).size).toBe(2);
-  expect(started.every((s) => s.cwd.startsWith("/wt/p/"))).toBe(true);
+  expect(started.every((s) => s.cwd.replace(/\\/g, "/").startsWith("/wt/p/"))).toBe(true);
   expect(store.task(d.id).status).toBe("queued");
   started[0].exit(0);
   await tick();
@@ -159,7 +159,7 @@ it("queues a check when the limit is full instead of failing the request", async
   expect(settled).toBe(false);
   expect(store.events(target.id).some((e) => /aguardando vaga/i.test(e.message))).toBe(true);
   expect(store.checks(target.id)).toHaveLength(0);
-  started.find((s) => s.cwd.startsWith("/wt/q/"))!.exit(0);
+  started.find((s) => s.cwd.replace(/\\/g, "/").startsWith("/wt/q/"))!.exit(0);
   await tick();
   // Com a vaga livre o check arranca sozinho, sem o usuário repetir a ação.
   const run = started.find((s) => s.cwd === "/repo");
@@ -281,7 +281,7 @@ it("runs the project setup in the new folder before the CLI, and marks it done",
   // Primeiro processo é o setup, dentro da pasta nova; a CLI ainda não subiu.
   expect(started).toHaveLength(1);
   expect(started[0].args).toEqual(["-lc", "npm ci"]);
-  expect(started[0].cwd.startsWith("/wt/p/")).toBe(true);
+  expect(started[0].cwd.replace(/\\/g, "/").startsWith("/wt/p/")).toBe(true);
   started[0].exit(0);
   await tick();
   expect(started).toHaveLength(2);

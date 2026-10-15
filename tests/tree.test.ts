@@ -15,7 +15,8 @@ function folder() {
   writeFileSync(join(root, "src", "a.ts"), "a");
   writeFileSync(join(root, "zeta.txt"), "z");
   writeFileSync(join(root, ".env"), "segredo");
-  symlinkSync("/etc", join(root, "fora"));
+  const outside = mkdtempSync(join(tmpdir(), "golfinho-fora-"));
+  symlinkSync(outside, join(root, "fora"), "junction");
   return { root, git: new GitService() };
 }
 it("lists everything except .git, folders first, without following links out of the root", async () => {
