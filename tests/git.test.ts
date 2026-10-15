@@ -42,6 +42,11 @@ it("blocks dirty branch switches and includes untracked files in review", async 
     await expect(f.git.prepare(f.repo, "golfinho/other", "main", false)).rejects.toThrow(
       /alterações/i,
     );
+    console.log("DIAG current=", JSON.stringify(await f.git.current(f.repo)), "base=", base);
+    await f.git.read(f.repo, "new.txt").then(
+      (v) => console.log("DIAG read_ok=", JSON.stringify(v)),
+      (e) => console.log("DIAG read_err code=", (e as NodeJS.ErrnoException).code, "msg=", (e as Error).message, "stack=", String((e as Error).stack).split("\n").slice(0, 4).join(" | ")),
+    );
     const review = await f.git.review(f.repo, "golfinho/task", base);
     expect(review.files.find((f) => f.path === "new.txt")?.modified).toBe("new\n");
     await expect(f.git.read(f.repo, "../remote.git/config")).rejects.toThrow();
