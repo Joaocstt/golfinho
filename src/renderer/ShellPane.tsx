@@ -71,6 +71,41 @@ export function ShellPane({
       if (shellId && !endedNow)
         void request({ action: "shellInput", shellId, data }).catch((e) => errorRef.current(e));
     });
+    // Mesmos atalhos do terminal de agentes. Colar usa a área de transferência do processo
+    // principal, e o texto entra pelo onData acima, como digitação.
+    terminal.attachCustomKeyEventHandler((event) => {
+      if (event.type !== "keydown" || !event.ctrlKey || !event.shiftKey || event.altKey || event.metaKey)
+        return true;
+      const key = event.key.toLowerCase();
+      if (key === "v") {
+        event.preventDefault();
+        void request<string>({ action: "readClipboard" })
+          .then((text) => {
+            if (text) terminal.paste(text);
+          })
+          .catch((e) => errorRef.current(e));
+        return false;
+      }
+      if (key === "c" && terminal.hasSelection()) {
+        event.preventDefault();
+        void request({ action: "writeClipboard", text: terminal.getSelection() }).catch((e) =>
+          errorRef.current(e),
+        );
+        return false;
+      }
+      return true;
+    });
+    // Clique direito cola, como em outros terminais. O xterm não tem menu de contexto próprio.
+    const hostElement = host.current!;
+    const rightClick = (event: MouseEvent) => {
+      event.preventDefault();
+      void request<string>({ action: "readClipboard" })
+        .then((text) => {
+          if (text) terminal.paste(text);
+        })
+        .catch((e) => errorRef.current(e));
+    };
+    hostElement.addEventListener("contextmenu", rightClick);
     const sendSize = () => {
       if (shellId && !endedNow)
         void request({
@@ -107,6 +142,7 @@ export function ShellPane({
       mounted.current = false;
       unsubscribe();
       typed.dispose();
+      hostElement.removeEventListener("contextmenu", rightClick);
       observer.disconnect();
       if (shellId && !endedNow) {
         starts.delete(key);
