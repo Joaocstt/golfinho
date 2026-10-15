@@ -1,0 +1,114 @@
+{
+  "name": "golfinho",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Ambiente desktop para tarefas com agentes e branches Git",
+  "type": "module",
+  "main": "out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "start": "electron-vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "postinstall": "node node_modules/electron/install.js && electron-rebuild -f -w node-pty",
+    "smoke": "node scripts/smoke.mjs",
+    "dist": "electron-vite build && electron-builder --publish never",
+    "dist:win": "electron-vite build && electron-builder --win --publish never",
+    "dist:mac": "electron-vite build && electron-builder --mac --publish never",
+    "dist:linux": "electron-vite build && electron-builder --linux --publish never"
+  },
+  "dependencies": {
+    "@fontsource-variable/geist": "5.3.0",
+    "@xterm/addon-fit": "0.11.0",
+    "@xterm/addon-search": "0.16.0",
+    "@xterm/xterm": "6.0.0",
+    "lucide-react": "1.57.0",
+    "monaco-editor": "0.57.0",
+    "node-pty": "1.1.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "4.2.1",
+    "@testing-library/jest-dom": "7.0.1",
+    "@testing-library/react": "16.3.3",
+    "@types/node": "26.6.5",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.1.2",
+    "electron": "44.7.2",
+    "electron-builder": "^26.15.3",
+    "electron-vite": "6.0.0",
+    "jsdom": "29.1.1",
+    "typescript": "7.0.2",
+    "vite": "8.3.4",
+    "vitest": "5.0.4"
+  },
+  "overrides": {
+    "dompurify": "3.4.17"
+  },
+  "build": {
+    "appId": "com.golfinho.app",
+    "productName": "Golfinho",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "out/**/*",
+      "package.json"
+    ],
+    "asar": true,
+    "npmRebuild": true,
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ],
+      "category": "public.app-category.developer-tools"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Development",
+      "maintainer": "jsantana <jnc201820@gmail.com>",
+      "syncDesktopName": true
+    }
+  },
+  "homepage": "https://github.com/Joaocstt/golfinho",
+  "author": {
+    "name": "jsantana",
+    "email": "jnc201820@gmail.com"
+  },
+  "desktopName": "golfinho.desktop"
+}
