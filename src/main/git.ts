@@ -232,7 +232,8 @@ export class GitService {
     if (rel.split(sep).includes(".git"))
       throw new Error("Metadados do Git não podem ser editados.");
     let prefix = canonical;
-    for (const segment of relative(canonical, resolve(root, path)).split(sep)) {
+    // Partimos da raiz canônica: a raiz informada pode passar por links (ex.: /var no macOS).
+    for (const segment of relative(canonical, resolve(canonical, path)).split(sep)) {
       prefix = resolve(prefix, segment);
       if ((await lstat(prefix)).isSymbolicLink())
         throw new Error("Links simbólicos não podem ser editados.");
