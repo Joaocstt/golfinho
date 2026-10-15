@@ -119,7 +119,12 @@ export function TerminalPane({ taskId, active = false, provider, status, onError
   }
   async function paste() {
     const current = terminalRef.current;
-    if (!current || !ready.current || clipboardBusy) return;
+    if (!current || clipboardBusy) return;
+    // Sem CLI rodando não há para onde mandar o texto: avisa em vez de ignorar.
+    if (!ready.current) {
+      error.current(new Error("A CLI não está rodando. Inicie a tarefa para colar aqui."));
+      return;
+    }
     setClipboardBusy(true);
     try {
       const text = await request<string>({ action: "readClipboard" });
@@ -358,7 +363,15 @@ export function TerminalPane({ taskId, active = false, provider, status, onError
         if (!keyHandler(e.nativeEvent)) e.stopPropagation();
       }}
     >
-      <div className="terminal-host" ref={host} />
+      <div
+        className="terminal-host"
+        ref={host}
+        // Clique direito cola, como no shell. O xterm não tem menu de contexto próprio.
+        onContextMenu={(e) => {
+          e.preventDefault();
+          void commands.current.paste();
+        }}
+      />
       <div className="terminal-chrome">
         {flag && (
           <span className="terminal-flag">

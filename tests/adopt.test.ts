@@ -55,11 +55,25 @@ it("cria a tarefa sobre a branch existente, com base no commit atual dela", asyn
     rmSync(f.root, { recursive: true, force: true });
   }
 });
-it("recusa branch que não existe ou que já está aberta na pasta do projeto", async () => {
+it("trabalha na branch que já está ativa na pasta do projeto, sem criar worktree", async () => {
+  const f = setup();
+  try {
+    run(f.repo, "switch", "feature/login");
+    const task = (await f.create("feature/login", true)) as { branchCreated: boolean; worktreePath: string | null; adoptedBranch: boolean };
+    expect(task.adoptedBranch).toBe(true);
+    expect(task.branchCreated).toBe(true);
+    expect(task.worktreePath).toBeNull();
+  } finally {
+    f.store.close();
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+it("recusa branch que não existe ou que está aberta em outra pasta", async () => {
   const f = setup();
   try {
     await expect(f.create("nao-existe", true)).rejects.toThrow(/não existe localmente/);
-    run(f.repo, "switch", "feature/login");
+    const other = join(f.root, "outra");
+    run(f.repo, "worktree", "add", other, "feature/login");
     await expect(f.create("feature/login", true)).rejects.toThrow(/já está aberta em/);
   } finally {
     f.store.close();
@@ -77,6 +91,34 @@ it("excluir a tarefa remove a pasta, mas mantém a branch que já existia", asyn
     await f.service.request({ action: "deleteTask", taskId: task.id });
     expect(existsSync(dir)).toBe(false);
     expect(run(f.repo, "branch", "--list", "feature/login")).toContain("feature/login");
+  } finally {
+    f.store.close();
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
+it("publica a branch existente sem force e recusa quando o remoto está à frente", async () => {
+  const f = setup();
+  try {
+    run(f.repo, "switch", "feature/login");
+    const task = (await f.create("feature/login", true)) as { id: string };
+    const publish = () => f.service.request({ action: "publish", taskId: task.id } as never);
+    await publish();
+    expect(run(f.repo, "ls-remote", "--heads", "origin", "feature/login")).toContain("refs/heads/feature/login");
+    // Outra pessoa envia um commit para a mesma branch no remoto.
+    const clone = join(f.root, "clone");
+    run(f.root, "clone", "-q", "--branch", "feature/login", join(f.root, "remote.git"), clone);
+    run(clone, "config", "user.email", "o@t.test");
+    run(clone, "config", "user.name", "O");
+    writeFileSync(join(clone, "outro.txt"), "x\n");
+    run(clone, "add", "-A");
+    run(clone, "commit", "-qm", "outro");
+    run(clone, "push", "-q", "origin", "feature/login");
+    // Commit local novo: a branch local não tem o commit do remoto.
+    writeFileSync(join(f.repo, "local.txt"), "y\n");
+    run(f.repo, "add", "-A");
+    run(f.repo, "commit", "-qm", "local");
+    await expect(publish()).rejects.toThrow(/commit\(s\) que não estão nesta branch/);
   } finally {
     f.store.close();
     rmSync(f.root, { recursive: true, force: true });

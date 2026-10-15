@@ -102,7 +102,9 @@ export class GitService {
       );
   }
   async prepare(path: string, branch: string, base: string, exists: boolean) {
-    await this.validateBranch(path, branch);
+    // Branch que já existia não tem o prefixo golfinho/, mas o nome continua válido.
+    if (exists) await this.validateName(path, branch);
+    else await this.validateBranch(path, branch);
     const commit = await this.ref(path, base);
     const active = await this.current(path);
     if (exists && active === branch) return commit;
@@ -209,10 +211,25 @@ export class GitService {
     }
     await this.run(root, ["branch", "-D", "--", branch]);
   }
-  async publish(path: string, branch: string, remote: string) {
-    await this.validateBranch(path, branch);
+  async publish(path: string, branch: string, remote: string, adopted = false) {
+    if (adopted) await this.validateName(path, branch);
+    else await this.validateBranch(path, branch);
     const remotes = (await this.inspect(path)).remotes;
     if (!remotes.includes(remote)) throw new Error("Remoto não encontrado neste repositório.");
+    // Se o remoto tem commits que a branch local não tem, o push seria recusado pelo git.
+    // Checamos antes para explicar o que fazer. Nada é enviado nem forçado.
+    const onRemote = await this.run(path, ["ls-remote", "--heads", "--", remote, `refs/heads/${branch}`]);
+    if (onRemote.trim()) {
+      const tracking = `refs/remotes/${remote}/${branch}`;
+      await this.run(path, ["fetch", "--quiet", "--", remote, `refs/heads/${branch}:${tracking}`]);
+      const behind = Number(
+        (await this.run(path, ["rev-list", "--count", `refs/heads/${branch}..${tracking}`])).trim(),
+      );
+      if (behind > 0)
+        throw new Error(
+          `${remote}/${branch} tem ${behind} commit(s) que não estão nesta branch. Atualize a branch na pasta do projeto (git pull --ff-only) e tente de novo. Nada foi enviado.`,
+        );
+    }
     await this.run(path, [
       "push",
       "--set-upstream",

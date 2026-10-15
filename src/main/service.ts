@@ -7,6 +7,7 @@ import { agentInfo, invocation } from "./agents";
 import { checkoutOf, requireCheckout } from "./checkout";
 import type { Shells } from "./shells";
 import { homedir } from "node:os";
+import { realpath } from "node:fs/promises";
 import { remoteList, remoteRead, remoteRoots, remoteStat, remoteWrite, sshArgs, sshEnv } from "./ssh";
 import type { Vault } from "./vault";
 import { readQuota } from "./quota";
@@ -217,12 +218,23 @@ export class Service {
           await this.git.validateName(p.path, r.input.branch);
           const existing = await this.git.existingBranch(p.path, r.input.branch);
           if (!existing.exists) throw new Error(`A branch ${r.input.branch} não existe localmente.`);
-          if (existing.openIn)
+          // Aberta na própria pasta do projeto: a tarefa trabalha ali mesmo, como tarefa antiga
+          // (uma por vez). Aberta em outra pasta, o git não permite duas vezes: recusa.
+          const inProject =
+            existing.openIn !== null &&
+            (await realpath(existing.openIn)) === (await realpath(p.path));
+          if (existing.openIn && !inProject)
             throw new Error(
               `A branch ${r.input.branch} já está aberta em ${existing.openIn}. Escolha outra, ou feche essa pasta antes.`,
             );
           const t = this.store.createTask({ ...r.input, base: r.input.branch });
-          this.store.update(t.id, { baseCommit: existing.sha }, `Trabalho sobre a branch existente ${r.input.branch}, a partir de ${existing.sha.slice(0, 7)}.`);
+          this.store.update(
+            t.id,
+            { baseCommit: existing.sha, ...(inProject ? { branchCreated: true } : {}) },
+            inProject
+              ? `Trabalho na pasta do projeto, na branch ${r.input.branch} (${existing.sha.slice(0, 7)}).`
+              : `Trabalho sobre a branch existente ${r.input.branch}, a partir de ${existing.sha.slice(0, 7)}.`,
+          );
           this.changed();
           return this.store.task(t.id);
         }
@@ -470,7 +482,7 @@ export class Service {
             throw new Error(
               "Faça commit das alterações antes de publicar. Push publica commits, não arquivos não salvos ou não commitados.",
             );
-          await this.git.publish(dir, t.branch, t.remote);
+          await this.git.publish(dir, t.branch, t.remote, Boolean(t.adoptedBranch));
           this.store.update(
             t.id,
             { published: true },

@@ -40,6 +40,30 @@ import { ShellPane } from "./ShellPane";
 import { SshPanel } from "./SshPanel";
 import { RemoteTree } from "./RemoteTree";
 import { RemoteViewer } from "./RemoteViewer";
+
+type DropZone = "left" | "right" | "top" | "bottom" | "center";
+// Layout da divisão fica nesta máquina, como preferência de tela.
+function storedSplit(): { dir: "right" | "bottom"; ratio: number } {
+  try {
+    const v = JSON.parse(localStorage.getItem("golfinho.split") ?? "null");
+    if ((v?.dir === "right" || v?.dir === "bottom") && typeof v.ratio === "number")
+      return { dir: v.dir, ratio: Math.min(0.85, Math.max(0.15, v.ratio)) };
+  } catch {
+    /* preferência ilegível: usa o padrão */
+  }
+  return { dir: "right", ratio: 0.5 };
+}
+// Qual parte da área o cursor está: as bordas abrem painel; o centro troca a aba principal.
+function zoneAt(e: React.DragEvent, box: HTMLElement): DropZone {
+  const r = box.getBoundingClientRect();
+  const x = (e.clientX - r.left) / r.width;
+  const y = (e.clientY - r.top) / r.height;
+  if (x < 0.25) return "left";
+  if (x > 0.75) return "right";
+  if (y < 0.25) return "top";
+  if (y > 0.75) return "bottom";
+  return "center";
+}
 const request = <T,>(r: Request) => window.golfinho.request(r) as Promise<T>;
 const COMMIT_PROMPT =
   "Faça commit de todas as alterações desta branch, com mensagens claras, em português, agrupando por assunto. Não faça push, não troque de branch e não altere código além do necessário para os commits. Ao terminar, confirme o hash de cada commit.";
@@ -229,6 +253,20 @@ export default function App() {
       .join(" ")
       .toLocaleLowerCase()
       .includes(query.toLocaleLowerCase());
+  // Divisão de painéis: a aba principal e a secundária dividem a área de trabalho.
+  const [secondTab, setSecondTab] = useState<string | null>(null),
+    [splitDir, setSplitDir] = useState<"right" | "bottom">(() => storedSplit().dir),
+    [splitRatio, setSplitRatio] = useState(() => storedSplit().ratio),
+    [dragTab, setDragTab] = useState<string | null>(null),
+    [dropZone, setDropZone] = useState<DropZone | null>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    try {
+      localStorage.setItem("golfinho.split", JSON.stringify({ dir: splitDir, ratio: splitRatio }));
+    } catch {
+      /* sem armazenamento: a divisão só não fica lembrada */
+    }
+  }, [splitDir, splitRatio]);
   const tasks =
     snapshot?.tasks.filter((t) => (!project || t.projectId === project) && matches(t)) ?? [];
   useEffect(() => {
@@ -237,6 +275,7 @@ export default function App() {
     setEvents([]);
     setChecks([]);
     setTab("Terminal");
+    setSecondTab(null);
     setDirty(false);
     setSummary(task?.reviewSummary ?? "");
     if (selected) void loadDetails(selected);
@@ -254,6 +293,77 @@ export default function App() {
     } finally {
       setBusy(false);
     }
+  }
+  function dragStart(e: React.DragEvent, name: string) {
+    e.dataTransfer.setData("text/plain", name);
+    e.dataTransfer.effectAllowed = "move";
+    setDragTab(name);
+  }
+  function dragEnd() {
+    setDragTab(null);
+    setDropZone(null);
+  }
+  function bodyStyle(): React.CSSProperties | undefined {
+    if (!secondTab) return undefined;
+    return splitDir === "right"
+      ? { gridTemplateColumns: `${splitRatio}fr 6px ${1 - splitRatio}fr` }
+      : { gridTemplateRows: `${splitRatio}fr 6px ${1 - splitRatio}fr` };
+  }
+  // Selecionar uma aba: se ela estava no outro painel, os dois trocam de lugar.
+  function selectTab(name: string) {
+    if (name === secondTab) setSecondTab(tab);
+    setTab(name);
+  }
+  function shown(name: string) {
+    return tab === name || secondTab === name;
+  }
+  // Posição no grid: a aba principal fica na primeira metade, a secundária na outra.
+  function place(name: string): React.CSSProperties {
+    if (!secondTab) return { gridColumn: 1, gridRow: 1 };
+    const first = name === tab;
+    return splitDir === "right"
+      ? { gridColumn: first ? 1 : 3, gridRow: 1 }
+      : { gridColumn: 1, gridRow: first ? 1 : 3 };
+  }
+  function dropOn(dragged: string, zone: DropZone) {
+    navigate(() => {
+      if (zone === "center") {
+        setTab(dragged);
+        setSecondTab(null);
+        return;
+      }
+      const other = dragged === tab ? secondTab : tab;
+      if (!other) return;
+      setSplitDir(zone === "left" || zone === "right" ? "right" : "bottom");
+      if (zone === "left" || zone === "top") {
+        setTab(dragged);
+        setSecondTab(other);
+      } else {
+        setTab(other);
+        setSecondTab(dragged);
+      }
+    });
+  }
+  function resizeSplit(event: React.PointerEvent<HTMLDivElement>) {
+    event.preventDefault();
+    resizeCleanup.current();
+    const body = bodyRef.current;
+    if (!body) return;
+    const vertical = splitDir === "bottom";
+    const move = (e: PointerEvent) => {
+      const box = body.getBoundingClientRect();
+      const share = vertical
+        ? (e.clientY - box.top) / box.height
+        : (e.clientX - box.left) / box.width;
+      setSplitRatio(Math.min(0.85, Math.max(0.15, share)));
+    };
+    const end = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", end);
+    };
+    resizeCleanup.current = end;
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", end);
   }
   function navigate(action: () => void) {
     if (dirty && !window.confirm("Descartar alterações não salvas do arquivo?")) return;
@@ -824,8 +934,11 @@ export default function App() {
                     .map((t) => (
                     <button
                       key={t}
-                      className={tab === t ? "active" : ""}
-                      onClick={() => navigate(() => setTab(t))}
+                      className={tab === t ? "active" : secondTab === t ? "active secondary" : ""}
+                      draggable
+                      onDragStart={(e) => dragStart(e, t)}
+                      onDragEnd={dragEnd}
+                      onClick={() => navigate(() => selectTab(t))}
                     >
                       {t}
                     </button>
@@ -836,8 +949,17 @@ export default function App() {
                       className={"session-tab " + (tab === `session:${s.key}` ? "active" : "")}
                     >
                       <button
-                        className={tab === `session:${s.key}` ? "active" : ""}
-                        onClick={() => navigate(() => setTab(`session:${s.key}`))}
+                        className={
+                          tab === `session:${s.key}`
+                            ? "active"
+                            : secondTab === `session:${s.key}`
+                              ? "active secondary"
+                              : ""
+                        }
+                        draggable
+                        onDragStart={(e) => dragStart(e, `session:${s.key}`)}
+                        onDragEnd={dragEnd}
+                        onClick={() => navigate(() => selectTab(`session:${s.key}`))}
                       >
                         {s.label}
                       </button>
@@ -903,7 +1025,7 @@ export default function App() {
                   )}
                 </div>
                 <div className="actions">
-                  {task.branchCreated && !task.worktreePath && !["running", "waiting", "queued"].includes(task.status) && (
+                  {task.branchCreated && !task.worktreePath && !task.adoptedBranch && !["running", "waiting", "queued"].includes(task.status) && (
                     <button
                       disabled={busy}
                       onClick={() =>
@@ -1033,8 +1155,9 @@ export default function App() {
                   coloque a tarefa na fila de novo.
                 </p>
               )}
-              <div className="tab-body">
-                {tab === "Terminal" && (
+              <div className="tab-body" ref={bodyRef} style={bodyStyle()}>
+                {shown("Terminal") && (
+                  <div className="tab-slot bare" style={place("Terminal")}>
                   <TerminalPane
                     key={task.id}
                     taskId={task.id}
@@ -1045,10 +1168,11 @@ export default function App() {
                     }
                     onError={report}
                   />
+                  </div>
                 )}
                 {task.branchCreated && (
                   // Fica montado ao trocar de aba: o shell não morre por você olhar o Diff.
-                  <div className="shell-slot" hidden={tab !== "Shell"}>
+                  <div className="shell-slot tab-slot bare" style={place("Shell")} hidden={!shown("Shell")}>
                     <ShellPane
                       key={task.id}
                       scopeKey={task.id}
@@ -1058,7 +1182,12 @@ export default function App() {
                   </div>
                 )}
                 {(sessions[task.id] ?? []).map((s) => (
-                  <div key={s.key} className="shell-slot" hidden={tab !== `session:${s.key}`}>
+                  <div
+                    key={s.key}
+                    className="shell-slot tab-slot bare"
+                    style={place(`session:${s.key}`)}
+                    hidden={!shown(`session:${s.key}`)}
+                  >
                     <ShellPane
                       scopeKey={s.key}
                       openSession={() =>
@@ -1073,7 +1202,9 @@ export default function App() {
                     />
                   </div>
                 ))}
-                {tab === "Diff" &&
+                {shown("Diff") && (
+                  <div className="tab-slot" style={place("Diff")}>
+                  {
                   (!review ? (
                     <div className="empty">
                       Carregue a revisão para comparar as alterações.
@@ -1122,7 +1253,10 @@ export default function App() {
                       </button>
                     </>
                   ))}
-                {tab === "Arquivos" && (
+                  </div>
+                )}
+                {shown("Arquivos") && (
+                  <div className="tab-slot" style={place("Arquivos")}>
                   <div className="files-layout">
                     <FileTree
                       taskId={task.id}
@@ -1150,8 +1284,10 @@ export default function App() {
                       )}
                     </div>
                   </div>
+                  </div>
                 )}
-                {tab === "Histórico" && (
+                {shown("Histórico") && (
+                  <div className="tab-slot" style={place("Histórico")}>
                   <div className="history">
                     {events.length === 0 ? (
                       <div className="empty">Nenhum evento registrado.</div>
@@ -1170,8 +1306,10 @@ export default function App() {
                       ))
                     )}
                   </div>
+                  </div>
                 )}
-                {tab === "Checks" && (
+                {shown("Checks") && (
+                  <div className="tab-slot" style={place("Checks")}>
                   <>
                     <form
                       className="check-form"
@@ -1215,6 +1353,47 @@ export default function App() {
                       </details>
                     ))}
                   </>
+                  </div>
+                )}
+                {secondTab && (
+                  <div
+                    className={"split-resize " + splitDir}
+                    role="separator"
+                    aria-label="Divisão entre painéis"
+                    aria-orientation={splitDir === "right" ? "vertical" : "horizontal"}
+                    style={splitDir === "right" ? { gridColumn: 2, gridRow: 1 } : { gridColumn: 1, gridRow: 2 }}
+                    onPointerDown={resizeSplit}
+                  />
+                )}
+                {secondTab && (
+                  <button
+                    className="pane-close"
+                    style={place(secondTab)}
+                    title="Fechar este painel"
+                    aria-label="Fechar este painel"
+                    onClick={() => navigate(() => setSecondTab(null))}
+                  >
+                    ×
+                  </button>
+                )}
+                {dragTab && (
+                  <div
+                    className="drop-layer"
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      setDropZone(zoneAt(e, e.currentTarget));
+                    }}
+                    onDragLeave={() => setDropZone(null)}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      const zone = zoneAt(e, e.currentTarget);
+                      setDropZone(null);
+                      setDragTab(null);
+                      dropOn(dragTab, zone);
+                    }}
+                  >
+                    {dropZone && <div className={"drop-preview " + dropZone} />}
+                  </div>
                 )}
               </div>
             </section>
