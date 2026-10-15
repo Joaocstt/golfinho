@@ -13,7 +13,7 @@ import type {
 const allowed: Record<Status, Status[]> = {
   draft: ["queued", "cancelled"],
   queued: ["running", "cancelled", "failed", "interrupted"],
-  running: ["waiting", "review", "failed", "cancelled", "interrupted"],
+  running: ["waiting", "review", "failed", "cancelled", "interrupted", "queued"],
   waiting: ["running", "review", "cancelled", "interrupted", "failed"],
   interrupted: ["queued", "review", "cancelled"],
   review: ["queued", "completed", "cancelled"],

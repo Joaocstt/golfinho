@@ -10,6 +10,9 @@ import { readdir } from "node:fs/promises";
 // Pasta com milhares de entradas (node_modules) não deve travar a árvore: a lista corta aqui.
 const MAX_ENTRIES = 2000;
 const exec = promisify(execFile);
+// Recusa de troca de branch por alterações pendentes: a tarefa espera, não falha.
+export class PendingChangesError extends Error {}
+
 export class GitService {
   private queues = new Map<string, Promise<unknown>>();
   // Criar e remover worktrees mexe nos metadados compartilhados do repositório. Duas
@@ -109,7 +112,7 @@ export class GitService {
     const active = await this.current(path);
     if (exists && active === branch) return commit;
     if ((await this.run(path, ["status", "--porcelain=v1", "-z"])).length)
-      throw new Error(
+      throw new PendingChangesError(
         "Há alterações locais. Salve/commit suas alterações antes de trocar de branch.",
       );
     // git switch itself refuses active merges/rebases without forcing.
@@ -300,9 +303,11 @@ export class GitService {
       realpath(approvedTarget),
     ]);
     const rel = relative(canonical, current);
+    // No Windows, ino pode vir zerado em algumas situações. Nesse caso a identidade não é
+    // comparável; a contenção na raiz (realpath acima) continua valendo.
+    const comparable = opened.ino !== 0 && onDisk.ino !== 0;
     if (
-      opened.dev !== onDisk.dev ||
-      opened.ino !== onDisk.ino ||
+      (comparable && (opened.dev !== onDisk.dev || opened.ino !== onDisk.ino)) ||
       rel === ".." ||
       rel.startsWith(`..${sep}`) ||
       isAbsolute(rel) ||

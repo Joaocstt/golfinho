@@ -214,26 +214,23 @@ export class Service {
         if (!(await this.git.inspect(p.path)).remotes.includes(r.input.remote))
           throw new Error("Configure o remoto selecionado no repositório antes de criar a tarefa.");
         if (r.input.adopt) {
-          // Branch existente: a base é o commit atual dela, então a revisão mostra só o que a tarefa fizer.
+          // Branch existente: a base é o commit atual dela, então a revisão mostra só o que a tarefa
+          // fizer. Ela roda na pasta do projeto; se a branch estiver aberta em outra pasta, recusa.
           await this.git.validateName(p.path, r.input.branch);
           const existing = await this.git.existingBranch(p.path, r.input.branch);
           if (!existing.exists) throw new Error(`A branch ${r.input.branch} não existe localmente.`);
-          // Aberta na própria pasta do projeto: a tarefa trabalha ali mesmo, como tarefa antiga
-          // (uma por vez). Aberta em outra pasta, o git não permite duas vezes: recusa.
           const inProject =
-            existing.openIn !== null &&
+            existing.openIn === null ||
             (await realpath(existing.openIn)) === (await realpath(p.path));
-          if (existing.openIn && !inProject)
+          if (!inProject)
             throw new Error(
               `A branch ${r.input.branch} já está aberta em ${existing.openIn}. Escolha outra, ou feche essa pasta antes.`,
             );
           const t = this.store.createTask({ ...r.input, base: r.input.branch });
           this.store.update(
             t.id,
-            { baseCommit: existing.sha, ...(inProject ? { branchCreated: true } : {}) },
-            inProject
-              ? `Trabalho na pasta do projeto, na branch ${r.input.branch} (${existing.sha.slice(0, 7)}).`
-              : `Trabalho sobre a branch existente ${r.input.branch}, a partir de ${existing.sha.slice(0, 7)}.`,
+            { baseCommit: existing.sha, branchCreated: true },
+            `Trabalho direto na branch existente ${r.input.branch}, a partir de ${existing.sha.slice(0, 7)}.`,
           );
           this.changed();
           return this.store.task(t.id);

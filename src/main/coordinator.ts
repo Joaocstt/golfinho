@@ -1,5 +1,6 @@
 import type { Store } from "./store";
 import type { GitService } from "./git";
+import { PendingChangesError } from "./git";
 import type { Logs } from "./logs";
 import { invocation } from "./agents";
 import { findSession } from "./sessions";
@@ -98,7 +99,8 @@ export class Coordinator {
       const project = this.store.project(task.projectId);
       // Tarefa antiga, no checkout do projeto: só uma por vez naquele diretório.
       // Tarefas com pasta própria não disputam nada e entram sem esperar.
-      const legacy = task.branchCreated && !task.worktreePath;
+      // Sem pasta própria, a tarefa usa a pasta do projeto: uma por vez naquele diretório.
+      const legacy = !task.worktreePath;
       if (legacy && this.owners.has(project.path)) continue;
       const e: Execution = { path: legacy ? project.path : "", cancelled: false };
       if (legacy) this.owners.set(project.path, task.id);
@@ -136,10 +138,15 @@ export class Coordinator {
       const t = this.store.task(id);
       const project = this.store.project(t.projectId);
       const started = Date.now();
-      const legacy = t.branchCreated && !t.worktreePath;
+      const legacy = !t.worktreePath;
       let base: string;
       if (legacy) {
-        base = await this.git.prepare(project.path, t.branch, t.baseCommit ?? t.base, true);
+        base = await this.git.prepare(
+          project.path,
+          t.branch,
+          t.baseCommit ?? t.base,
+          t.branchCreated || Boolean(t.adoptedBranch),
+        );
         e.path = project.path;
       } else {
         const dir = t.worktreePath ?? join(this.worktreeRoot, t.projectId, t.id);
@@ -171,7 +178,7 @@ export class Coordinator {
       // O setup prepara a pasta nova (ex.: npm ci) e só então a CLI começa. Falhou,
       // a tarefa para: o agente não deve trabalhar sem as dependências.
       const setup = this.store.settings().setup[t.projectId]?.trim();
-      if (!legacy && setup && !t.setupDone) {
+      if (setup && !t.setupDone) {
         const code = await this.runSetup(id, e, setup);
         if (e.cancelled || this.stopping) {
           this.release(id, e);
@@ -214,6 +221,17 @@ export class Coordinator {
         }, t.timeoutMinutes * 60_000);
       this.changed();
     } catch (error) {
+      if (error instanceof PendingChangesError && !this.stopping && !e.cancelled) {
+        // Alterações pendentes na pasta do projeto: a tarefa volta à fila com aviso e tenta de novo.
+        this.store.transition(
+          id,
+          "queued",
+          "Aguardando: a pasta do projeto tem alterações não commitadas. Faça commit ou guarde-as; a tarefa começa quando a pasta estiver limpa.",
+        );
+        this.release(id, e, false);
+        this.retry();
+        return;
+      }
       if (!this.stopping && !e.cancelled)
         this.store.transition(id, "failed", (error as Error).message);
       this.release(id, e);
@@ -264,7 +282,7 @@ export class Coordinator {
       );
     this.release(id, e);
   }
-  private release(id: string, e: Execution) {
+  private release(id: string, e: Execution, pumpNow = true) {
     if (this.active.get(id) !== e) return;
     if (e.timer) clearTimeout(e.timer);
     if (e.exitTimer) clearTimeout(e.exitTimer);
@@ -272,8 +290,15 @@ export class Coordinator {
     if (this.owners.get(e.path) === id) this.owners.delete(e.path);
     if (!this.stopping) {
       this.changed();
-      this.pump();
+      if (pumpNow) this.pump();
     }
+  }
+  // Tenta de novo depois de um intervalo; sem isso, a tarefa só voltaria com outro evento.
+  private retry() {
+    const timer = setTimeout(() => {
+      if (!this.stopping) this.pump();
+    }, 5000);
+    timer.unref?.();
   }
   cancel(id: string) {
     const e = this.active.get(id);

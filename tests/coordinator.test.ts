@@ -1,8 +1,11 @@
 import { it, expect, vi } from "vitest";
 import { Store } from "../src/main/store";
 import { Coordinator, type Driver, type Handle } from "../src/main/coordinator";
-import { GitService } from "../src/main/git";
-function setup(finder?: (provider: string, cwd: string, since: number) => Promise<string | null>) {
+import { GitService, PendingChangesError } from "../src/main/git";
+function setup(
+  finder?: (provider: string, cwd: string, since: number) => Promise<string | null>,
+  prepare?: () => Promise<string>,
+) {
   const store = new Store(":memory:");
   store.addProject({ id: "p", name: "Repo", path: "/repo", remotes: ["origin"] });
   store.addProject({ id: "q", name: "Other", path: "/other", remotes: ["origin"] });
@@ -23,7 +26,7 @@ function setup(finder?: (provider: string, cwd: string, since: number) => Promis
     },
   };
   const git = {
-    prepare: async () => "abc",
+    prepare: prepare ?? (async () => "abc"),
     prepareWorktree: async () => "abc",
     requireCurrent: async () => {},
     fingerprint: async () => "rev",
@@ -57,25 +60,22 @@ function setup(finder?: (provider: string, cwd: string, since: number) => Promis
   return { store, c, started, create };
 }
 const tick = () => new Promise((r) => setTimeout(r, 20));
-it("runs tasks of the same repository in their own worktrees, limited only by concurrency", async () => {
+it("runs tasks of one repository one at a time in the project folder; other repositories run in parallel", async () => {
   const { store, c, started, create } = setup();
   const a = create("p", "golfinho/a"),
     b = create("p", "golfinho/b"),
-    d = create("p", "golfinho/d");
+    other = create("q", "golfinho/o");
   c.queue(a.id);
   c.queue(b.id);
-  c.queue(d.id);
+  c.queue(other.id);
   await tick();
-  // Duas vagas (padrão): as duas primeiras rodam em pastas distintas, sem disputar o checkout.
-  expect(started.length).toBe(2);
-  expect(new Set(started.map((s) => s.cwd)).size).toBe(2);
-  expect(started.every((s) => s.cwd.replace(/\\/g, "/").startsWith("/wt/p/"))).toBe(true);
-  expect(store.task(d.id).status).toBe("queued");
+  // Uma pasta por projeto: a segunda tarefa do mesmo projeto espera; o outro projeto roda junto.
+  expect(started.map((s) => s.cwd)).toEqual(["/repo", "/other"]);
+  expect(store.task(b.id).status).toBe("queued");
   started[0].exit(0);
   await tick();
   expect(store.task(a.id).status).toBe("review");
-  expect(store.task(d.id).status).toBe("running");
-  expect(started.length).toBe(3);
+  expect(started.map((s) => s.cwd)).toEqual(["/repo", "/other", "/repo"]);
   c.shutdown();
   store.close();
 });
@@ -95,7 +95,7 @@ it("does not relaunch a cancelled task and rejects operations while the reposito
 it("keeps a cancelled worktree owned until its process acknowledges exit", async () => {
   const { store, c, started, create } = setup();
   const a = create("p", "golfinho/a"),
-    b = create("p", "golfinho/b");
+    b = create("q", "golfinho/b");
   // start a driver whose stop request does not immediately end the process.
   const driver: Driver = {
     start: async (_c, args, cwd, _d, exit) => {
@@ -129,7 +129,7 @@ it("keeps a cancelled worktree owned until its process acknowledges exit", async
   await tick();
   // A pasta de a segue ocupada até o processo confirmar a saída...
   await expect(runner.exclusive(a.id, async () => null)).rejects.toThrow(/execução/i);
-  // ...mas b não espera: tem pasta própria.
+  // ...mas b, de outro projeto, não espera.
   expect(store.task(b.id).status).toBe("running");
   started[0].exit(0);
   await tick();
@@ -159,7 +159,7 @@ it("queues a check when the limit is full instead of failing the request", async
   expect(settled).toBe(false);
   expect(store.events(target.id).some((e) => /aguardando vaga/i.test(e.message))).toBe(true);
   expect(store.checks(target.id)).toHaveLength(0);
-  started.find((s) => s.cwd.replace(/\\/g, "/").startsWith("/wt/q/"))!.exit(0);
+  started.find((s) => s.cwd === "/other")!.exit(0);
   await tick();
   // Com a vaga livre o check arranca sozinho, sem o usuário repetir a ação.
   const run = started.find((s) => s.cwd === "/repo");
@@ -179,7 +179,7 @@ it("applies requested dimensions after delayed terminal startup and reports read
   let resolveStart!: (h: Handle) => void;
   let end!: (code: number) => void;
   const driver: Driver = { start: (_cmd, _args, _cwd, _data, exit) => { end = exit; return new Promise(resolve => { resolveStart = resolve; }); } };
-  const runner = new Coordinator(store, { prepareWorktree: async()=>"abc" } as unknown as GitService, driver, {append(){},replay(){return{data:"",nextOffset:0};},remove(){}}, ()=>{}, "/wt");
+  const runner = new Coordinator(store, { prepare: async()=>"abc", prepareWorktree: async()=>"abc" } as unknown as GitService, driver, {append(){},replay(){return{data:"",nextOffset:0};},remove(){}}, ()=>{}, "/wt");
   runner.queue(task.id); await tick();
   expect(runner.ready(task.id)).toBe(false);
   runner.resize(task.id, 143, 41);
@@ -278,10 +278,10 @@ it("runs the project setup in the new folder before the CLI, and marks it done",
   const task = create("p", "golfinho/setup");
   c.queue(task.id);
   await tick();
-  // Primeiro processo é o setup, dentro da pasta nova; a CLI ainda não subiu.
+  // Primeiro processo é o setup, na pasta da tarefa; a CLI ainda não subiu.
   expect(started).toHaveLength(1);
   expect(started[0].args).toEqual(["-lc", "npm ci"]);
-  expect(started[0].cwd.replace(/\\/g, "/").startsWith("/wt/p/")).toBe(true);
+  expect(started[0].cwd).toBe("/repo");
   started[0].exit(0);
   await tick();
   expect(started).toHaveLength(2);
@@ -377,5 +377,19 @@ it("recusa encerrar agente sem comando de saída verificado", async () => {
   expect(() => c.endSession(agy.id)).toThrow(/comando de saída verificado/);
   expect(started.every((s) => s.writes.length === 0)).toBe(true);
   await c.shutdown();
+  store.close();
+});
+
+it("keeps the task queued with a warning, not failed, when the project folder has pending changes", async () => {
+  const { store, c, started, create } = setup(undefined, async () => {
+    throw new PendingChangesError("Há alterações locais.");
+  });
+  const a = create("p", "golfinho/a");
+  c.queue(a.id);
+  await tick();
+  expect(started).toHaveLength(0);
+  expect(store.task(a.id).status).toBe("queued");
+  expect(store.events(a.id).some((e) => /alterações não commitadas/.test(e.message))).toBe(true);
+  c.shutdown();
   store.close();
 });

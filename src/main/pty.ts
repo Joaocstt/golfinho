@@ -1,6 +1,21 @@
 import { readFileSync, readdirSync } from "node:fs";
+import { spawn } from "node:child_process";
 import { executablePath } from "./agents";
 import type { Driver } from "./coordinator";
+// Encerra a CLI e os processos do mesmo grupo. Fora do Linux não há /proc para rastrear
+// membros, então o grupo inteiro é sinalizado. No Windows, taskkill /T derruba a árvore.
+export function killGroup(pid: number, signal: NodeJS.Signals) {
+  if (process.platform === "win32") {
+    spawn("taskkill", ["/pid", String(pid), "/T", "/F"], { stdio: "ignore", windowsHide: true })
+      .on("error", () => undefined);
+    return;
+  }
+  try {
+    process.kill(-pid, signal);
+  } catch {
+    /* o grupo já encerrou */
+  }
+}
 function identity(pid: number) {
   try {
     const s = readFileSync(`/proc/${pid}/stat`, "utf8");
@@ -42,6 +57,8 @@ export const ptyDriver: Driver = {
     let escalated = false;
     let code = 0;
     const members = new Map<number, string>();
+    // Sem rastreamento por /proc, cada sinal vai ao grupo uma única vez.
+    const sent = new Set<NodeJS.Signals>();
     if (owned) members.set(child.pid, owned.start);
     let resolveClosed!: () => void;
     const closed = new Promise<void>((resolve) => {
@@ -63,6 +80,13 @@ export const ptyDriver: Driver = {
       }
     };
     const signalMembers = (signal: NodeJS.Signals) => {
+      if (!owned) {
+        if (!sent.has(signal)) {
+          sent.add(signal);
+          killGroup(child.pid, signal);
+        }
+        return;
+      }
       for (const [pid, start] of members) {
         const current = identity(pid);
         if (!current || current.start !== start || current.state === "Z") continue;

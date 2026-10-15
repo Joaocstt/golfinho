@@ -1836,8 +1836,8 @@ function TaskForm({
               ))}
             </select>
             <small className="form-hint-block">
-              A branch não pode estar aberta na pasta do projeto. A revisão mostra só o que a tarefa
-              fizer daqui em diante, e excluir a tarefa nunca apaga essa branch.
+              A tarefa entra nesta branch e trabalha diretamente nela. Ela não pode estar aberta em
+              outra pasta. Excluir a tarefa nunca apaga essa branch.
             </small>
           </label>
         ) : (
