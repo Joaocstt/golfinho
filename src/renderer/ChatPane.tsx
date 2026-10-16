@@ -8,6 +8,7 @@ export interface ChatPaneProps {
   provider: string;
   model?: string | null;
   onError: (e: unknown) => void;
+  approvalTarget?: { id: string; version: number };
 }
 // Cada provedor tem a sua cor de destaque, para não parecer a conversa de outro.
 const LABELS: Record<string, string> = { claude: "Claude", codex: "Codex", antigravity: "Antigravity" };
@@ -134,7 +135,7 @@ const Blocks = memo(function Blocks({ blocks }: { blocks: ChatBlock[] }) {
     </>
   );
 });
-export function ChatPane({ taskId, provider, model, onError }: ChatPaneProps) {
+export function ChatPane({ taskId, provider, model, onError, approvalTarget }: ChatPaneProps) {
   const [items, setItems] = useState<ChatHistoryItem[]>([]);
   const [draft, setDraft] = useState("");
   const [attachments, setAttachments] = useState<string[]>([]);
@@ -283,6 +284,21 @@ export function ChatPane({ taskId, provider, model, onError }: ChatPaneProps) {
   const [shown, setShown] = useState(MESSAGES_PAGE);
   useEffect(() => setShown(MESSAGES_PAGE), [taskId]);
   const shownItems = items.length > shown ? items.slice(items.length - shown) : items;
+  const revealedApproval = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (!approvalTarget) return;
+    const key = `${approvalTarget.id}:${approvalTarget.version}`;
+    if (revealedApproval.current === key) return;
+    const index = items.findIndex(({ event }) => event.type === "approval" && event.id === approvalTarget.id);
+    if (index < 0) return;
+    if (index < items.length - shown) { setShown(items.length - index); return; }
+    const card = [...(logRef.current?.querySelectorAll<HTMLElement>(".chat-approval") ?? [])]
+      .find((element) => element.dataset.approvalId === approvalTarget.id);
+    if (!card) return;
+    card.scrollIntoView({ block: "center" });
+    card.querySelector<HTMLButtonElement>("button")?.focus();
+    revealedApproval.current = key;
+  }, [items, shown, approvalTarget]);
   const messages = useMemo(
     () =>
       shownItems.map(({ seq, event }, i) => {
@@ -328,7 +344,7 @@ export function ChatPane({ taskId, provider, model, onError }: ChatPaneProps) {
           if (event.type === "approval") {
             const outcome = resolved.get(event.id);
             return (
-              <div key={seq} className="chat-approval">
+              <div key={seq} className="chat-approval" data-approval-id={event.id}>
                 <div className="chat-approval-title">Permitir {event.toolName}?</div>
                 <code>{event.summary}</code>
                 {outcome ? (

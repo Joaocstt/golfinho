@@ -21,6 +21,9 @@ import type { Request, TerminalReplay } from "../shared/contracts";
 export interface TerminalPaneProps {
   taskId: string;
   active?: boolean;
+  autoFocus?: boolean;
+  focusRequest?: number;
+  onInput?: (data: string) => void;
   provider?: string;
   status?: string;
   onError: (e: unknown) => void;
@@ -77,13 +80,17 @@ function initialFont() {
     return DEFAULT_FONT;
   }
 }
-export function TerminalPane({ taskId, active = false, provider, status, onError }: TerminalPaneProps) {
+export function TerminalPane({ taskId, active = false, autoFocus = true, focusRequest = 0, onInput, provider, status, onError }: TerminalPaneProps) {
   const host = useRef<HTMLDivElement>(null);
   const searchInput = useRef<HTMLInputElement>(null);
   const tools = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const searchRef = useRef<SearchAddon | null>(null);
   const ready = useRef(active);
+  const focusAllowed = useRef(autoFocus);
+  focusAllowed.current = autoFocus;
+  const inputSent = useRef(onInput);
+  inputSent.current = onInput;
   const error = useRef(onError);
   ready.current = active;
   error.current = onError;
@@ -262,7 +269,9 @@ export function TerminalPane({ taskId, active = false, provider, status, onError
       });
     const input = terminal.onData((data) => {
       if (alive && ready.current)
-        request({ action: "input", taskId, data }).catch((e) => {
+        request({ action: "input", taskId, data }).then(() => {
+          inputSent.current?.(data);
+        }).catch((e) => {
           if (alive) error.current(e);
         });
     });
@@ -316,8 +325,16 @@ export function TerminalPane({ taskId, active = false, provider, status, onError
     terminal.options.disableStdin = !active;
     terminal.options.cursorBlink = active;
     terminal.write(active ? "\x1b[?25h" : "\x1b[?25l");
-    if (active) runtime.current?.resize();
+    if (active) {
+      runtime.current?.resize();
+      // Ao iniciar pela fila, o foco ainda está no botão de início. Entrega o
+      // teclado à CLI assim que ela aceita entrada, como nos terminais de shell.
+      if (focusAllowed.current) terminal.focus();
+    }
   }, [active, taskId]);
+  useEffect(() => {
+    if (focusRequest && ready.current && focusAllowed.current) terminalRef.current?.focus();
+  }, [focusRequest, taskId]);
   useEffect(() => {
     const terminal = terminalRef.current;
     if (terminal) {

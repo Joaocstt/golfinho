@@ -116,6 +116,11 @@ const TOPICS: Topic[] = [
           <b>Negar</b> (o agente recebe o aviso e tenta outro caminho).
         </li>
         <li>
+          Pedidos do Chat e pedidos reconhecidos no Terminal geram um aviso no app e destacam a
+          tarefa. <b>Abrir pedido</b> leva à conversa para você responder; receber o aviso não muda
+          o foco nem concede permissão. No Terminal, a detecção depende do formato da pergunta da CLI.
+        </li>
+        <li>
           O Golfinho não usa nenhuma opção que pula permissões. Mesmo assim, não há sandbox própria: os
           agentes têm o acesso que as CLIs concedem. Revise sempre o diff.
         </li>
@@ -173,6 +178,15 @@ const TOPICS: Topic[] = [
         </li>
         <li>
           <b>+</b> no topo: abre um Shell ou um agente fora de qualquer tarefa.
+        </li>
+        <li>
+          Para ver duas tarefas lado a lado, abra as duas abas e use <b>Abrir ao lado</b> na aba da
+          outra tarefa. Arraste a divisória para ajustar a largura; <b>Exibir apenas esta tarefa</b>
+          volta ao painel único. O inspetor acompanha a tarefa em foco.
+        </li>
+        <li>
+          Ao alternar tarefas abertas, cada uma mantém sua aba, arquivo e sessões. Fechar a aba
+          pede confirmação se houver uma edição não salva.
         </li>
         <li>
           <b>Consumo</b>: a cota de cada agente, lida pela própria CLI.

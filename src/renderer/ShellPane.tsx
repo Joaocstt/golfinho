@@ -16,10 +16,12 @@ export function ShellPane({
   scopeKey,
   openSession,
   onError,
+  autoFocus = true,
 }: {
   scopeKey: string;
   openSession: () => Promise<string>;
   onError: (e: unknown) => void;
+  autoFocus?: boolean;
 }) {
   const host = useRef<HTMLDivElement>(null);
   const [ended, setEnded] = useState<number | null>(null);
@@ -31,6 +33,8 @@ export function ShellPane({
   const openRef = useRef(openSession);
   openRef.current = openSession;
   const mounted = useRef(false);
+  const focusAllowed = useRef(autoFocus);
+  focusAllowed.current = autoFocus;
   useEffect(() => {
     const terminal = new Terminal({
       fontFamily:
@@ -128,7 +132,7 @@ export function ShellPane({
           shellId = id;
           for (const signal of backlog.splice(0)) if (signal.id === id) apply(signal);
           sendSize();
-          terminal.focus();
+          if (focusAllowed.current) terminal.focus();
         } else if (!mounted.current) {
           // Desmontagem de verdade: o processo que acabou de abrir não tem mais quem o veja.
           starts.delete(key);

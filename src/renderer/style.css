@@ -713,6 +713,96 @@ h1 {
   overflow: hidden;
   background: #262624;
 }
+.task-workspaces {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+.task-workspaces[hidden] {
+  display: none;
+}
+.permission-notices {
+  flex-shrink: 0;
+  max-height: 180px;
+  overflow: auto;
+  border-bottom: 1px solid #dcb36b44;
+}
+.permission-notice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: #342d21;
+  color: #e6c486;
+  font-size: var(--text-sm);
+}
+.permission-notice + .permission-notice {
+  border-top: 1px solid #dcb36b22;
+}
+.permission-notice > svg {
+  flex-shrink: 0;
+}
+.permission-notice > div {
+  min-width: 0;
+  flex: 1;
+}
+.permission-notice strong,
+.permission-notice span {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.permission-notice strong {
+  font-weight: 500;
+}
+.permission-notice span {
+  margin-top: 2px;
+  color: #c0ad8d;
+}
+.permission-notice button {
+  flex-shrink: 0;
+  border-color: #dcb36b55;
+}
+.permission-indicator {
+  color: #e6c486;
+  flex-shrink: 0;
+}
+.task-workspaces.divided .detail-head {
+  border-top: 2px solid transparent;
+}
+.task-workspaces.divided .detail[data-focused] .detail-head {
+  border-top-color: #c7a594;
+}
+.task-divider {
+  grid-column: 2;
+  grid-row: 1;
+  cursor: col-resize;
+  touch-action: none;
+  background: #191a1d;
+}
+.task-divider:hover,
+.task-divider:focus-visible {
+  background: #c7a594;
+}
+.task-inspector-host {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+}
+.workspace-tab.visible {
+  box-shadow: inset 0 -2px #c7a59466;
+}
+.workspace-split,
+.workspace-unsplit {
+  padding: 4px;
+  border: 0;
+  background: transparent;
+  color: #a1a1a1;
+}
 .detail-head {
   padding: 10px 13px 8px;
   display: flex;
@@ -873,6 +963,43 @@ h1 {
 }
 .welcome {
   min-height: 180px;
+}
+.task-start-guide {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 32px 24px;
+  background: #262624;
+}
+.task-start-content {
+  width: 100%;
+  max-width: 440px;
+  margin: auto;
+  text-align: center;
+  color: #a6a298;
+  font-size: var(--text-md);
+  line-height: 1.7;
+}
+.task-start-content > svg {
+  color: #c7a594;
+  margin-bottom: 12px;
+}
+.task-start-content h2 {
+  margin: 0 0 12px;
+  color: #e2dfd5;
+  font-size: var(--text-lg);
+  font-weight: 500;
+}
+.task-start-content p {
+  margin: 0 0 14px;
+}
+.task-start-content b {
+  color: #d4d1c5;
+  font-weight: 500;
+}
+.task-start-content button {
+  margin-top: 8px;
 }
 .error {
   display: flex;

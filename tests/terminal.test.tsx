@@ -15,12 +15,55 @@ vi.mock('@xterm/addon-web-links',()=>({WebLinksAddon:class{constructor(_h:any){}
 vi.mock('@xterm/addon-unicode11',()=>({Unicode11Addon:class{}}));
 vi.mock('@xterm/addon-search',()=>({SearchAddon:class{result=(_r:any)=>{};findNext=vi.fn(()=>{this.result({resultIndex:0,resultCount:3});return true;});findPrevious=vi.fn(()=>true);clearDecorations=vi.fn();clearActiveDecoration=vi.fn();dispose=vi.fn();constructor(){mock.searches.push(this);}onDidChangeResults(fn:any){this.result=fn;return {dispose:vi.fn()};}}}));
 import {TerminalPane} from '../src/renderer/TerminalPane';
+import {ShellPane} from '../src/renderer/ShellPane';
 let signal:(s:Signal)=>void;let request:ReturnType<typeof vi.fn<(r:Request)=>Promise<Response>>>;const props={taskId:'terminal-default',active:true,provider:'codex',status:'running',onError:vi.fn()};
 const openMenu=()=>fireEvent.click(screen.getByRole('button',{name:'Mais ações do terminal'}));
 const menuItem=(name:string)=>{openMenu();return screen.getByRole('button',{name});};
 beforeEach(()=>{mock.instances.length=0;mock.searches.length=0;localStorage.clear();vi.stubGlobal('ResizeObserver',class{observe(){}disconnect(){}});request=vi.fn(async(r:Request)=>r.action==='terminal'?{data:'histórico',nextOffset:9}:(r as any).action==='readClipboard'?'conteúdo colado':null);window.golfinho={request,subscribe:fn=>{signal=fn;return()=>{};}};});
 afterEach(()=>{cleanup();vi.unstubAllGlobals();vi.clearAllMocks();});
 const terminal=()=>mock.instances.at(-1);const search=()=>mock.searches.at(-1);
+it('leva o foco para a CLI quando a fila termina de preparar o terminal',async()=>{
+ const rendered=render(<TerminalPane {...props} active={false}/>);
+ await waitFor(()=>expect(terminal().write).toHaveBeenCalledWith('histórico',expect.any(Function)));
+ const existing=terminal();
+ expect(existing.focus).not.toHaveBeenCalled();
+ rendered.rerender(<TerminalPane {...props} active={true}/>);
+ expect(existing.focus).toHaveBeenCalledTimes(1);
+ expect(existing.options.disableStdin).toBe(false);
+ act(()=>existing.data('comando\r'));
+ await waitFor(()=>expect(request).toHaveBeenCalledWith({action:'input',taskId:props.taskId,data:'comando\r'}));
+ rendered.rerender(<TerminalPane {...props} active={true} onError={vi.fn()}/>);
+ expect(existing.focus).toHaveBeenCalledTimes(1);
+});
+it('não rouba o foco quando uma tarefa em segundo plano fica pronta',async()=>{
+ const rendered=render(<TerminalPane {...props} active={false} autoFocus={false}/>);
+ rendered.rerender(<TerminalPane {...props} active={true} autoFocus={false}/>);
+ expect(terminal().focus).not.toHaveBeenCalled();
+ expect(terminal().options.disableStdin).toBe(false);
+});
+it('não rouba o foco se o shell terminar de abrir depois de trocar de tarefa',async()=>{
+ let finish!:(id:string)=>void;
+ const start=new Promise<string>(resolve=>{finish=resolve;});
+ const open=()=>start;
+ const rendered=render(<ShellPane scopeKey="delayed-focus" openSession={open} onError={vi.fn()} autoFocus={true}/>);
+ rendered.rerender(<ShellPane scopeKey="delayed-focus" openSession={open} onError={vi.fn()} autoFocus={false}/>);
+ await act(async()=>{finish('shell-delayed');await start;});
+ expect(terminal().focus).not.toHaveBeenCalled();
+});
+it('confirma entrada somente após o envio e não repete o foco de um pedido antigo',async()=>{
+ const sent=vi.fn();
+ const rendered=render(<TerminalPane {...props} onInput={sent} focusRequest={0}/>);
+ await act(async()=>{terminal().data('\r');});
+ expect(sent).toHaveBeenCalledWith('\r');
+ rendered.rerender(<TerminalPane {...props} onInput={sent} focusRequest={1}/>);
+ const count=terminal().focus.mock.calls.length;
+ rendered.rerender(<TerminalPane {...props} onInput={sent} focusRequest={1} autoFocus={false}/>);
+ rendered.rerender(<TerminalPane {...props} onInput={sent} focusRequest={1} autoFocus={true}/>);
+ expect(terminal().focus).toHaveBeenCalledTimes(count);
+ request.mockRejectedValueOnce(new Error('input failed'));
+ await act(async()=>{terminal().data('n\r');});
+ expect(sent).not.toHaveBeenCalledWith('n\r');
+});
 it('busca texto com resultados e navegação, Escape fecha',async()=>{render(<TerminalPane {...props}/>);fireEvent.click(screen.getByRole('button',{name:'Buscar no terminal'}));fireEvent.change(screen.getByRole('searchbox',{name:'Texto no terminal'}),{target:{value:'login'}});await waitFor(()=>expect(search().findNext).toHaveBeenCalledWith('login',expect.any(Object)));expect(screen.getByRole('status').textContent).toContain('1 de 3');fireEvent.click(screen.getByRole('button',{name:'Resultado anterior'}));expect(search().findPrevious).toHaveBeenCalled();fireEvent.keyDown(screen.getByRole('searchbox'),{key:'Escape'});expect(screen.queryByRole('searchbox')).toBeNull();});
 it('zoom persiste, limita 10–22 e restaura 14',async()=>{const rendered=render(<TerminalPane {...props}/>);openMenu();for(let i=0;i<20;i++)fireEvent.click(screen.getByRole('button',{name:'Aumentar fonte do terminal'}));expect(terminal().options.fontSize).toBe(22);expect(localStorage.getItem('golfinho.terminal.fontSize')).toBe('22');rendered.unmount();render(<TerminalPane {...props} taskId="zoom-other"/>);expect(terminal().options.fontSize).toBe(22);openMenu();for(let i=0;i<20;i++)fireEvent.click(screen.getByRole('button',{name:'Diminuir fonte do terminal'}));expect(terminal().options.fontSize).toBe(10);fireEvent.click(screen.getByRole('button',{name:'Restaurar tamanho da fonte'}));expect(terminal().options.fontSize).toBe(14);});
 it('menu reúne as ações secundárias e fecha ao escolher ou com Escape',async()=>{render(<TerminalPane {...props}/>);const menu=screen.getByRole('button',{name:'Mais ações do terminal'});expect(menu.getAttribute('aria-expanded')).toBe('false');expect(screen.queryByRole('button',{name:'Limpar somente a tela'})).toBeNull();const popover=()=>screen.queryByRole('group',{name:'Ações do terminal'});openMenu();expect(popover()).toBeTruthy();fireEvent.keyDown(popover()!,{key:'Escape'});expect(popover()).toBeNull();openMenu();fireEvent.click(screen.getByRole('button',{name:'Selecionar tudo no terminal'}));expect(popover()).toBeNull();openMenu();fireEvent.pointerDown(document.body);expect(popover()).toBeNull();});

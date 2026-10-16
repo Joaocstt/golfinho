@@ -4,10 +4,8 @@ import {
   Plus,
   Settings as SettingsIcon,
   GitBranch,
-  Activity,
   List,
   X,
-  Play,
   Search,
   PanelRight,
   Files,
@@ -20,15 +18,15 @@ import {
   Server,
   ChevronDown,
   CircleHelp,
+  Columns2,
+  Maximize2,
+  ShieldQuestion,
 } from "lucide-react";
 import type {
   Snapshot,
   Task,
   Request,
   CreateTask,
-  Review,
-  TaskEvent,
-  Check,
   Settings,
   Project,
   Provider,
@@ -36,53 +34,20 @@ import type {
   DeleteInfo,
   ProviderQuota,
 } from "../shared/contracts";
-import { TerminalPane, DiffPane, FileEditor, FileTree } from "./Editors";
-import { ChatPane } from "./ChatPane";
+import { TaskWorkspace, type TaskWorkspaceHandle } from "./TaskWorkspace";
+import { PermissionNotices } from "./PermissionNotices";
+import { usePermissionRequests } from "./usePermissionRequests";
+import type { PermissionRequest } from "./permissionRequests";
 import { ShellPane } from "./ShellPane";
 import { AgentIcon } from "./agentIcons";
-import { CommitPanel } from "./CommitPanel";
 import { AgentQuotaTip } from "./AgentQuota";
 import { SshPanel } from "./SshPanel";
 import { HelpPane } from "./HelpPane";
-import { ReviewFiles } from "./ReviewFiles";
 import { RemoteTree } from "./RemoteTree";
 import { RemoteViewer } from "./RemoteViewer";
 import golfinhoLogo from "../../build/icon.png";
 
-type DropZone = "left" | "right" | "top" | "bottom" | "center";
-// Layout da divisão fica nesta máquina, como preferência de tela.
-function storedSplit(): { dir: "right" | "bottom"; ratio: number } {
-  try {
-    const v = JSON.parse(localStorage.getItem("golfinho.split") ?? "null");
-    if ((v?.dir === "right" || v?.dir === "bottom") && typeof v.ratio === "number")
-      return { dir: v.dir, ratio: Math.min(0.85, Math.max(0.15, v.ratio)) };
-  } catch {
-    /* preferência ilegível: usa o padrão */
-  }
-  return { dir: "right", ratio: 0.5 };
-}
-// Qual parte da área o cursor está: as bordas abrem painel; o centro troca a aba principal.
-function zoneAt(e: React.DragEvent, box: HTMLElement): DropZone {
-  const r = box.getBoundingClientRect();
-  const x = (e.clientX - r.left) / r.width;
-  const y = (e.clientY - r.top) / r.height;
-  if (x < 0.25) return "left";
-  if (x > 0.75) return "right";
-  if (y < 0.25) return "top";
-  if (y > 0.75) return "bottom";
-  return "center";
-}
 const request = <T,>(r: Request) => window.golfinho.request(r) as Promise<T>;
-const CHANGE_COLOR: Record<string, string> = {
-  modified: "#e5c07b",
-  added: "#98c379",
-  deleted: "#e06c75",
-};
-const CHANGE_WORD: Record<string, string> = {
-  modified: "modificado",
-  added: "novo",
-  deleted: "apagado",
-};
 // Há quanto tempo a tarefa mudou pela última vez. Não é o tempo de execução da CLI:
 // updatedAt muda com transições e notas, não com cada linha de saída.
 function ago(iso: string, now: number) {
@@ -102,9 +67,9 @@ const labels: Record<string, string> = {
   failed: "Falhou",
   cancelled: "Cancelada",
 };
-const date = (s: string) => new Date(s).toLocaleString("pt-BR");
 const AGENT_NAMES: Record<string, string> = { codex: "Codex", claude: "Claude", antigravity: "Antigravity" };
 const OPEN_KEY = "golfinho.workspaces";
+const clampTaskRatio = (value: number) => Math.max(0.2, Math.min(0.8, value));
 export default function App() {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null),
     [project, setProject] = useState(""),
@@ -112,15 +77,11 @@ export default function App() {
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false),
     [modal, setModal] = useState<"task" | "settings" | null>(null);
-  const [tab, setTab] = useState("Terminal"),
-    [review, setReview] = useState<Review | null>(null),
-    [events, setEvents] = useState<TaskEvent[]>([]),
-    [checks, setChecks] = useState<Check[]>([]),
-    [file, setFile] = useState(""),
-    [command, setCommand] = useState(""),
-    [dirty, setDirty] = useState(false);
+  const [dirty, setDirty] = useState(false);
+  const { pending: permissionRequests, answeredTerminal } = usePermissionRequests(snapshot?.tasks);
+  const permissionTasks = new Set(permissionRequests.map((request) => request.taskId));
+  const [permissionTarget, setPermissionTarget] = useState<PermissionRequest | null>(null);
   const [query, setQuery] = useState(""),
-    [fileQuery, setFileQuery] = useState(""),
     [sidebarWidth, setSidebarWidth] = useState(260),
     [inspector, setInspector] = useState(() => window.innerWidth >= 880);
   // As abas do topo listavam toda tarefa existente, o que não dá para fechar.
@@ -134,6 +95,18 @@ export default function App() {
     }
   });
   const [deleting, setDeleting] = useState("");
+  const [splitTasks, setSplitTasks] = useState<string[]>([]);
+  const [taskRatio, setTaskRatio] = useState(0.5);
+  const taskArea = useRef<HTMLDivElement>(null);
+  const panels = useRef<Record<string, TaskWorkspaceHandle>>({});
+  const [inspectorHost, setInspectorHost] = useState<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!permissionTarget || selected !== permissionTarget.taskId) return;
+    const panel = panels.current[permissionTarget.taskId];
+    if (!panel) return;
+    panel.openPermission(permissionTarget.source, permissionTarget.approvalId);
+    setPermissionTarget(null);
+  }, [permissionTarget, selected, open]);
   const [dashboard, setDashboard] = useState(false);
   const [sshView, setSshView] = useState(false);
   const [helpView, setHelpView] = useState(false);
@@ -153,13 +126,6 @@ export default function App() {
     const timer = setInterval(() => setNow(Date.now()), 30_000);
     return () => clearInterval(timer);
   }, []);
-  const [fileWritable, setFileWritable] = useState(true);
-  // Sessões avulsas (shell ou agente) abertas pelo "+", por tarefa.
-  const [sessions, setSessions] = useState<
-    Record<string, { key: string; label: string; provider?: Provider; prompt?: string }[]>
-  >({});
-  const [notice, setNotice] = useState("");
-  const [sessionMenu, setSessionMenu] = useState(false);
   // Terminais gerais: fora de qualquer tarefa, na barra superior.
   const [general, setGeneral] = useState<
     { key: string; label: string; provider?: Provider; projectId?: string; connectionId?: string }[]
@@ -182,8 +148,7 @@ export default function App() {
   }, [dashboard, activeGeneral, selected, sshView]);
   const resizeCleanup = useRef<() => void>(() => {});
   useEffect(() => () => resizeCleanup.current(), []);
-  const detailEpoch = useRef(0),
-    snapshotEpoch = useRef(0);
+  const snapshotEpoch = useRef(0);
   const selectedRef = useRef(selected);
   selectedRef.current = selected;
   const report = useCallback(
@@ -199,35 +164,15 @@ export default function App() {
       report(e);
     }
   }, [report]);
-  const loadDetails = useCallback(
-    async (id: string) => {
-      const epoch = ++detailEpoch.current;
-      try {
-        const [ev, ch] = await Promise.all([
-          request<TaskEvent[]>({ action: "events", taskId: id }),
-          request<Check[]>({ action: "checks", taskId: id }),
-        ]);
-        if (epoch === detailEpoch.current && selectedRef.current === id) {
-          setEvents(ev);
-          setChecks(ch);
-        }
-      } catch (e) {
-        report(e);
-      }
-    },
-    [report],
-  );
   useEffect(() => {
     void refresh();
     const dispose = window.golfinho.subscribe((s) => {
       if (s.kind === "changed") {
-        setReview(null);
         void refresh();
-        if (selectedRef.current) void loadDetails(selectedRef.current);
       }
     });
     return dispose;
-  }, [refresh, loadDetails]);
+  }, [refresh]);
   useEffect(() => {
     try {
       localStorage.setItem(OPEN_KEY, JSON.stringify(open));
@@ -240,134 +185,30 @@ export default function App() {
       const alive = list.filter((id) => snapshot.tasks.some((t) => t.id === id));
       return alive.length === list.length ? list : alive;
     });
+    const remaining = splitTasks.filter((id) => snapshot.tasks.some((t) => t.id === id));
+    if (remaining.length !== splitTasks.length) setSplitTasks(remaining.length === 2 ? remaining : []);
     if (selectedRef.current && !snapshot.tasks.some((t) => t.id === selectedRef.current))
-      setSelected("");
-  }, [snapshot]);
-  useEffect(() => {
-    if (!dirty) return;
-    const guard = (event: BeforeUnloadEvent) => {
-      event.preventDefault();
-      event.returnValue = "";
-    };
-    window.addEventListener("beforeunload", guard);
-    return () => window.removeEventListener("beforeunload", guard);
-  }, [dirty]);
+      setSelected(remaining[0] ?? "");
+  }, [snapshot, splitTasks]);
   const task = snapshot?.tasks.find((t) => t.id === selected);
   const matches = (t: Task) =>
     [t.title, t.branch, t.prompt, snapshot?.projects.find((p) => p.id === t.projectId)?.name ?? ""]
       .join(" ")
       .toLocaleLowerCase()
       .includes(query.toLocaleLowerCase());
-  // Divisão de painéis: a aba principal e a secundária dividem a área de trabalho.
-  const [secondTab, setSecondTab] = useState<string | null>(null),
-    [splitDir, setSplitDir] = useState<"right" | "bottom">(() => storedSplit().dir),
-    [splitRatio, setSplitRatio] = useState(() => storedSplit().ratio),
-    [dragTab, setDragTab] = useState<string | null>(null),
-    [dropZone, setDropZone] = useState<DropZone | null>(null);
-  const bodyRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    try {
-      localStorage.setItem("golfinho.split", JSON.stringify({ dir: splitDir, ratio: splitRatio }));
-    } catch {
-      /* sem armazenamento: a divisão só não fica lembrada */
-    }
-  }, [splitDir, splitRatio]);
   const tasks =
     snapshot?.tasks.filter((t) => (!project || t.projectId === project) && matches(t)) ?? [];
-  useEffect(() => {
-    setReview(null);
-    setFile("");
-    setEvents([]);
-    setChecks([]);
-    setTab("Terminal");
-    setSecondTab(null);
-    setDirty(false);
-    if (selected) void loadDetails(selected);
-    else detailEpoch.current++;
-  }, [selected, loadDetails]);
   async function perform(operation: () => Promise<unknown>) {
     setBusy(true);
     setError("");
     try {
       await operation();
       await refresh();
-      if (selectedRef.current) await loadDetails(selectedRef.current);
     } catch (e) {
       report(e);
     } finally {
       setBusy(false);
     }
-  }
-  function dragStart(e: React.DragEvent, name: string) {
-    e.dataTransfer.setData("text/plain", name);
-    e.dataTransfer.effectAllowed = "move";
-    setDragTab(name);
-  }
-  function dragEnd() {
-    setDragTab(null);
-    setDropZone(null);
-  }
-  function bodyStyle(): React.CSSProperties | undefined {
-    if (!secondTab) return undefined;
-    return splitDir === "right"
-      ? { gridTemplateColumns: `${splitRatio}fr 6px ${1 - splitRatio}fr` }
-      : { gridTemplateRows: `${splitRatio}fr 6px ${1 - splitRatio}fr` };
-  }
-  // Selecionar uma aba: se ela estava no outro painel, os dois trocam de lugar.
-  function selectTab(name: string) {
-    if (name === secondTab) setSecondTab(tab);
-    setTab(name);
-  }
-  function shown(name: string) {
-    return tab === name || secondTab === name;
-  }
-  // Posição no grid: a aba principal fica na primeira metade, a secundária na outra.
-  function place(name: string): React.CSSProperties {
-    if (!secondTab) return { gridColumn: 1, gridRow: 1 };
-    const first = name === tab;
-    return splitDir === "right"
-      ? { gridColumn: first ? 1 : 3, gridRow: 1 }
-      : { gridColumn: 1, gridRow: first ? 1 : 3 };
-  }
-  function dropOn(dragged: string, zone: DropZone) {
-    navigate(() => {
-      if (zone === "center") {
-        setTab(dragged);
-        setSecondTab(null);
-        return;
-      }
-      const other = dragged === tab ? secondTab : tab;
-      if (!other) return;
-      setSplitDir(zone === "left" || zone === "right" ? "right" : "bottom");
-      if (zone === "left" || zone === "top") {
-        setTab(dragged);
-        setSecondTab(other);
-      } else {
-        setTab(other);
-        setSecondTab(dragged);
-      }
-    });
-  }
-  function resizeSplit(event: React.PointerEvent<HTMLDivElement>) {
-    event.preventDefault();
-    resizeCleanup.current();
-    const body = bodyRef.current;
-    if (!body) return;
-    const vertical = splitDir === "bottom";
-    const move = (e: PointerEvent) => {
-      const box = body.getBoundingClientRect();
-      const share = vertical
-        ? (e.clientY - box.top) / box.height
-        : (e.clientX - box.left) / box.width;
-      setSplitRatio(Math.min(0.85, Math.max(0.15, share)));
-    };
-    const end = () => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", end);
-    };
-    resizeCleanup.current = end;
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", end);
   }
   // Consumo mostrado ao passar o mouse na barra inferior. O serviço já guarda a leitura por um minuto.
   const [quotaTips, setQuotaTips] = useState<Partial<Record<Provider, ProviderQuota>>>({});
@@ -391,9 +232,37 @@ export default function App() {
     }
   }
   function navigate(action: () => void) {
-    if (dirty && !window.confirm("Descartar alterações não salvas do arquivo?")) return;
+    // Mudar de visão apenas oculta os painéis; os editores e sessões continuam montados.
     setDirty(false);
     action();
+  }
+  function splitWith(id: string) {
+    if (!selected || selected === id) return;
+    setSplitTasks([selected, id]);
+    setOpen((current) => current.includes(id) ? current : [...current, id]);
+    setSelected(id);
+    setDashboard(false);
+    setSshView(false);
+    setHelpView(false);
+    setActiveGeneral("");
+  }
+  function showOnlyFocused() {
+    setSplitTasks([]);
+  }
+  function resizeTasks(event: React.PointerEvent<HTMLDivElement>) {
+    event.preventDefault();
+    resizeCleanup.current();
+    const move = (event: PointerEvent) => {
+      const box = taskArea.current?.getBoundingClientRect();
+      if (box?.width) setTaskRatio(clampTaskRatio((event.clientX - box.left) / box.width));
+    };
+    const end = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", end);
+    };
+    resizeCleanup.current = end;
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", end);
   }
   function addGeneral(label: string, provider?: Provider, connectionId?: string) {
     const key = crypto.randomUUID();
@@ -412,73 +281,38 @@ export default function App() {
     setDashboard(false);
     setSelected("");
   }
-  function addSession(taskId: string, label: string, provider?: Provider) {
-    const key = crypto.randomUUID();
-    setSessions((all) => ({
-      ...all,
-      [taskId]: [...(all[taskId] ?? []), { key, label, provider }],
-    }));
-    setTab(`session:${key}`);
-  }
   function openTask(id: string) {
+    if (splitTasks.includes(id)) {
+      setSelected(id);
+      setDashboard(false);
+      setActiveGeneral("");
+      setSshView(false);
+      setHelpView(false);
+      return;
+    }
     navigate(() => {
       setDashboard(false);
       setActiveGeneral("");
       setSelected(id);
+      setSplitTasks((current) => current.length === 2
+        ? current.map((item, index) => (current.includes(selected) ? item === selected : index === 0) ? id : item)
+        : []);
       setOpen((list) => (list.includes(id) ? list : [...list, id]));
     });
   }
   // Fechar é só tirar da barra: não toca na tarefa nem no repositório.
   function closeTask(id: string) {
+    if (panels.current[id]?.canLeave() === false) return;
     const drop = () => {
       const position = open.indexOf(id);
       const rest = open.filter((x) => x !== id);
       setOpen(rest);
-      if (selectedRef.current === id) setSelected(rest[position] ?? rest[position - 1] ?? "");
+      if (splitTasks.includes(id)) {
+        setSplitTasks([]);
+        setSelected(splitTasks.find((item) => item !== id) ?? "");
+      } else if (selectedRef.current === id) setSelected(rest[position] ?? rest[position - 1] ?? "");
     };
-    if (selected === id) navigate(drop);
-    else drop();
-  }
-  async function openReview() {
-    if (!task) return;
-    if (dirty && !window.confirm("Descartar alterações não salvas do arquivo?")) return;
-    setDirty(false);
-    await perform(async () => {
-      const id = task.id;
-      const result = await request<Review>({ action: "review", taskId: id });
-      if (selectedRef.current === id) {
-        setReview(result);
-        setFile(result.files[0]?.path ?? "");
-        setTab("Diff");
-      }
-    });
-  }
-  function act(
-    action:
-      | "queue"
-      | "cancel"
-      | "finish"
-      | "publish"
-      | "activate"
-      | "endSession"
-      | "testActivate"
-      | "testRestore",
-  ) {
-    if (!task) return;
-    if (action === "queue" || action === "finish") {
-      if (
-        dirty &&
-        !window.confirm(
-          "Salve o arquivo antes de continuar ou confirme para descartar as alterações não salvas.",
-        )
-      )
-        return;
-      setDirty(false);
-      setFile("");
-      setTab("Terminal");
-      setReview(null);
-    }
-    return perform(() => request({ action, taskId: task.id }));
+    drop();
   }
   function resizeSidebar(event: React.PointerEvent<HTMLDivElement>) {
     event.preventDefault();
@@ -619,6 +453,7 @@ export default function App() {
                               <i className={"state-dot " + t.status} />
                             </span>
                             <span className="branch-task-name">{t.title}</span>
+                            {permissionTasks.has(t.id) && <ShieldQuestion size={13} className="permission-indicator" aria-label="Aguardando permissão" />}
                             {!t.worktreePath && snapshot.activeBranches?.[p.id] === t.branch && (
                               <span className="branch-active" title="A pasta do projeto está nesta branch">
                                 ativa
@@ -739,7 +574,7 @@ export default function App() {
                 <div
                   role="presentation"
                   key={t.id}
-                  className={"workspace-tab " + (selected === t.id ? "active" : "")}
+                  className={"workspace-tab " + (selected === t.id ? "active" : splitTasks.includes(t.id) ? "visible" : "")}
                 >
                   <button
                     role="tab"
@@ -750,7 +585,14 @@ export default function App() {
                   >
                     <i className={"state-dot " + t.status} />
                     <span>{t.branch}</span>
+                    {permissionTasks.has(t.id) && <ShieldQuestion size={13} className="permission-indicator" aria-label="Aguardando permissão" />}
                   </button>
+                  {selected && selected !== t.id && !splitTasks.includes(t.id) && (
+                    <button className="workspace-split" aria-label={`Abrir ${t.branch} ao lado`}
+                      title="Abrir esta tarefa ao lado da tarefa atual" onClick={() => splitWith(t.id)}>
+                      <Columns2 size={12} />
+                    </button>
+                  )}
                   <button
                     className="workspace-close"
                     aria-label={"Fechar aba " + t.branch}
@@ -838,6 +680,12 @@ export default function App() {
               </div>
             ))}
           </div>
+          {splitTasks.length === 2 && (
+            <button className="workspace-unsplit" aria-label="Exibir apenas esta tarefa"
+              title="Exibir apenas a tarefa em foco" onClick={showOnlyFocused}>
+              <Maximize2 size={14} />
+            </button>
+          )}
           <button
             className="inspector-toggle"
             aria-label={inspector ? "Ocultar inspetor" : "Mostrar inspetor"}
@@ -848,6 +696,11 @@ export default function App() {
           </button>
         </header>
         <main className="main-area">
+          <PermissionNotices pending={permissionRequests} tasks={snapshot?.tasks ?? []} onOpen={(request) => {
+            openTask(request.taskId);
+            setRemoteFile(null);
+            setPermissionTarget(request);
+          }} />
           {error && !modal && (
             <div className="error" role="alert">
               {error}
@@ -951,458 +804,33 @@ export default function App() {
               )}
             </section>
           )}
-          {task && !dashboard && (
-            <section className="detail" hidden={Boolean(activeGeneral) || sshView}>
-              <div className="detail-head">
-                <div>
-                  {/* Status ao lado do título, no lugar da linha "TAREFA · …"; a branch só se repete se for diferente. */}
-                  <div className="detail-title">
-                    <h2>{task.title}</h2>
-                    <span className={"status-pill " + task.status}>{labels[task.status]}</span>
-                  </div>
-                  <p>
-                    <GitBranch size={13} />
-                    {task.branch !== task.title && <>{task.branch} </>}
-                    <span>
-                      {task.branch !== task.title ? "← " : "a partir de "}
-                      {task.base} · {task.remote}
-                    </span>
-                  </p>
-                </div>
-                <button aria-label="Fechar tarefa" onClick={() => closeTask(task.id)}>
-                  <X size={18} />
-                </button>
-              </div>
-              {task.error && <div className="error">{task.error}</div>}
-              {task.testCheckout && (
-                <p className="notice notice-warn" role="status">
-                  A pasta do projeto está no código desta tarefa, para teste. A branch original era{" "}
-                  <strong>{task.testCheckout.branch || task.testCheckout.sha.slice(0, 7)}</strong>.
-                  Volte antes de trabalhar em outra coisa.
-                </p>
-              )}
-              {notice && (
-                <p className="notice notice-ok" role="status" onClick={() => setNotice("")}>
-                  {notice}
-                </p>
-              )}
-              <div className="workbar">
-                <div className="tab-group">
-                  <div className="tabs">
-                  {["Terminal", "Chat", "Shell", "Diff", "Commit", "Arquivos", "Histórico", "Checks"]
-                    .filter((t) => (t !== "Shell" && t !== "Commit") || task.branchCreated)
-                    .map((t) => (
-                    <button
-                      key={t}
-                      className={tab === t ? "active" : secondTab === t ? "active secondary" : ""}
-                      draggable
-                      onDragStart={(e) => dragStart(e, t)}
-                      onDragEnd={dragEnd}
-                      onClick={() => navigate(() => selectTab(t))}
-                    >
-                      {t}
-                    </button>
-                  ))}
-                  {(sessions[task.id] ?? []).map((s) => (
-                    <span
-                      key={s.key}
-                      className={"session-tab " + (tab === `session:${s.key}` ? "active" : "")}
-                    >
-                      <button
-                        className={
-                          tab === `session:${s.key}`
-                            ? "active"
-                            : secondTab === `session:${s.key}`
-                              ? "active secondary"
-                              : ""
-                        }
-                        draggable
-                        onDragStart={(e) => dragStart(e, `session:${s.key}`)}
-                        onDragEnd={dragEnd}
-                        onClick={() => navigate(() => selectTab(`session:${s.key}`))}
-                      >
-                        {s.label}
-                      </button>
-                      <button
-                        className="session-close"
-                        aria-label={`Fechar ${s.label}`}
-                        title="Fecha a sessão e encerra o processo dela"
-                        onClick={() =>
-                          navigate(() => {
-                            setSessions((all) => ({
-                              ...all,
-                              [task.id]: (all[task.id] ?? []).filter((x) => x.key !== s.key),
-                            }));
-                            if (tab === `session:${s.key}`) setTab("Terminal");
-                          })
-                        }
-                      >
-                        <X size={11} />
-                      </button>
-                    </span>
-                  ))}
-                </div>
-                {task.branchCreated && (
-                  <div className="session-new">
-                      <button
-                        aria-label="Nova sessão"
-                        title="Nova sessão nesta pasta"
-                        aria-expanded={sessionMenu}
-                        onClick={() => setSessionMenu((open) => !open)}
-                      >
-                        <Plus size={12} />
-                      </button>
-                      {sessionMenu && (
-                        <div className="session-menu">
-                          <button
-                            onClick={() => {
-                              setSessionMenu(false);
-                              navigate(() => addSession(task.id, "Shell"));
-                            }}
-                          >
-                            Shell
-                          </button>
-                          {(snapshot?.agents ?? []).map((agent) => (
-                            <button
-                              key={agent.provider}
-                              disabled={!agent.available}
-                              title={
-                                agent.available
-                                  ? "Abre o agente vazio, nesta pasta"
-                                  : "CLI não encontrada. Configure o caminho em Configurações."
-                              }
-                              onClick={() => {
-                                setSessionMenu(false);
-                                navigate(() => addSession(task.id, agent.label, agent.provider));
-                              }}
-                            >
-                              <AgentIcon provider={agent.provider} /> {agent.label}
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-                <div className="actions">
-                  {["draft", "failed", "cancelled", "interrupted", "review", "completed"].includes(
-                    task.status,
-                  ) && (
-                    <button
-                      disabled={busy}
-                      className="primary"
-                      title={
-                        task.sessionId
-                          ? "Reabre a conversa da CLI de onde parou, sem reenviar as instruções"
-                          : "Inicia a CLI com as instruções da tarefa, em conversa nova"
-                      }
-                      onClick={() => act("queue")}
-                    >
-                      <Play size={14} />
-                      {task.sessionId && task.branchCreated ? "Retomar sessão" : "Colocar na fila"}
-                    </button>
-                  )}
-                  {["running", "waiting", "queued"].includes(task.status) && (
-                    <button disabled={busy} onClick={() => act("cancel")}>
-                      Cancelar execução
-                    </button>
-                  )}
-                  {task.worktreePath &&
-                    !["running", "waiting", "queued"].includes(task.status) &&
-                    !task.testCheckout && (
-                      <button
-                        disabled={busy}
-                        title="Coloca a pasta do projeto no código desta tarefa, para você testar. Sua branch original é guardada e volta com o botão ao lado."
-                        onClick={() => {
-                          if (
-                            window.confirm(
-                              `Colocar a pasta do projeto no código de "${task.branch}" para teste? A branch atual da sua pasta muda temporariamente. Alterações não commitadas impedem a troca.`,
-                            )
-                          )
-                            void act("testActivate");
-                        }}
-                        aria-label="Testar na pasta do projeto"
-                      >
-                        Testar no projeto
-                      </button>
-                    )}
-                  {task.published && <span className="published">Branch publicada</span>}
-                </div>
-              </div>
-              {task.status === "queued" &&
-                events.at(-1)?.message.startsWith("Aguardando: a pasta do projeto") && (
-                  <div className="notice">
-                    <p>{events.at(-1)?.message}</p>
-                    <div className="notice-actions">
-                      <button
-                        disabled={busy}
-                        onClick={() => perform(() => request({ action: "retryStart", taskId: task.id }))}
-                      >
-                        Tentar agora
-                      </button>
-                      <button
-                        disabled={busy}
-                        onClick={() => {
-                          if (
-                            window.confirm(
-                              "Guardar as alterações da pasta do projeto com git stash? Para recuperar depois: git stash pop.",
-                            )
-                          )
-                            perform(() => request({ action: "stashPending", taskId: task.id }));
-                        }}
-                      >
-                        Guardar alterações (stash)
-                      </button>
-                    </div>
-                  </div>
-                )}
-              {/* Com sessão salva, o botão Retomar sessão resolve; o aviso só faz sentido sem ela. */}
-              {task.status === "interrupted" && !task.sessionId && (
-                <p className="notice notice-compact">
-                  Processo interrompido. A sessão anterior não é recuperável: revise os arquivos ou
-                  coloque a tarefa na fila de novo.
-                </p>
-              )}
-              <div className="tab-body" ref={bodyRef} style={bodyStyle()}>
-                {shown("Chat") && (
-                  <div className="tab-slot bare" style={place("Chat")}>
-                    <ChatPane taskId={task.id} provider={task.provider} model={task.model ?? null} onError={report} />
-                  </div>
-                )}
-                {shown("Terminal") && (
-                  <div className="tab-slot bare" style={place("Terminal")}>
-                  <TerminalPane
-                    key={task.id}
-                    taskId={task.id}
-                    provider={task.provider}
-                    status={task.status}
-                    active={
-                      ["running", "waiting"].includes(task.status) && task.terminalReady !== false
-                    }
-                    onError={report}
-                  />
-                  </div>
-                )}
-                {task.branchCreated && (
-                  // Fica montado ao trocar de aba: o shell não morre por você olhar o Diff.
-                  <div className="shell-slot tab-slot bare" style={place("Shell")} hidden={!shown("Shell")}>
-                    <ShellPane
-                      key={task.id}
-                      scopeKey={task.id}
-                      openSession={() => request<string>({ action: "shellOpen", taskId: task.id })}
-                      onError={report}
-                    />
-                  </div>
-                )}
-                {(sessions[task.id] ?? []).map((s) => (
-                  <div
-                    key={s.key}
-                    className="shell-slot tab-slot bare"
-                    style={place(`session:${s.key}`)}
-                    hidden={!shown(`session:${s.key}`)}
-                  >
-                    <ShellPane
-                      scopeKey={s.key}
-                      openSession={() =>
-                        request<string>({
-                          action: "shellOpen",
-                          taskId: task.id,
-                          provider: s.provider,
-                          prompt: s.prompt,
-                        })
-                      }
-                      onError={report}
-                    />
-                  </div>
-                ))}
-                {shown("Diff") && (
-                  <div className="tab-slot" style={place("Diff")}>
-                  {
-                  (!review ? (
-                    <div className="empty">
-                      Carregue a revisão para comparar as alterações.
-                      <button disabled={busy} onClick={openReview}>
-                        Carregar diff
-                      </button>
-                    </div>
-                  ) : (
-                    <>
-                      {review.files.length ? (
-                        <div className="review-layout">
-                          <ReviewFiles files={review.files} selected={file} onSelect={setFile} />
-                          <div className="review-main">
-                            {review.files.find((f) => f.path === file) ? (
-                              <DiffPane file={review.files.find((f) => f.path === file)!} />
-                            ) : (
-                              <div className="empty">Escolha um arquivo na lista para ver o que mudou.</div>
-                            )}
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="empty">Nenhuma alteração encontrada nesta branch.</div>
-                      )}
-                      {review.overlaps.map((o) => (
-                        <p className="notice" key={o.taskId}>
-                          Arquivos também alterados em “{o.title}”: {o.paths.join(", ")}
-                        </p>
-                      ))}
-                    </>
-                  ))}
-                  </div>
-                )}
-                {shown("Arquivos") && (
-                  <div className="tab-slot" style={place("Arquivos")}>
-                  <div className="files-layout">
-                    <FileTree
-                      taskId={task.id}
-                      selected={file}
-                      onError={report}
-                      onOpen={(path, writable) =>
-                        navigate(() => {
-                          setFileWritable(writable);
-                          setFile(path);
-                        })
-                      }
-                    />
-                    <div className="files-editor">
-                      {file ? (
-                        <FileEditor
-                          key={task.id + file}
-                          taskId={task.id}
-                          path={file}
-                          readOnly={!fileWritable}
-                          onError={report}
-                          onDirty={setDirty}
-                        />
-                      ) : (
-                        <div className="empty">Escolha um arquivo na árvore.</div>
-                      )}
-                    </div>
-                  </div>
-                  </div>
-                )}
-                {shown("Histórico") && (
-                  <div className="tab-slot" style={place("Histórico")}>
-                  <div className="history">
-                    {events.length === 0 ? (
-                      <div className="empty">Nenhum evento registrado.</div>
-                    ) : (
-                      events.map((e) => (
-                        <div key={e.id}>
-                          <i />
-                          <div>
-                            <div className="history-head">
-                              <strong>{e.kind}</strong>
-                              <small>{date(e.createdAt)}</small>
-                            </div>
-                            <p>{e.message}</p>
-                          </div>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                  </div>
-                )}
-                {shown("Checks") && (
-                  <div className="tab-slot" style={place("Checks")}>
-                  <>
-                    <form
-                      className="check-form"
-                      onSubmit={(e) => {
-                        e.preventDefault();
-                        void perform(() =>
-                          request({ action: "runCheck", taskId: task.id, command }),
-                        );
-                      }}
-                    >
-                      <label>
-                        Comando no repositório desta tarefa
-                        <input
-                          value={command}
-                          onChange={(e) => setCommand(e.target.value)}
-                          required
-                          placeholder="Ex.: npm test"
-                        />
-                      </label>
-                      <button
-                        disabled={
-                          busy ||
-                          !command.trim() ||
-                          ["running", "waiting", "queued"].includes(task.status)
-                        }
-                      >
-                        Executar comando
-                      </button>
-                    </form>
-                    <p className="notice">
-                      Executa o comando digitado no repositório selecionado. Revise-o antes de
-                      executar.
-                    </p>
-                    {checks.map((c) => (
-                      <details key={c.id}>
-                        <summary>
-                          <span className={"status " + c.status}>{c.status}</span> {c.command} ·
-                          saída {c.exitCode ?? "pendente"}
-                        </summary>
-                        <pre>{c.output || "Sem saída registrada."}</pre>
-                      </details>
-                    ))}
-                  </>
-                  </div>
-                )}
-                {shown("Commit") && task.branchCreated && (
-                  <div className="tab-slot" style={place("Commit")}>
-                    <CommitPanel
-                      key={task.id}
-                      taskId={task.id}
-                      branch={task.branch}
-                      request={request}
-                      onError={report}
-                    />
-                  </div>
-                )}
-                {secondTab && (
-                  <div
-                    className={"split-resize " + splitDir}
-                    role="separator"
-                    aria-label="Divisão entre painéis"
-                    aria-orientation={splitDir === "right" ? "vertical" : "horizontal"}
-                    style={splitDir === "right" ? { gridColumn: 2, gridRow: 1 } : { gridColumn: 1, gridRow: 2 }}
-                    onPointerDown={resizeSplit}
-                  />
-                )}
-                {secondTab && (
-                  <button
-                    className="pane-close"
-                    style={place(secondTab)}
-                    title="Fechar este painel"
-                    aria-label="Fechar este painel"
-                    onClick={() => navigate(() => setSecondTab(null))}
-                  >
-                    ×
-                  </button>
-                )}
-                {dragTab && (
-                  <div
-                    className="drop-layer"
-                    onDragOver={(e) => {
-                      e.preventDefault();
-                      setDropZone(zoneAt(e, e.currentTarget));
-                    }}
-                    onDragLeave={() => setDropZone(null)}
-                    onDrop={(e) => {
-                      e.preventDefault();
-                      const zone = zoneAt(e, e.currentTarget);
-                      setDropZone(null);
-                      setDragTab(null);
-                      dropOn(dragTab, zone);
-                    }}
-                  >
-                    {dropZone && <div className={"drop-preview " + dropZone} />}
-                  </div>
-                )}
-              </div>
-            </section>
+          {snapshot && open.length > 0 && (
+            <div className={"task-workspaces" + (splitTasks.length === 2 ? " divided" : "")}
+              hidden={!task || dashboard || Boolean(activeGeneral) || sshView || helpView}
+              style={splitTasks.length === 2 ? { gridTemplateColumns: `minmax(0, ${taskRatio}fr) 6px minmax(0, ${1 - taskRatio}fr)` } : undefined}
+              ref={taskArea}>
+              {open.map((id) => {
+                const item = snapshot.tasks.find((t) => t.id === id);
+                if (!item) return null;
+                return <TaskWorkspace key={id} task={item} snapshot={snapshot}
+                  ref={(handle) => { if (handle) panels.current[id] = handle; else delete panels.current[id]; }}
+                  focused={selected === id} visible={splitTasks.length === 2 ? splitTasks.includes(id) : selected === id}
+                  column={splitTasks.indexOf(id) === 1 ? 3 : 1} inspectorHost={inspectorHost}
+                  onFocus={setSelected} onClose={closeTask} onChanged={refresh} onError={report} onDirtyChange={setDirty}
+                  onTerminalInput={answeredTerminal} />;
+              })}
+              {splitTasks.length === 2 && <div className="task-divider" role="separator"
+                aria-label="Divisão entre tarefas" aria-orientation="vertical" tabIndex={0}
+                aria-valuemin={20} aria-valuemax={80} aria-valuenow={Math.round(taskRatio * 100)}
+                onPointerDown={resizeTasks} onKeyDown={(event) => {
+                  if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+                    event.preventDefault();
+                    setTaskRatio((value) => clampTaskRatio(value + (event.key === "ArrowRight" ? 0.05 : -0.05)));
+                  } else if (event.key === "Home" || event.key === "End") {
+                    event.preventDefault(); setTaskRatio(event.key === "Home" ? 0.2 : 0.8);
+                  }
+                }} />}
+            </div>
           )}
           {remoteFile && (
             // Por cima da área atual: fechar devolve a tela de onde você saiu, com o terminal vivo.
@@ -1492,86 +920,7 @@ export default function App() {
             ))}
           </div>
           {!activeGeneral && !sshView && task ? (
-            <>
-              <div className="inspector-section">
-                <h3>{task.title}</h3>
-                <span className={"status " + task.status}>{labels[task.status]}</span>
-                <dl>
-                  <dt>Projeto</dt>
-                  <dd>{snapshot?.projects.find((p) => p.id === task.projectId)?.name}</dd>
-                  <dt>Agente</dt>
-                  <dd><AgentIcon provider={task.provider} /> {task.provider}</dd>
-                  <dt>Branch</dt>
-                  <dd>{task.branch}</dd>
-                  <dt>Base</dt>
-                  <dd>{task.base}</dd>
-                  <dt>Remoto</dt>
-                  <dd>{task.remote}</dd>
-                  <dt>Publicação</dt>
-                  <dd>{task.published ? "Publicada" : "Não publicada"}</dd>
-                </dl>
-              </div>
-              {/* Tarefas antigas ainda têm instruções; as novas abrem a CLI vazia e não mostram a seção. */}
-              {task.prompt.trim() && (
-                <div className="inspector-section instructions">
-                  <h4>Instruções</h4>
-                  <p>{task.prompt}</p>
-                </div>
-              )}
-              <div className="inspector-files">
-                <div className="sidebar-label">
-                  Alterações
-                  <button
-                    disabled={busy || !task.branchCreated}
-                    aria-label="Atualizar arquivos alterados"
-                    title="Atualizar arquivos alterados"
-                    onClick={openReview}
-                  >
-                    <Activity size={12} />
-                  </button>
-                </div>
-                {review ? (
-                  <>
-                    <div className="search">
-                      <Search size={12} />
-                      <input
-                        type="search"
-                        aria-label="Buscar arquivos alterados"
-                        placeholder="Buscar arquivos"
-                        value={fileQuery}
-                        onChange={(e) => setFileQuery(e.target.value)}
-                      />
-                    </div>
-                    {review.files
-                      .filter((f) =>
-                        f.path.toLocaleLowerCase().includes(fileQuery.toLocaleLowerCase()),
-                      )
-                      .map((f) => (
-                        <button
-                          className={"inspector-file " + (file === f.path ? "selected" : "")}
-                          key={f.path}
-                          title={f.path}
-                          onClick={() =>
-                            navigate(() => {
-                              setFile(f.path);
-                              setTab("Diff");
-                            })
-                          }
-                        >
-                          <Files size={12} />
-                          <span>{f.path}</span>
-                          <small>{f.status}</small>
-                        </button>
-                      ))}
-                    {review.files.length === 0 && (
-                      <p className="side-hint">Nenhum arquivo alterado.</p>
-                    )}
-                  </>
-                ) : (
-                  <p className="side-hint">Carregue a revisão para ver os arquivos alterados.</p>
-                )}
-              </div>
-            </>
+            <div ref={setInspectorHost} className="task-inspector-host" />
           ) : !sshView && !activeGeneral ? (
             <div className="empty inspector-empty">
               <Files size={22} />

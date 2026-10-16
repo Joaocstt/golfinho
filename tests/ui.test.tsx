@@ -2,7 +2,7 @@
 import React from "react";
 import { render, screen, fireEvent, waitFor, cleanup, act, within } from "@testing-library/react";
 import { afterEach, describe, it, expect, vi } from "vitest";
-import type { Snapshot, Task, Signal } from "../src/shared/contracts";
+import type { Snapshot, Task, Signal, ChatHistoryItem } from "../src/shared/contracts";
 // O terminal de shell depende de xterm e ResizeObserver, que o jsdom não tem.
 vi.mock("../src/renderer/ShellPane", () => ({
   ShellPane: () => <div>Shell conectado</div>,
@@ -35,7 +35,8 @@ const snapshot: Snapshot = {
   agents: [{ provider: "codex", label: "Codex", available: true, executable: "codex" }],
 };
 let signal: ((s: Signal) => void) | undefined;
-function setup(tasks: Task[] = [], rejectCreate = false) {
+function setup(tasks: Task[] = [], rejectCreate = false, chatHistory: Record<string, ChatHistoryItem[]> = {}) {
+  if (!HTMLElement.prototype.scrollIntoView) HTMLElement.prototype.scrollIntoView = vi.fn();
   const request = vi.fn(async (r: any) => {
     if (r.action === "snapshot") return { ...snapshot, tasks };
     if (r.action === "createTask") {
@@ -45,6 +46,7 @@ function setup(tasks: Task[] = [], rejectCreate = false) {
     if (r.action === "branches") return { current: "develop", branches: ["develop", "main"] };
     if (r.action === "review") return { files: [], overlaps: [], branch: "golfinho/a" };
     if (r.action === "terminal") return "";
+    if (r.action === "chatHistory") return chatHistory[r.taskId] ?? [];
     if (r.action === "tree")
       return r.path === ""
         ? { root: "task", truncated: false, entries: [{ name: "src", path: "src", kind: "directory" }] }
@@ -53,11 +55,13 @@ function setup(tasks: Task[] = [], rejectCreate = false) {
     if (r.action === "changes") return { "src/a.ts": "modified" };
     return [];
   });
+  const listeners = new Set<(s: Signal) => void>();
+  signal = (s) => listeners.forEach((listener) => listener(s));
   window.golfinho = {
     request,
     subscribe: (listener) => {
-      signal = listener;
-      return () => {};
+      listeners.add(listener);
+      return () => { listeners.delete(listener); };
     },
   };
   render(<App />);
@@ -247,6 +251,138 @@ const editableTask: Task = {
   timeoutMinutes: 0,
   reviewSummary: "",
 };
+it("notifica aprovação no Chat de tarefa fechada e só navega ao abrir o pedido", async () => {
+  const event = { type: "approval", id: "approval-1", toolName: "Bash", summary: "npm test", canAlwaysAllow: false } as const;
+  const request = setup([editableTask, { ...editableTask, id: "other", title: "Outra tarefa", branch: "main" }], false, { other: [{ seq: 1, event }] });
+  fireEvent.click(await screen.findByRole("button", { name: "Editar arquivo" }));
+  const previousFocus = document.activeElement;
+  act(() => signal?.({ kind: "chat", taskId: "other", seq: 1, event }));
+  expect(screen.getByText("main precisa de permissão")).toBeTruthy();
+  expect(document.activeElement).toBe(previousFocus);
+  expect(screen.getByRole("region", { name: "Tarefa golfinho/edit" })).toBeTruthy();
+  act(() => signal?.({ kind: "chat", taskId: "other", seq: 1, event }));
+  expect(screen.getAllByRole("button", { name: "Abrir pedido de main no Chat" })).toHaveLength(1);
+  fireEvent.click(screen.getByRole("button", { name: "Abrir pedido de main no Chat" }));
+  const target = screen.getByRole("region", { name: "Tarefa main" });
+  expect(await within(target).findByText("Permitir Bash?")).toBeTruthy();
+  expect(within(target).getByRole("button", { name: "Chat" }).className).toContain("active");
+  expect(screen.getByRole("tab", { name: "Workspace main" }).querySelector(".permission-indicator")).toBeTruthy();
+  expect(request).not.toHaveBeenCalledWith(expect.objectContaining({ action: "chatDecide" }));
+  act(() => signal?.({ kind: "chat", taskId: "other", seq: 2, event: { type: "approval_resolved", id: "approval-1", behavior: "deny" } }));
+  expect(screen.queryByText("main precisa de permissão")).toBeNull();
+});
+it("notifica pergunta do Terminal em segundo plano e mantém a divisão ao abrir", async () => {
+  setup([{ ...editableTask, status: "running" }, { ...editableTask, id: "other", title: "Outra tarefa", branch: "main", status: "running" }]);
+  fireEvent.click(await screen.findByRole("button", { name: "Editar arquivo" }));
+  fireEvent.click(screen.getByRole("button", { name: "Outra tarefa" }));
+  fireEvent.click(screen.getByRole("button", { name: "Abrir golfinho/edit ao lado" }));
+  fireEvent.click(within(screen.getByRole("region", { name: "Tarefa main" })).getByRole("button", { name: "Diff" }));
+  act(() => signal?.({ kind: "terminal", taskId: "other", offset: 0, data: "Would you like to run the following command?\r\n› 1. Yes, proceed (y)\r\n2. No" }));
+  expect(within(screen.getByRole("region", { name: "Tarefa main" })).getByRole("button", { name: "Diff" }).className).toContain("active");
+  fireEvent.click(screen.getByRole("button", { name: "Abrir pedido de main no Terminal" }));
+  expect(screen.getByRole("separator", { name: "Divisão entre tarefas" })).toBeTruthy();
+  expect(within(screen.getByRole("region", { name: "Tarefa main" })).getByText("Terminal conectado")).toBeTruthy();
+});
+it("abrir pedido visível na divisão interna mantém a proteção do editor não salvo", async () => {
+  setup([{ ...editableTask, status: "running" }]);
+  fireEvent.click(await screen.findByRole("button", { name: "Editar arquivo" }));
+  fireEvent.click(screen.getByRole("button", { name: "Arquivos" }));
+  fireEvent.dragStart(screen.getByRole("button", { name: "Terminal" }), { dataTransfer: { setData: vi.fn() } });
+  const layer = document.querySelector(".drop-layer")!;
+  vi.spyOn(layer, "getBoundingClientRect").mockReturnValue({ left: 0, top: 0, width: 400, height: 200 } as DOMRect);
+  const drop = new Event("drop", { bubbles: true, cancelable: true });
+  Object.defineProperties(drop, { clientX: { value: 360 }, clientY: { value: 100 } });
+  fireEvent(layer, drop);
+  expect(screen.getByRole("separator", { name: "Divisão entre painéis" })).toBeTruthy();
+  fireEvent.click(await screen.findByRole("button", { name: "src" }));
+  fireEvent.click(await screen.findByRole("button", { name: "a.ts" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Editar conteúdo" }));
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+  act(() => signal?.({ kind: "terminal", taskId: "edit", offset: 0, data: "Do you want to proceed?\n1. Yes\n2. No" }));
+  fireEvent.click(screen.getByRole("button", { name: "Abrir pedido de golfinho/edit no Terminal" }));
+  expect(confirm).not.toHaveBeenCalled();
+  confirm.mockReturnValue(false);
+  fireEvent.click(screen.getByRole("button", { name: "Fechar aba golfinho/edit" }));
+  expect(confirm).toHaveBeenCalled();
+  expect(screen.getByRole("button", { name: "Editar conteúdo" })).toBeTruthy();
+  confirm.mockRestore();
+});
+it("divide duas tarefas com abas e ações independentes", async () => {
+  const request = setup([editableTask, { ...editableTask, id: "other", title: "Outra tarefa", branch: "main" }]);
+  fireEvent.click(await screen.findByRole("button", { name: "Editar arquivo" }));
+  fireEvent.click(screen.getByRole("button", { name: "Outra tarefa" }));
+  fireEvent.click(screen.getByRole("button", { name: "Abrir golfinho/edit ao lado" }));
+  const left = screen.getByRole("region", { name: "Tarefa main" });
+  const right = screen.getByRole("region", { name: "Tarefa golfinho/edit" });
+  expect(within(left).getByText("Terminal conectado")).toBeTruthy();
+  expect(within(right).getByText("Terminal conectado")).toBeTruthy();
+  fireEvent.click(within(right).getByRole("button", { name: "Diff" }));
+  expect(within(left).getByText("Terminal conectado")).toBeTruthy();
+  fireEvent.click(within(right).getByRole("button", { name: "Carregar diff" }));
+  await waitFor(() => expect(request).toHaveBeenCalledWith({ action: "review", taskId: "edit" }));
+  fireEvent.click(within(left).getByRole("button", { name: "Colocar na fila" }));
+  await waitFor(() => expect(request).toHaveBeenCalledWith({ action: "queue", taskId: "other" }));
+  expect(within(right).getByText("Nenhuma alteração encontrada nesta branch.")).toBeTruthy();
+  expect(request).not.toHaveBeenCalledWith({ action: "queue", taskId: "edit" });
+});
+it("mantém aba, arquivo e edição ao alternar tarefas e ao voltar da divisão", async () => {
+  setup([editableTask, { ...editableTask, id: "other", title: "Outra tarefa", branch: "main" }]);
+  fireEvent.click(await screen.findByRole("button", { name: "Editar arquivo" }));
+  fireEvent.click(screen.getByRole("button", { name: "Arquivos" }));
+  fireEvent.click(await screen.findByRole("button", { name: "src" }));
+  fireEvent.click(await screen.findByRole("button", { name: "a.ts" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Editar conteúdo" }));
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+  fireEvent.click(screen.getByRole("button", { name: "Outra tarefa" }));
+  expect(screen.getByRole("region", { name: "Tarefa main" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("tab", { name: "Workspace golfinho/edit" }));
+  expect(screen.getByRole("button", { name: "Editar conteúdo" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Arquivos" }).className).toContain("active");
+  expect(confirm).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Abrir main ao lado" }));
+  fireEvent.click(screen.getByRole("button", { name: "Exibir apenas esta tarefa" }));
+  fireEvent.click(screen.getByRole("tab", { name: "Workspace golfinho/edit" }));
+  expect(screen.getByRole("button", { name: "Editar conteúdo" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Fechar aba golfinho/edit" }));
+  expect(confirm).toHaveBeenCalled();
+  expect(screen.getByRole("button", { name: "Editar conteúdo" })).toBeTruthy();
+  confirm.mockRestore();
+});
+it("ajusta a divisória e volta à tarefa em foco sem fechar a outra aba", async () => {
+  setup([editableTask, { ...editableTask, id: "other", title: "Outra tarefa", branch: "main" }]);
+  fireEvent.click(await screen.findByRole("button", { name: "Editar arquivo" }));
+  fireEvent.click(screen.getByRole("button", { name: "Outra tarefa" }));
+  fireEvent.click(screen.getByRole("button", { name: "Abrir golfinho/edit ao lado" }));
+  const divider = screen.getByRole("separator", { name: "Divisão entre tarefas" });
+  expect(divider.getAttribute("aria-valuenow")).toBe("50");
+  fireEvent.keyDown(divider, { key: "ArrowRight" });
+  expect(divider.getAttribute("aria-valuenow")).toBe("55");
+  fireEvent.click(screen.getByRole("button", { name: "Exibir apenas esta tarefa" }));
+  expect(screen.queryByRole("separator", { name: "Divisão entre tarefas" })).toBeNull();
+  expect(screen.getByRole("region", { name: "Tarefa golfinho/edit" })).toBeTruthy();
+  expect(screen.getByRole("tab", { name: "Workspace main" })).toBeTruthy();
+});
+it("fechar uma tarefa da divisão mantém a outra e protege o editor não salvo", async () => {
+  const request = setup([editableTask, { ...editableTask, id: "other", title: "Outra tarefa", branch: "main" }]);
+  fireEvent.click(await screen.findByRole("button", { name: "Editar arquivo" }));
+  fireEvent.click(screen.getByRole("button", { name: "Outra tarefa" }));
+  fireEvent.click(screen.getByRole("button", { name: "Abrir golfinho/edit ao lado" }));
+  const right = screen.getByRole("region", { name: "Tarefa golfinho/edit" });
+  fireEvent.click(within(right).getByRole("button", { name: "Arquivos" }));
+  fireEvent.click(await within(right).findByRole("button", { name: "src" }));
+  fireEvent.click(await within(right).findByRole("button", { name: "a.ts" }));
+  fireEvent.click(await within(right).findByRole("button", { name: "Editar conteúdo" }));
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+  fireEvent.click(screen.getByRole("button", { name: "Fechar aba golfinho/edit" }));
+  expect(confirm).toHaveBeenCalled();
+  expect(within(right).getByRole("button", { name: "Editar conteúdo" })).toBeTruthy();
+  confirm.mockReturnValue(true);
+  fireEvent.click(screen.getByRole("button", { name: "Fechar aba golfinho/edit" }));
+  expect(screen.queryByRole("region", { name: "Tarefa golfinho/edit" })).toBeNull();
+  expect(screen.getByRole("region", { name: "Tarefa main" })).toBeTruthy();
+  expect(request).not.toHaveBeenCalledWith(expect.objectContaining({ action: "cancel" }));
+  confirm.mockRestore();
+});
 it("respeita limites do backend nos formulários", async () => {
   setup();
   await screen.findByText("Projeto real");
