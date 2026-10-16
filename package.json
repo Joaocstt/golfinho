@@ -1,6 +1,6 @@
 {
   "name": "golfinho",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "private": true,
   "description": "Ambiente desktop para tarefas com agentes e branches Git",
   "type": "module",
@@ -93,7 +93,9 @@
       "uninstallerIcon": "build/icon.ico",
       "installerHeaderIcon": "build/icon.ico",
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false,
+      "allowElevation": true
     },
     "mac": {
       "icon": "build/icon.icns",
