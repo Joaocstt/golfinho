@@ -16,6 +16,16 @@ export function configureAskpass(path: string) {
   askpassPath = path;
 }
 export const ASKPASS_SCRIPT = '#!/bin/sh\nprintf \'%s\\n\' "$GOLFINHO_SSH_PASS"\n';
+// No Windows o SSH_ASKPASS não executa .sh. O askpass vira um .cmd que roda o próprio Electron
+// como Node para imprimir a variável; a senha nunca passa pelo parser do cmd.
+export function askpassFile(): { name: string; content: string } {
+  if (process.platform === "win32")
+    return {
+      name: "golfinho-askpass.cmd",
+      content: '@echo off\r\n"%GOLFINHO_NODE%" -e "process.stdout.write(process.env.GOLFINHO_SSH_PASS + \'\\n\')"\r\n',
+    };
+  return { name: "golfinho-askpass.sh", content: ASKPASS_SCRIPT };
+}
 // Ambiente que entrega a senha ao ssh só neste processo. Nada vai para argumentos ou disco.
 export function sshEnv(password: string | null): Record<string, string> {
   if (!password) return {};
@@ -23,6 +33,8 @@ export function sshEnv(password: string | null): Record<string, string> {
     SSH_ASKPASS: askpassPath,
     SSH_ASKPASS_REQUIRE: "force",
     GOLFINHO_SSH_PASS: password,
+    // Usado pelo askpass do Windows: o Electron roda como Node com essa variável.
+    ...(process.platform === "win32" ? { GOLFINHO_NODE: process.execPath, ELECTRON_RUN_AS_NODE: "1" } : {}),
   };
 }
 // Argumentos do ssh para um perfil. A autenticação é do próprio ssh (chave, agente ou o

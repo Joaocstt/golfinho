@@ -2,19 +2,24 @@ import { readFileSync, readdirSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { executablePath } from "./agents";
 import type { Driver } from "./coordinator";
+import { launchTarget } from "./shellCommand";
 // Encerra a CLI e os processos do mesmo grupo. Fora do Linux não há /proc para rastrear
 // membros, então o grupo inteiro é sinalizado. No Windows, taskkill /T derruba a árvore.
-export function killGroup(pid: number, signal: NodeJS.Signals) {
+// Resolve quando a tentativa de encerrar a árvore termina; no Windows isso é um processo filho.
+export function killGroup(pid: number, signal: NodeJS.Signals): Promise<void> {
   if (process.platform === "win32") {
-    spawn("taskkill", ["/pid", String(pid), "/T", "/F"], { stdio: "ignore", windowsHide: true })
-      .on("error", () => undefined);
-    return;
+    return new Promise((resolve) => {
+      spawn("taskkill", ["/pid", String(pid), "/T", "/F"], { stdio: "ignore", windowsHide: true })
+        .on("error", () => resolve())
+        .on("close", () => resolve());
+    });
   }
   try {
     process.kill(-pid, signal);
   } catch {
     /* o grupo já encerrou */
   }
+  return Promise.resolve();
 }
 function identity(pid: number) {
   try {
@@ -56,7 +61,8 @@ export const ptyDriver: Driver = {
         `Executável não encontrado: ${command}. Configure seu caminho em Configurações.`,
       );
     const pty = await import("node-pty");
-    const child = pty.spawn(path, args, {
+    const target = launchTarget(path, args);
+    const child = pty.spawn(target.file, target.args, {
       cwd,
       cols: 100,
       rows: 28,
@@ -71,6 +77,8 @@ export const ptyDriver: Driver = {
     const members = new Map<number, string>();
     // Sem rastreamento por /proc, cada sinal vai ao grupo uma única vez.
     const sent = new Set<NodeJS.Signals>();
+    // No Windows, o taskkill precisa terminar antes de o encerramento ser reportado.
+    let treeKilled = owned !== null;
     if (owned) members.set(child.pid, owned.start);
     let resolveClosed!: () => void;
     const closed = new Promise<void>((resolve) => {
@@ -95,7 +103,10 @@ export const ptyDriver: Driver = {
       if (!owned) {
         if (!sent.has(signal)) {
           sent.add(signal);
-          killGroup(child.pid, signal);
+          void killGroup(child.pid, signal).then(() => {
+            treeKilled = true;
+            check();
+          });
         }
         return;
       }
@@ -111,7 +122,7 @@ export const ptyDriver: Driver = {
     };
     const check = () => {
       if (stopping) observeMembers();
-      if (!ended) return;
+      if (!ended || !treeKilled) return;
       for (const [pid, start] of members) {
         const i = identity(pid);
         if (!i || i.start !== start || i.state === "Z") members.delete(pid);

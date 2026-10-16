@@ -1,5 +1,5 @@
 import { accessSync, constants } from "node:fs";
-import { delimiter, isAbsolute, join } from "node:path";
+import { delimiter, extname, isAbsolute, join } from "node:path";
 import type { Provider, Settings, AgentInfo } from "../shared/contracts";
 // Retomar reabre a conversa existente e por isso não reenvia o prompt: mandá-lo de
 // novo faria o agente refazer a tarefa desde o início.
@@ -41,18 +41,38 @@ export function invocation(
       };
   }
 }
+// No Windows, o npm instala o mesmo comando três vezes (sem extensão, .cmd e .ps1). Só o arquivo
+// sem extensão é um script de shell, que o ConPTY não executa (erro 193), então é preciso
+// procurar pelas extensões de PATHEXT.
+const WINDOWS_EXECUTABLE_EXTENSIONS: string[] = (process.env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD")
+  .split(";")
+  .map((ext) => ext.toLowerCase())
+  .filter((ext) => ext === ".exe" || ext === ".cmd" || ext === ".bat" || ext === ".com");
 export function executablePath(command: string): string | null {
   const candidates = isAbsolute(command)
     ? [command]
-    : command.includes("/")
+    : command.includes("/") || command.includes("\\")
       ? []
       : (process.env.PATH ?? "").split(delimiter).map((p) => join(p, command));
   for (const p of candidates) {
-    try {
-      accessSync(p, constants.X_OK);
-      return p;
-    } catch {
-      /* next path */
+    if (process.platform !== "win32") {
+      try {
+        accessSync(p, constants.X_OK);
+        return p;
+      } catch {
+        /* next path */
+      }
+      continue;
+    }
+    const withExtension = WINDOWS_EXECUTABLE_EXTENSIONS.includes(extname(p).toLowerCase());
+    const files = withExtension ? [p] : WINDOWS_EXECUTABLE_EXTENSIONS.map((ext) => p + ext);
+    for (const file of files) {
+      try {
+        accessSync(file, constants.F_OK);
+        return file;
+      } catch {
+        /* next extension */
+      }
     }
   }
   return null;

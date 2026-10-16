@@ -3,6 +3,7 @@ import type { GitService } from "./git";
 import { PendingChangesError } from "./git";
 import type { Logs } from "./logs";
 import { invocation } from "./agents";
+import { commandShell } from "./shellCommand";
 import { findSession } from "./sessions";
 import { checkoutOf, requireCheckout } from "./checkout";
 import { join } from "node:path";
@@ -258,9 +259,10 @@ export class Coordinator {
     let finish!: (code: number) => void;
     const exited = new Promise<number>((resolve) => (finish = resolve));
     let timedOut = false;
+    const shell = commandShell(command);
     const handle = await this.driver.start(
-      "/bin/bash",
-      ["-lc", command],
+      shell.file,
+      shell.args,
       e.path,
       (data) => {
         if (!this.stopping && this.active.get(id) === e) this.logs.append(id, data);
@@ -445,9 +447,10 @@ export class Coordinator {
         this.pump();
       };
       try {
+        const shell = commandShell(command);
         run.handle = await this.driver.start(
-          "/bin/bash",
-          ["-lc", command],
+          shell.file,
+          shell.args,
           path,
           (data) => {
             if (!this.stopping) {

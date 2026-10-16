@@ -2,6 +2,7 @@ import { it, expect, vi } from "vitest";
 import { Store } from "../src/main/store";
 import { Coordinator, type Driver, type Handle } from "../src/main/coordinator";
 import { GitService, PendingChangesError } from "../src/main/git";
+import { commandShell } from "../src/main/shellCommand";
 function setup(
   finder?: (provider: string, cwd: string, since: number) => Promise<string | null>,
   prepare?: () => Promise<string>,
@@ -280,7 +281,7 @@ it("runs the project setup in the new folder before the CLI, and marks it done",
   await tick();
   // Primeiro processo é o setup, na pasta da tarefa; a CLI ainda não subiu.
   expect(started).toHaveLength(1);
-  expect(started[0].args).toEqual(["-lc", "npm ci"]);
+  expect(started[0].args).toEqual(commandShell("npm ci").args);
   expect(started[0].cwd).toBe("/repo");
   started[0].exit(0);
   await tick();
@@ -316,7 +317,7 @@ it("skips the setup when the folder was already prepared", async () => {
   c.queue(task.id);
   await tick();
   expect(started).toHaveLength(1);
-  expect(started[0].args).not.toEqual(["-lc", "npm ci"]);
+  expect(started[0].args).not.toEqual(commandShell("npm ci").args);
   await c.shutdown();
   store.close();
 });

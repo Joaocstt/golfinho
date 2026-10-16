@@ -4,6 +4,7 @@ import type { GitService } from "./git";
 import type { Coordinator } from "./coordinator";
 import type { Logs } from "./logs";
 import { agentInfo, invocation } from "./agents";
+import { interactiveShell } from "./shellCommand";
 import { checkoutOf, requireCheckout } from "./checkout";
 import type { Shells } from "./shells";
 import { homedir } from "node:os";
@@ -122,7 +123,10 @@ export class Service {
     provider?: Provider,
     prompt?: string,
   ) {
-    if (!provider) return shells.open(taskId, dir, process.env.SHELL || "/bin/bash", ["-l"]);
+    if (!provider) {
+      const shell = interactiveShell();
+      return shells.open(taskId, dir, shell.file, shell.args);
+    }
     const settings = this.store.settings();
     const info = agentInfo(settings).find((a) => a.provider === provider);
     if (!info?.available)

@@ -1,6 +1,6 @@
 {
   "name": "golfinho",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "private": true,
   "description": "Ambiente desktop para tarefas com agentes e branches Git",
   "type": "module",

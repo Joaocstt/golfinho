@@ -14,7 +14,7 @@ import { requestSchema } from "./schema";
 import type { Signal } from "../shared/contracts";
 import { Shells } from "./shells";
 import { vaultFrom } from "./vault";
-import { configureAskpass, ASKPASS_SCRIPT } from "./ssh";
+import { configureAskpass, askpassFile } from "./ssh";
 import { writeFileSync, chmodSync } from "node:fs";
 import { safeStorage } from "electron";
 import { exercise } from "./smoke";
@@ -53,8 +53,9 @@ else {
       coordinator = new Coordinator(store, git, ptyDriver, logs, changed, join(home, "worktrees"));
       shells = new Shells(ptyDriver, signal);
       // O askpass não contém segredo: lê a senha da variável que o app passa só a esse processo.
-      const askpass = join(home, "golfinho-askpass.sh");
-      writeFileSync(askpass, ASKPASS_SCRIPT, { mode: 0o700 });
+      const script = askpassFile();
+      const askpass = join(home, script.name);
+      writeFileSync(askpass, script.content, { mode: 0o700 });
       chmodSync(askpass, 0o700);
       configureAskpass(askpass);
       const service = new Service(store, git, coordinator, logs, changed, async () => {

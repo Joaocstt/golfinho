@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { executablePath } from "./agents";
+import { launchTarget } from "./shellCommand";
 import type { Provider, ProviderQuota, QuotaGroup, QuotaWindow, Settings } from "../shared/contracts";
 const TIMEOUT = 30_000;
 // Cada fornecedor responde pela própria CLI. O Golfinho não lê credencial nem fala
@@ -14,7 +15,8 @@ function run(
   const path = executablePath(command);
   if (!path) throw new Error(`Executável não encontrado: ${command}.`);
   return new Promise((resolve, reject) => {
-    const child = spawn(path, args, { stdio: ["pipe", "pipe", "pipe"] });
+    const target = launchTarget(path, args);
+    const child = spawn(target.file, target.args, { stdio: ["pipe", "pipe", "pipe"] });
     let settled = false;
     let stderr = "";
     const finish = (error: Error | null, value?: unknown) => {

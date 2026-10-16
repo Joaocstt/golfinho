@@ -59,7 +59,8 @@ async function codex(cwd: string, since: number, home: string) {
 // Claude nomeia o arquivo com o id da sessão; o cwd confirma o projeto, porque o
 // nome do diretório é um slug com perdas.
 async function claude(cwd: string, since: number, home: string) {
-  const directory = join(home, ".claude", "projects", cwd.replace(/[\\/:]/g, "-"));
+  // Mesma regra do Claude Code: todo caractere que não é letra ou número vira "-" (ponto, espaço e _ incluídos).
+  const directory = join(home, ".claude", "projects", cwd.replace(/[^a-zA-Z0-9]/g, "-"));
   for (const file of await recent(directory, since, 0)) {
     try {
       for await (const line of createInterface({ input: createReadStream(file, "utf8") })) {

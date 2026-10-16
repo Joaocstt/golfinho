@@ -58,7 +58,10 @@ export class Store {
       .map((r) => JSON.parse(String(r.body)));
   }
   addProject(p: Project): Project {
-    const old = this.projects().find((x) => x.path === p.path);
+    // No Windows, C:\Repo e c:\repo são a mesma pasta.
+    const same = (a: string, b: string) =>
+      process.platform === "win32" ? a.toLowerCase() === b.toLowerCase() : a === b;
+    const old = this.projects().find((x) => same(x.path, p.path));
     if (old) return old;
     this.db.prepare("INSERT INTO projects VALUES(?,?)").run(p.id, JSON.stringify(p));
     return p;

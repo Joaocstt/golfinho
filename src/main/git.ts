@@ -302,6 +302,10 @@ export class GitService {
       realpath(root),
       realpath(approvedTarget),
     ]);
+    // Sem O_NOFOLLOW (não existe no Windows), o caminho aprovado é checado de novo: um link
+    // trocado no lugar do arquivo é recusado mesmo que aponte para dentro do projeto.
+    if ((await lstat(approvedTarget)).isSymbolicLink())
+      throw new Error("Links simbólicos não podem ser editados.");
     const rel = relative(canonical, current);
     // No Windows, ino pode vir zerado em algumas situações. Nesse caso a identidade não é
     // comparável; a contenção na raiz (realpath acima) continua valendo.
