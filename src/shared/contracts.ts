@@ -308,9 +308,21 @@ export type Signal =
   | { kind: "terminal"; taskId: string; data: string; offset: number }
   | { kind: "shell"; id: string; data: string }
   | { kind: "shellEnded"; id: string; code: number };
+// Atualização do próprio app. "unsupported" vale para execuções de desenvolvimento e para o
+// pacote .deb, que o electron-updater não atualiza sozinho.
+export type UpdateStatus =
+  | { state: "unsupported" }
+  | { state: "idle" }
+  | { state: "downloading"; version: string; percent: number }
+  | { state: "ready"; version: string };
 export interface GolfinhoAPI {
   request(request: Request): Promise<Response>;
   subscribe(listener: (signal: Signal) => void): () => void;
+  update: {
+    status(): Promise<UpdateStatus>;
+    install(): Promise<void>;
+    subscribe(listener: (status: UpdateStatus) => void): () => void;
+  };
 }
 declare global {
   interface Window {

@@ -45,6 +45,8 @@ import { SshPanel } from "./SshPanel";
 import { HelpPane } from "./HelpPane";
 import { RemoteTree } from "./RemoteTree";
 import { RemoteViewer } from "./RemoteViewer";
+import { UI_SCALES, applyUiScale, readUiScale } from "./uiScale";
+import { UpdateBanner } from "./UpdateBanner";
 import golfinhoLogo from "../../build/icon.png";
 
 const request = <T,>(r: Request) => window.golfinho.request(r) as Promise<T>;
@@ -331,6 +333,7 @@ export default function App() {
   }
   return (
     <div className="app" style={{ "--sidebar-width": `${sidebarWidth}px` } as React.CSSProperties}>
+      <UpdateBanner />
       <aside className="sidebar" aria-label="Projetos e tarefas">
         <div className="brand">
           <span className="brand-mark">
@@ -1489,6 +1492,8 @@ function SettingsForm({
   busy: boolean;
   onSubmit: (s: Settings) => void;
 }) {
+  // A escala é preferência de tela: aplica na hora e não passa pelo "Salvar".
+  const [uiScale, setUiScale] = useState(readUiScale);
   return (
     <form
       onSubmit={(e) => {
@@ -1510,6 +1515,25 @@ function SettingsForm({
         });
       }}
     >
+      <h4>Aparência</h4>
+      <label>
+        Tamanho da fonte da interface
+        <select
+          value={uiScale}
+          onChange={(e) => {
+            const scale = Number(e.target.value);
+            applyUiScale(scale);
+            setUiScale(scale);
+          }}
+        >
+          {UI_SCALES.map((s) => (
+            <option key={s.value} value={s.value}>
+              {s.label}
+            </option>
+          ))}
+        </select>
+      </label>
+      <p className="notice">Vale na hora e fica salvo neste computador.</p>
       <label>
         Execuções simultâneas
         <input

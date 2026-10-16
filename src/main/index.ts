@@ -22,8 +22,11 @@ import { writeFileSync, chmodSync } from "node:fs";
 import { safeStorage } from "electron";
 import { exercise } from "./smoke";
 import { writeFile } from "node:fs/promises";
+import { startUpdater, type Updater } from "./updater";
 const here = dirname(fileURLToPath(import.meta.url));
 let window: BrowserWindow | null = null;
+let updater: Updater | undefined;
+let installPending = false;
 let coordinator: Coordinator | undefined;
 let store: Store | undefined;
 let logs: TerminalLogs | undefined;
@@ -164,6 +167,24 @@ else {
           return { ok: false, error: (error as Error).message };
         }
       });
+      // Atualização: status vai para a janela e a instalação só começa com pedido explícito.
+      updater = startUpdater((status) => {
+        if (window && !window.isDestroyed()) window.webContents.send("golfinho:update", status);
+      });
+      const trusted = (event: Electron.IpcMainInvokeEvent) =>
+        Boolean(window) &&
+        event.sender === window!.webContents &&
+        event.senderFrame === window!.webContents.mainFrame;
+      ipcMain.handle("golfinho:update:status", (event) => {
+        if (!trusted(event)) return { state: "unsupported" };
+        return updater?.status() ?? { state: "unsupported" };
+      });
+      ipcMain.handle("golfinho:update:install", (event) => {
+        if (!trusted(event) || updater?.status().state !== "ready") return;
+        // Fecha pela mesma rota do usuário: o before-quit encerra as execuções antes de instalar.
+        installPending = true;
+        window?.close();
+      });
       window.once("ready-to-show", () => window?.show());
       window.on("closed", () => {
         window = null;
@@ -216,7 +237,9 @@ else {
       logs?.flush();
       store?.close();
       shutdownDone = true;
-      app.quit();
+      // Instalar a atualização precisa do app fechado; o instalador assume depois daqui.
+      if (installPending) updater?.installNow();
+      else app.quit();
     })();
   });
   app.on("window-all-closed", () => app.quit());

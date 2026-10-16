@@ -1,14 +1,16 @@
 :root {
   color-scheme: dark;
   /* Escala tipográfica. O app vivia entre 8px e 14px; o piso agora é 11px e cada
-     degrau continua distinto, para a hierarquia não achatar. */
-  --text-2xs: 11px;
-  --text-xs: 12px;
-  --text-sm: 13px;
-  --text-md: 14px;
-  --text-lg: 15px;
-  --text-xl: 16px;
-  --text-2xl: 18px;
+     degrau continua distinto, para a hierarquia não achatar. --ui-scale é definido
+     pela preferência do usuário em Configurações (ver uiScale.ts). */
+  --ui-scale: 1;
+  --text-2xs: calc(11px * var(--ui-scale));
+  --text-xs: calc(12px * var(--ui-scale));
+  --text-sm: calc(13px * var(--ui-scale));
+  --text-md: calc(14px * var(--ui-scale));
+  --text-lg: calc(15px * var(--ui-scale));
+  --text-xl: calc(16px * var(--ui-scale));
+  --text-2xl: calc(18px * var(--ui-scale));
   --background: #0a0a0a;
   --sidebar: #171717;
   --branch: #2a2a2a;
@@ -4027,4 +4029,21 @@ select {
   .chat-dots i {
     animation: none;
   }
+}
+
+/* Aviso de atualização do app: fixo no canto, sem mexer no layout. */
+.update-banner {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: calc(100vw - 32px);
+  padding: 10px 14px;
+  border-radius: 8px;
+  background: var(--sidebar);
+  border: 1px solid var(--branch);
+  font-size: var(--text-sm);
 }

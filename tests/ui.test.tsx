@@ -59,6 +59,7 @@ function setup(tasks: Task[] = [], rejectCreate = false, chatHistory: Record<str
   signal = (s) => listeners.forEach((listener) => listener(s));
   window.golfinho = {
     request,
+    update:{status:async()=>({state:'unsupported'}),install:async()=>{},subscribe:()=>()=>{}},
     subscribe: (listener) => {
       listeners.add(listener);
       return () => { listeners.delete(listener); };
@@ -419,7 +420,7 @@ it("permite tentar novamente quando o workspace não carrega", async () => {
     .fn()
     .mockRejectedValueOnce(new Error("Backend indisponível"))
     .mockResolvedValue(snapshot);
-  window.golfinho = { request, subscribe: () => () => {} };
+  window.golfinho = { request, update:{status:async()=>({state:'unsupported'}),install:async()=>{},subscribe:()=>()=>{}}, subscribe: () => () => {} };
   render(<App />);
   fireEvent.click(await screen.findByRole("button", { name: "Tentar novamente" }));
   expect(await screen.findByText("Projeto real")).toBeTruthy();
@@ -463,6 +464,7 @@ it("mantém dirty quando usuário edita durante salvamento IPC", async () => {
     await vi.importActual<typeof import("../src/renderer/Editors")>("../src/renderer/Editors");
   let resolveSave: () => void = () => {};
   window.golfinho = {
+    update:{status:async()=>({state:'unsupported'}),install:async()=>{},subscribe:()=>()=>{}},
     request: vi.fn(async (r) => {
       if (r.action === "readTree") return "inicial";
       return new Promise<null>((resolve) => {
