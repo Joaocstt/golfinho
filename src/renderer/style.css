@@ -124,9 +124,10 @@ button.primary:hover {
   width: 23px;
   color: #d0d0d0;
 }
-.brand-mark svg {
+.brand-mark img {
   width: 23px;
   height: 23px;
+  object-fit: contain;
 }
 .brand button {
   margin-left: auto;
@@ -2284,6 +2285,7 @@ select {
   vertical-align: -2px;
   margin-right: 3px;
   flex-shrink: 0;
+  object-fit: contain;
 }
 
 /* Menu do clique direito no terminal */

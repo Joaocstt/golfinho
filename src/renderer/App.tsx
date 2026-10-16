@@ -42,6 +42,7 @@ import { AgentIcon } from "./agentIcons";
 import { SshPanel } from "./SshPanel";
 import { RemoteTree } from "./RemoteTree";
 import { RemoteViewer } from "./RemoteViewer";
+import golfinhoLogo from "../../build/icon.png";
 
 type DropZone = "left" | "right" | "top" | "bottom" | "center";
 // Layout da divisão fica nesta máquina, como preferência de tela.
@@ -501,13 +502,7 @@ export default function App() {
       <aside className="sidebar" aria-label="Projetos e tarefas">
         <div className="brand">
           <span className="brand-mark">
-            <svg viewBox="0 0 40 40" aria-hidden="true">
-              <path
-                d="M5 25C9 13 23 9 31 18l5-2-2 6 4 5-8-1c-4 5-9 4-13 2l-7 6 2-8-7-1Z"
-                fill="currentColor"
-              />
-              <circle cx="29" cy="19" r="1" fill="#171717" />
-            </svg>
+            <img src={golfinhoLogo} alt="" width={23} height={23} />
           </span>
           <strong>golfinho</strong>
           <button

@@ -6,9 +6,9 @@
   "type": "module",
   "main": "out/main/index.js",
   "scripts": {
-    "dev": "electron-vite dev",
+    "dev": "node scripts/local-app.mjs dev",
     "build": "electron-vite build",
-    "start": "electron-vite preview",
+    "start": "node scripts/local-app.mjs preview",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "postinstall": "node node_modules/electron/install.js && electron-rebuild -f -w node-pty",
@@ -66,8 +66,16 @@
       "package.json"
     ],
     "asar": true,
+    "extraResources": [
+      {
+        "from": "build",
+        "to": "branding",
+        "filter": ["icon.png", "icon.ico"]
+      }
+    ],
     "npmRebuild": true,
     "win": {
+      "icon": "build/icon.ico",
       "target": [
         {
           "target": "nsis",
@@ -78,10 +86,14 @@
       ]
     },
     "nsis": {
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico",
       "oneClick": false,
       "allowToChangeInstallationDirectory": true
     },
     "mac": {
+      "icon": "build/icon.icns",
       "target": [
         {
           "target": "dmg",
@@ -101,6 +113,7 @@
       "category": "public.app-category.developer-tools"
     },
     "linux": {
+      "icon": "build/icons",
       "target": [
         "AppImage",
         "deb"

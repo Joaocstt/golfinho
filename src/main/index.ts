@@ -41,6 +41,12 @@ else {
   app
     .whenReady()
     .then(async () => {
+      const icon = join(
+        app.isPackaged ? join(process.resourcesPath, "branding") : join(here, "../../build"),
+        "icon.png",
+      );
+      if (process.platform === "win32") app.setAppUserModelId("com.golfinho.app");
+      if (process.platform === "darwin" && !app.isPackaged) app.dock?.setIcon(icon);
       const home = app.getPath("userData");
       mkdirSync(home, { recursive: true, mode: 0o700 });
       const directory = join(home, "logs");
@@ -117,6 +123,7 @@ else {
         minWidth: 980,
         minHeight: 700,
         title: "Golfinho",
+        icon,
         backgroundColor: "#0b1220",
         show: false,
         webPreferences: {
