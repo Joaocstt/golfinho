@@ -313,7 +313,6 @@ export function ChatPane({ taskId, provider, model, onError }: ChatPaneProps) {
             );
           return null;
         })}
-        {busy && <p className="chat-busy">Pensando…</p>}
         <div ref={bottom} />
       </div>
       <form
@@ -335,6 +334,7 @@ export function ChatPane({ taskId, provider, model, onError }: ChatPaneProps) {
             ))}
           </div>
         )}
+        {busy && <p className="chat-busy">Pensando…</p>}
         <div className="chat-tools">
           {context && (
           <div className="chat-context" title={`${context.used.toLocaleString("pt-BR")}${context.limit ? ` / ${context.limit.toLocaleString("pt-BR")}` : ""} tokens (última chamada)`}>

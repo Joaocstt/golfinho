@@ -74,6 +74,8 @@ export class ChatSession {
       parent_tool_use_id: null,
     };
     this.emit({ type: "user", text, ...(images.length ? { images: images.map((image) => image.path) } : {}) });
+    // Cada mensagem é um turno: o status "rodando" sai aqui, e não só quando a sessão abre.
+    this.emit({ type: "status", state: "running" });
     if (!this.running) this.start();
     if (this.wake) {
       const resume = this.wake;
@@ -132,7 +134,6 @@ export class ChatSession {
     void this.consume(this.running);
   }
   private async consume(stream: Query) {
-    this.emit({ type: "status", state: "running" });
     try {
       for await (const message of stream) this.route(message);
     } catch (error) {

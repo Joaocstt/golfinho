@@ -7,7 +7,7 @@ const mock=vi.hoisted(()=>({instances:[] as any[],searches:[] as any[]}));
 vi.mock('@xterm/xterm',()=>({Terminal:class{
  options:any;unicode={activeVersion:'6'};cols=80;rows=24;buffer={active:{viewportY:100,baseY:100}};selection='seleção';data=(_s:string)=>{};scroll=(_n:number)=>{};selectionChange=()=>{};key=(_e:KeyboardEvent)=>true;
  write=vi.fn((_s:string,callback?:()=>void)=>callback?.());paste=vi.fn((text:string)=>this.data(text));clear=vi.fn();selectAll=vi.fn();select=vi.fn();dispose=vi.fn();focus=vi.fn();
- scrollToBottom=vi.fn(()=>{this.buffer.active.viewportY=this.buffer.active.baseY;this.scroll(this.buffer.active.viewportY);});scrollToLine=vi.fn((line:number)=>{this.buffer.active.viewportY=line;this.scroll(line);});
+ scrollToBottom=vi.fn(()=>{this.buffer.active.viewportY=this.buffer.active.baseY;this.scroll(this.buffer.active.viewportY);});scrollToLine=vi.fn((line:number)=>{this.buffer.active.viewportY=line;this.scroll(line);});reset=vi.fn(()=>{});
  constructor(options:any){this.options=options;mock.instances.push(this);}loadAddon(){}open(){}hasSelection(){return !!this.selection;}onData(fn:any){this.data=fn;return {dispose:vi.fn()};}onScroll(fn:any){this.scroll=fn;return {dispose:vi.fn()};}onSelectionChange(fn:any){this.selectionChange=fn;return {dispose:vi.fn()};}getSelection(){return this.selection;}getSelectionPosition(){return undefined;}attachCustomKeyEventHandler(fn:any){this.key=fn;}
 }}));
 vi.mock('@xterm/addon-fit',()=>({FitAddon:class{fit=vi.fn();}}));

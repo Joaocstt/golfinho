@@ -2481,6 +2481,8 @@ select {
 .chat-busy {
   color: #8f8b80;
   margin: 0;
+  font-size: 12px;
+  padding: 0 2px;
 }
 .chat-user {
   align-self: flex-end;

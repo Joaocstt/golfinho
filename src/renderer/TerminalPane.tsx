@@ -245,6 +245,9 @@ export function TerminalPane({ taskId, active = false, provider, status, onError
       .then((history) => {
         if (!alive) return;
         cursor = history.nextOffset;
+        // Reinicia o terminal antes do histórico: modos e posições de uma sessão anterior não
+        // podem sobreviver à reprodução, senão o texto fica embaralhado.
+        terminal.reset();
         write(history.data, saved, () => {
           buffer.forEach(append);
           buffer.length = 0;
