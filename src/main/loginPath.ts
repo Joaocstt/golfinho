@@ -1,6 +1,5 @@
 import { execFileSync } from "node:child_process";
 import { homedir } from "node:os";
-import { join } from "node:path";
 // Apps abertos pelo Finder ou pelo Dock não herdam o PATH do Terminal: CLIs instaladas por
 // Homebrew, npm global ou ~/.local/bin não aparecem. Usamos o PATH do shell de login.
 const MARK = "__GOLFINHO_PATH__";
@@ -24,7 +23,7 @@ export function mergePath(current: string | undefined, login: string | null, hom
     ...(current ?? "").split(":"),
     "/opt/homebrew/bin",
     "/usr/local/bin",
-    join(home, ".local", "bin"),
+    `${home}/.local/bin`,
   ];
   return [...new Set(parts.filter(Boolean))].join(":");
 }
