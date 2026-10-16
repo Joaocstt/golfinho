@@ -126,18 +126,17 @@ npm start
 3. **Trabalhar com o agente.** No Terminal, responda às perguntas da CLI. No Chat
    de Claude ou Codex, envie mensagens e imagens e responda aos cartões de aprovação.
    Terminal e Chat mantêm conversas independentes.
-4. **Revisar.** Ao encerrar a sessão do terminal com sucesso, a tarefa vai para
-   revisão. Você vê o diff e os arquivos alterados e pode abri-los no editor.
-   O fim de um turno do Chat não conclui a tarefa automaticamente.
-5. **Executar checks.** Escolha os comandos que quiser (testes, lint, build). Nenhum
-   check roda sozinho. Os resultados ficam registrados no histórico.
-6. **Concluir tarefa.** Registra o seu aceite. Não faz merge. Os checks precisam estar
-   aprovados para o conteúdo atual, quando houver checks cadastrados na tarefa.
-7. **Publicar branch no remoto.** Faz um push comum, sem `--force`. Faça commit das
-   alterações antes: você pode pedir ao agente para commitar ou fazer isso no seu terminal.
+4. **Commit.** A aba **Commit** mostra as alterações da pasta da tarefa agrupadas por
+   pasta. Marque os arquivos que entram no commit, escreva a mensagem e escolha
+   **Commit** ou **Commit e enviar**. Só os arquivos marcados são commitados; o resto
+   continua alterado. Para pedir o commit ao agente, use a aba **Chat**.
+5. **Executar checks.** Escolha os comandos que quiser (testes, lint, build) na aba
+   **Checks**. Nenhum check roda sozinho. Os resultados ficam registrados no histórico.
+6. **Diff.** A aba **Diff** mostra o que a tarefa mudou em relação à base, quando você
+   carregar a revisão.
 
-> Saída zero do agente **não** significa que a tarefa está concluída. Ela só leva a
-> tarefa para revisão.
+> Saída zero do agente **não** significa que a tarefa está concluída. Ela só mostra
+> que a CLI encerrou.
 
 **Excluir tarefa:** remove os registros da tarefa e a branch criada pelo Golfinho.
 Uma branch que já existia ao criar a tarefa é preservada. A pasta principal do
@@ -247,8 +246,9 @@ execuções do coordenador e os checks; o Chat e os shells avulsos têm ciclo pr
 | Claude Code | `claude` | CLI no Terminal; Claude Agent SDK no Chat | Terminal com `--permission-mode manual`; Chat com modo `default` e cartões para os pedidos de aprovação. |
 | Antigravity | `agy` | CLI no Terminal | Configurações de aprovação da própria CLI. |
 
-Nenhuma flag que ignora permissões é usada. Os caminhos dos executáveis podem ser
-ajustados na interface.
+O chat do Antigravity usa `--dangerously-skip-permissions`: qualquer comando e edição é
+aprovado sem perguntar, porque esse modo não tem cartão de aprovação. Os demais agentes
+seguem as aprovações de cada CLI. Os caminhos dos executáveis podem ser ajustados na interface.
 
 ## Segurança e limites
 

@@ -346,6 +346,46 @@ export class GitService {
   }
   // Alterações da raiz segundo o git. Arquivos ignorados não entram, e untracked vira
   // arquivo individual (não a pasta inteira), para a árvore marcar o que é novo de fato.
+  // Commit só dos caminhos escolhidos: `commit -- <caminhos>` deixa de fora o resto do índice.
+  async commitPaths(root: string, paths: string[], message: string): Promise<string> {
+    if (paths.length === 0) throw new Error("Escolha ao menos um arquivo.");
+    if (!message.trim()) throw new Error("Escreva a mensagem do commit.");
+    await this.run(root, ["add", "-A", "--", ...paths]);
+    await this.run(root, ["commit", "-m", message, "--", ...paths]);
+    return (await this.run(root, ["rev-parse", "--short", "HEAD"])).trim();
+  }
+  // Diff do que ainda não foi commitado: HEAD contra o arquivo atual.
+  async workingDiff(root: string, path: string): Promise<FileChange> {
+    const inHead = await this.run(root, ["cat-file", "-e", `HEAD:${path}`]).then(
+      () => true,
+      () => false,
+    );
+    const original = inHead ? await this.run(root, ["show", `HEAD:${path}`]) : "";
+    let modified = "";
+    let deleted = false;
+    try {
+      modified = await this.read(root, path);
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === "ENOENT") deleted = true;
+      else
+        return {
+          path,
+          status: inHead ? "modified" : "added",
+          original: "",
+          modified: "",
+          binary: false,
+          error: (e as Error).message,
+        };
+    }
+    const binary = original.includes("\0") || modified.includes("\0");
+    return {
+      path,
+      status: !inHead ? "added" : deleted ? "deleted" : "modified",
+      original: binary ? "" : original,
+      modified: binary ? "" : modified,
+      binary,
+    };
+  }
   async changes(root: string): Promise<Changes> {
     const output = await this.run(root, [
       "status",

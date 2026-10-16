@@ -14,6 +14,18 @@ const input = {
   timeoutMinutes: 0,
 };
 describe("persistent tasks", () => {
+  it("permite voltar uma tarefa concluída para a fila", () => {
+    const store = new Store(":memory:");
+    store.addProject({ id: "p", name: "Repo", path: "/repo", remotes: ["origin"] });
+    const t = store.createTask(input);
+    store.transition(t.id, "queued", "Na fila");
+    store.transition(t.id, "running", "Rodando");
+    store.transition(t.id, "review", "Revisão");
+    store.transition(t.id, "completed", "Concluída");
+    store.transition(t.id, "queued", "Voltou para a fila");
+    expect(store.task(t.id).status).toBe("queued");
+    store.close();
+  });
   it("writes state and sequenced events atomically and rejects invalid transitions", () => {
     const store = new Store(":memory:");
     store.addProject({ id: "p", name: "Repo", path: "/repo", remotes: ["origin"] });

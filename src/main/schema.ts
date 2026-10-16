@@ -99,6 +99,16 @@ export const requestSchema = z.discriminatedUnion("action", [
     .object({ action: z.literal("readTree"), taskId: id, path: z.string().min(1).max(4096) })
     .strict(),
   z.object({ action: z.literal("changes"), taskId: id }).strict(),
+  z.object({ action: z.literal("changeDiff"), taskId: id, path: z.string().min(1).max(4096) }).strict(),
+  z
+    .object({
+      action: z.literal("commitFiles"),
+      taskId: id,
+      paths: z.array(z.string().min(1).max(4096)).min(1).max(1000),
+      message: z.string().max(5000),
+      push: z.boolean(),
+    })
+    .strict(),
   z
     .object({
       action: z.literal("shellOpen"),

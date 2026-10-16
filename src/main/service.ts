@@ -484,7 +484,6 @@ export class Service {
         return null;
       case "chatSend": {
         const task = this.store.task(r.taskId);
-        if (task.provider === "antigravity") throw new Error("O chat está disponível para Claude e Codex.");
         // A pasta é a mesma da aba de arquivos: a worktree da tarefa, ou o projeto antes dela.
         const { root } = await this.treeRoot(r.taskId);
         const target = { provider: task.provider, cwd: root, executable: this.store.settings().executables[task.provider] };
@@ -509,6 +508,26 @@ export class Service {
         return this.requireChatImages().pick();
       case "chatImage":
         return this.requireChatImages().dataUrl(r.path);
+      case "commitFiles":
+        return this.coordinator.exclusive(r.taskId, async () => {
+          const t = this.store.task(r.taskId);
+          if (!t.branchCreated) throw new Error("Branch ainda não criada.");
+          const dir = requireCheckout(t, this.store.project(t.projectId));
+          await this.git.requireCurrent(dir, t.branch);
+          const sha = await this.git.commitPaths(dir, r.paths, r.message);
+          this.store.note(
+            t.id,
+            `Commit ${sha}: ${r.message.split("\n")[0]} (${r.paths.length} arquivo(s)).`,
+          );
+          if (r.push) {
+            await this.git.publish(dir, t.branch, t.remote, Boolean(t.adoptedBranch));
+            this.store.update(t.id, { published: true }, `Branch publicada em ${t.remote}, sem force-push.`);
+          }
+          this.changed();
+          return sha;
+        });
+      case "changeDiff":
+        return this.git.workingDiff((await this.treeRoot(r.taskId)).root, r.path);
       case "changes":
         return this.git.changes((await this.treeRoot(r.taskId)).root);
       case "readFile":
@@ -521,8 +540,6 @@ export class Service {
       case "saveFile":
         return this.coordinator.exclusive(r.taskId, async () => {
           const t = this.store.task(r.taskId);
-          if (t.status === "completed")
-            throw new Error("Tarefa concluída não pode ser editada. Crie uma nova tarefa.");
           const dir = requireCheckout(t, this.store.project(t.projectId));
           await this.git.requireCurrent(dir, t.branch);
           await this.git.save(dir, r.path, r.content);

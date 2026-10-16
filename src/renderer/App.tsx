@@ -40,6 +40,7 @@ import { TerminalPane, DiffPane, FileEditor, FileTree } from "./Editors";
 import { ChatPane } from "./ChatPane";
 import { ShellPane } from "./ShellPane";
 import { AgentIcon } from "./agentIcons";
+import { CommitPanel } from "./CommitPanel";
 import { SshPanel } from "./SshPanel";
 import { HelpPane } from "./HelpPane";
 import { ReviewFiles } from "./ReviewFiles";
@@ -71,8 +72,6 @@ function zoneAt(e: React.DragEvent, box: HTMLElement): DropZone {
   return "center";
 }
 const request = <T,>(r: Request) => window.golfinho.request(r) as Promise<T>;
-const COMMIT_PROMPT =
-  "Faça commit de todas as alterações desta branch, com mensagens claras, em português, agrupando por assunto. Não faça push, não troque de branch e não altere código além do necessário para os commits. Ao terminar, confirme o hash de cada commit.";
 const CHANGE_COLOR: Record<string, string> = {
   modified: "#e5c07b",
   added: "#98c379",
@@ -158,12 +157,6 @@ export default function App() {
   const [sessions, setSessions] = useState<
     Record<string, { key: string; label: string; provider?: Provider; prompt?: string }[]>
   >({});
-  // Publicar exige commit: o diálogo pede ao agente para fazê-los antes.
-  const [publishDialog, setPublishDialog] = useState<{
-    count: number;
-    prompt: string;
-    agent: Provider;
-  } | null>(null);
   const [notice, setNotice] = useState("");
   const [sessionMenu, setSessionMenu] = useState(false);
   // Terminais gerais: fora de qualquer tarefa, na barra superior.
@@ -396,30 +389,6 @@ export default function App() {
     setActiveGeneral(key);
     setDashboard(false);
     setSelected("");
-  }
-  async function openPublish() {
-    if (!task) return;
-    await perform(async () => {
-      const count = await request<number>({ action: "uncommitted", taskId: task.id });
-      setPublishDialog({ count, prompt: COMMIT_PROMPT, agent: task.provider });
-    });
-  }
-  // A CLI recebe o pedido logo ao abrir, numa aba Commit na pasta da tarefa.
-  function sendCommitRequest() {
-    if (!task || !publishDialog) return;
-    const { prompt, agent } = publishDialog;
-    const label = snapshot?.agents.find((a) => a.provider === agent)?.label ?? agent;
-    const key = crypto.randomUUID();
-    const taskId = task.id;
-    setSessions((all) => ({
-      ...all,
-      [taskId]: [...(all[taskId] ?? []), { key, label: `Commit · ${label}`, provider: agent, prompt }],
-    }));
-    setTab(`session:${key}`);
-    setPublishDialog(null);
-    setNotice(
-      `Pedido enviado para ${label}. Acompanhe na aba Commit. Quando os commits estiverem prontos, clique em Publicar branch de novo.`,
-    );
   }
   function addSession(taskId: string, label: string, provider?: Provider) {
     const key = crypto.randomUUID();
@@ -998,9 +967,8 @@ export default function App() {
               <div className="workbar">
                 <div className="tab-group">
                   <div className="tabs">
-                  {["Terminal", "Chat", "Shell", "Diff", "Arquivos", "Histórico", "Checks"]
-                    .filter((t) => t !== "Chat" || task.provider !== "antigravity")
-                    .filter((t) => t !== "Shell" || task.branchCreated)
+                  {["Terminal", "Chat", "Shell", "Diff", "Commit", "Arquivos", "Histórico", "Checks"]
+                    .filter((t) => (t !== "Shell" && t !== "Commit") || task.branchCreated)
                     .map((t) => (
                     <button
                       key={t}
@@ -1095,24 +1063,7 @@ export default function App() {
                   )}
                 </div>
                 <div className="actions">
-                  {task.branchCreated && !task.worktreePath && !task.adoptedBranch && !["running", "waiting", "queued"].includes(task.status) && (
-                    <button
-                      disabled={busy}
-                      onClick={() =>
-                        navigate(() => {
-                          setFile("");
-                          setTab("Terminal");
-                          setReview(null);
-                          void act("activate");
-                        })
-                      }
-                      aria-label="Ativar branch no repositório"
-                      title="Ativa a branch desta tarefa na pasta do projeto"
-                    >
-                      Ativar branch
-                    </button>
-                  )}
-                  {["draft", "failed", "cancelled", "interrupted", "review"].includes(
+                  {["draft", "failed", "cancelled", "interrupted", "review", "completed"].includes(
                     task.status,
                   ) && (
                     <button
@@ -1153,65 +1104,6 @@ export default function App() {
                         Testar no projeto
                       </button>
                     )}
-                  {task.testCheckout && (
-                    <button
-                      disabled={busy}
-                      className="primary"
-                      title="Volta a pasta do projeto para a branch que estava antes do teste"
-                      onClick={() => {
-                        if (window.confirm("Voltar a pasta do projeto para a branch original?"))
-                          void act("testRestore");
-                      }}
-                    >
-                      Voltar pasta do projeto
-                    </button>
-                  )}
-                  {["running", "waiting"].includes(task.status) && (
-                    <button
-                      disabled={busy || task.provider === "antigravity"}
-                      title={
-                        task.provider === "antigravity"
-                          ? "O Antigravity não tem comando de saída verificado. Use Cancelar execução."
-                          : "Pede à CLI para sair pelo comando dela e leva a tarefa à revisão. As alterações são preservadas."
-                      }
-                      onClick={() => {
-                        if (
-                          window.confirm(
-                            "Encerrar a CLI e levar a tarefa para revisão? As alterações da pasta são preservadas.",
-                          )
-                        )
-                          void act("endSession");
-                      }}
-                    >
-                      Encerrar e revisar
-                    </button>
-                  )}
-                  {task.branchCreated && !["running", "waiting", "queued"].includes(task.status) && (
-                    <button
-                      disabled={busy}
-                      aria-label="Revisar alterações"
-                      title="Abre o diff e o resumo do que mudou"
-                      onClick={openReview}
-                    >
-                      Revisar
-                    </button>
-                  )}
-                  {task.status === "review" && (
-                    <button disabled={busy} onClick={() => act("finish")}>
-                      Concluir tarefa
-                    </button>
-                  )}
-                  {task.status === "completed" && !task.published && (
-                    <button
-                      disabled={busy}
-                      className="primary"
-                      aria-label="Publicar branch no remoto"
-                      title="Faz um push comum da branch, sem --force"
-                      onClick={() => void openPublish()}
-                    >
-                      Publicar
-                    </button>
-                  )}
                   {task.published && <span className="published">Branch publicada</span>}
                 </div>
               </div>
@@ -1434,6 +1326,17 @@ export default function App() {
                       </details>
                     ))}
                   </>
+                  </div>
+                )}
+                {shown("Commit") && task.branchCreated && (
+                  <div className="tab-slot" style={place("Commit")}>
+                    <CommitPanel
+                      key={task.id}
+                      taskId={task.id}
+                      branch={task.branch}
+                      request={request}
+                      onError={report}
+                    />
                   </div>
                 )}
                 {secondTab && (
@@ -1701,77 +1604,6 @@ export default function App() {
                 }
               />
             )}
-          </div>
-        </div>
-      )}
-      {publishDialog && task && (
-        <div className="modal-backdrop">
-          <div className="modal confirm" role="dialog" aria-modal="true" aria-label="Publicar branch">
-            <div className="modal-title">
-              <h2>{publishDialog.count === 0 ? "Publicar branch" : "Fazer os commits antes de publicar"}</h2>
-            </div>
-            {publishDialog.count === 0 ? (
-              <p>
-                Não há alterações sem commit. A branch <strong>{task.branch}</strong> está pronta para
-                ser enviada ao remoto <strong>{task.remote}</strong>.
-              </p>
-            ) : (
-              <>
-                <p>
-                  Há {publishDialog.count} alteração(ões) sem commit em <strong>{task.branch}</strong>.
-                  O pedido abaixo vai para o agente, que faz os commits na pasta da tarefa. Nada é
-                  enviado ao remoto por ele.
-                </p>
-                <label>
-                  Agente
-                  <select
-                    value={publishDialog.agent}
-                    onChange={(e) =>
-                      setPublishDialog({ ...publishDialog, agent: e.target.value as Provider })
-                    }
-                  >
-                    {snapshot?.agents
-                      .filter((a) => a.available)
-                      .map((a) => (
-                        <option key={a.provider} value={a.provider}>
-                          {a.label}
-                        </option>
-                      ))}
-                  </select>
-                </label>
-                <label>
-                  Pedido
-                  <textarea
-                    rows={6}
-                    value={publishDialog.prompt}
-                    onChange={(e) => setPublishDialog({ ...publishDialog, prompt: e.target.value })}
-                  />
-                </label>
-              </>
-            )}
-            <div className="modal-actions">
-              <button onClick={() => setPublishDialog(null)}>Cancelar</button>
-              {publishDialog.count === 0 ? (
-                <button
-                  className="primary"
-                  disabled={busy}
-                  onClick={() => {
-                    setPublishDialog(null);
-                    void act("publish");
-                  }}
-                >
-                  Publicar branch
-                </button>
-              ) : (
-                <button
-                  className="primary"
-                  disabled={!publishDialog.prompt.trim()}
-                  onClick={sendCommitRequest}
-                >
-                  Enviar pedido ao agente
-                </button>
-              )}
-            </div>
           </div>
         </div>
       )}

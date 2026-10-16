@@ -270,13 +270,11 @@ it("protege alterações não salvas ao fechar janela ou abrir revisão", async 
   window.dispatchEvent(unload);
   expect(unload.defaultPrevented).toBe(true);
   const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
-  fireEvent.click(screen.getByRole("button", { name: "Revisar alterações" }));
+  fireEvent.click(screen.getByRole("button", { name: "Diff" }));
   expect(confirm).toHaveBeenCalled();
   expect(request).not.toHaveBeenCalledWith({ action: "review", taskId: "edit" });
   expect(screen.getByRole("button", { name: "Editar conteúdo" })).toBeTruthy();
   act(() => signal?.({ kind: "changed" }));
-  fireEvent.click(screen.getByRole("button", { name: "Ativar branch no repositório" }));
-  expect(request).not.toHaveBeenCalledWith({ action: "activate", taskId: "edit" });
   expect(screen.getByRole("button", { name: "Editar conteúdo" })).toBeTruthy();
   confirm.mockRestore();
 });
@@ -291,16 +289,11 @@ it("permite tentar novamente quando o workspace não carrega", async () => {
   expect(await screen.findByText("Projeto real")).toBeTruthy();
 });
 
-it("ativa branch encerrada somente por ação explícita", async () => {
-  const request = setup([{ ...editableTask, status: "completed" }]);
-  fireEvent.click(await screen.findByRole("button", { name: /Editar arquivo/ }));
-  fireEvent.click(screen.getByRole("button", { name: "Ativar branch no repositório" }));
-  await waitFor(() => expect(request).toHaveBeenCalledWith({ action: "activate", taskId: "edit" }));
-});
 it("invalida revisão em mudança do backend", async () => {
   setup([editableTask]);
   fireEvent.click(await screen.findByRole("button", { name: /Editar arquivo/ }));
-  fireEvent.click(screen.getByRole("button", { name: "Revisar alterações" }));
+  fireEvent.click(screen.getByRole("button", { name: "Diff" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Carregar diff" }));
   await screen.findByText("Nenhuma alteração encontrada nesta branch.");
   act(() => signal?.({ kind: "changed" }));
   expect(await screen.findByRole("button", { name: "Carregar diff" })).toBeTruthy();
@@ -395,7 +388,6 @@ vi.mock("@xterm/addon-fit", () => ({
 }));
 it.each([
   ["queue", "Colocar na fila"],
-  ["finish", "Concluir tarefa"],
 ] as const)("protege editor não salvo antes de %s", async (action, label) => {
   const request = setup([editableTask]);
   fireEvent.click(await screen.findByRole("button", { name: /Editar arquivo/ }));

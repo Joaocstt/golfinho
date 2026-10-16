@@ -10,6 +10,7 @@ import {
 import type { ChatBlock, ChatEvent, ChatHistoryItem, Provider } from "../shared/contracts";
 import type { ChatImage } from "./chatImages";
 import { CodexChatSession } from "./codexChat";
+import { AntigravityChatSession } from "./antigravityChat";
 // Resumo curto da ferramenta para o cartão de aprovação. Comando e caminho são o que a pessoa
 // precisa ver para decidir; o resto do input fica de fora.
 export function summarize(toolName: string, input: Record<string, unknown>): string {
@@ -240,7 +241,9 @@ export class ChatManager {
       session =
         target.provider === "codex"
           ? new CodexChatSession(target.cwd, target.executable, emit, options)
-          : new ChatSession(target.cwd, emit, options);
+          : target.provider === "antigravity"
+            ? new AntigravityChatSession(target.cwd, target.executable, emit, options)
+            : new ChatSession(target.cwd, emit, options);
       this.sessions.set(taskId, session);
     }
     session.send(text, images);

@@ -19,7 +19,8 @@ const allowed: Record<Status, Status[]> = {
   waiting: ["running", "review", "cancelled", "interrupted", "failed"],
   interrupted: ["queued", "review", "cancelled"],
   review: ["queued", "completed", "cancelled"],
-  completed: [],
+  // Concluída não é um fim: a branch pode voltar a ser trabalhada.
+  completed: ["queued", "review"],
   failed: ["queued", "review", "cancelled"],
   cancelled: ["queued", "review"],
 };

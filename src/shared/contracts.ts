@@ -206,6 +206,8 @@ export type Request =
   | { action: "tree"; taskId: string; path: string }
   | { action: "readTree"; taskId: string; path: string }
   | { action: "changes"; taskId: string }
+  | { action: "changeDiff"; taskId: string; path: string }
+  | { action: "commitFiles"; taskId: string; paths: string[]; message: string; push: boolean }
   | { action: "shellOpen"; taskId: string; provider?: Provider; prompt?: string }
   | { action: "uncommitted"; taskId: string }
   | { action: "shellOpenGeneral"; projectId?: string; provider?: Provider }
@@ -260,6 +262,7 @@ export type Response =
   | Snapshot
   | TreeListing
   | Changes
+  | FileChange
   | number
   | SshListing
   | SshRoots

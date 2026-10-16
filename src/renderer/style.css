@@ -3344,3 +3344,227 @@ select {
   margin-top: 0;
   padding: 9px;
 }
+
+/* Aba Commit: árvore à esquerda, diff à direita */
+.commit {
+  display: grid;
+  grid-template-columns: minmax(260px, 340px) minmax(0, 1fr);
+  gap: 12px;
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+}
+.commit-side,
+.commit-preview {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border: 1px solid #ffffff14;
+  border-radius: 10px;
+  background: #ffffff05;
+  overflow: hidden;
+}
+.commit-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid #ffffff14;
+}
+.commit-head strong {
+  display: block;
+  font-size: var(--text-sm);
+}
+.commit-branch {
+  display: block;
+  font-family: var(--mono, monospace);
+  font-size: 11px;
+  color: #8a8a8a;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 220px;
+}
+.commit-count {
+  font-size: 11px;
+  color: #a1a1a1;
+  background: #ffffff0f;
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+.commit-quick {
+  display: flex;
+  gap: 6px;
+  padding: 8px 12px;
+  border-bottom: 1px solid #ffffff0f;
+}
+.commit-quick button {
+  font-size: 11px;
+  padding: 3px 8px;
+}
+.commit-tree {
+  flex: 1;
+  min-height: 120px;
+  overflow: auto;
+  padding: 6px 4px;
+}
+.commit-empty {
+  padding: 16px;
+  color: #8a8a8a;
+  font-size: var(--text-sm);
+}
+.commit-folder-row,
+.commit-file {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 26px;
+  padding: 0 8px;
+  border-radius: 6px;
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+.commit-folder-row:hover,
+.commit-file:hover {
+  background: #ffffff0a;
+}
+.commit-file {
+  padding-left: 30px;
+}
+.commit-file.active {
+  background: #ffffff14;
+}
+.commit-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  background: none;
+  border: 0;
+  color: #a1a1a1;
+  cursor: pointer;
+}
+.commit-folder-icon {
+  color: #8a8a8a;
+  flex-shrink: 0;
+}
+.commit-folder-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+.commit-folder-count {
+  font-size: 11px;
+  color: #8a8a8a;
+}
+.commit-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.commit-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: #8a8a8a;
+}
+.commit-dot.added {
+  background: #46a758;
+}
+.commit-dot.modified {
+  background: #d4a72c;
+}
+.commit-dot.deleted {
+  background: #e5484d;
+}
+.commit-kind {
+  font-style: normal;
+  font-size: 11px;
+  color: #8a8a8a;
+}
+.commit-kind.added {
+  color: #46a758;
+}
+.commit-kind.modified {
+  color: #d4a72c;
+}
+.commit-kind.deleted {
+  color: #e5484d;
+}
+.commit-compose {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border-top: 1px solid #ffffff14;
+}
+.commit-compose textarea {
+  display: block;
+  width: 100%;
+  resize: vertical;
+  min-height: 64px;
+  font: inherit;
+  font-size: var(--text-sm);
+}
+.commit-actions {
+  display: flex;
+  gap: 8px;
+}
+.commit-actions button {
+  font-size: var(--text-sm);
+}
+.commit-done {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: #46a758;
+}
+.commit-preview-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid #ffffff14;
+  min-width: 0;
+}
+.commit-preview-head code {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-sm);
+}
+.commit-diff {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+.commit-diff .editor-host {
+  flex: 1;
+  min-height: 0;
+}
+.commit-blank {
+  margin: auto;
+  color: #8a8a8a;
+  font-size: var(--text-sm);
+}
+@media (max-width: 880px) {
+  .commit {
+    grid-template-columns: 1fr;
+  }
+}
+.commit input[type="checkbox"] {
+  display: inline-block;
+  width: auto;
+  margin: 0;
+  flex-shrink: 0;
+}
