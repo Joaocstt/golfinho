@@ -195,6 +195,15 @@ export class Service {
         this.changed();
         return project;
       }
+      case "removeProject": {
+        const project = this.store.project(r.projectId);
+        // Tarefas apontam para o projeto; remover o registro deixaria elas órfãs.
+        if (this.store.tasks().some((t) => t.projectId === project.id))
+          throw new Error("Este projeto ainda tem tarefas. Exclua as tarefas antes de removê-lo.");
+        this.store.removeProject(project.id);
+        this.changed();
+        return null;
+      }
       case "quota":
         return this.quota(r.provider, r.refresh === true);
       case "branches":

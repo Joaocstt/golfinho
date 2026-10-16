@@ -41,6 +41,7 @@ export const requestSchema = z.discriminatedUnion("action", [
   z
     .object({ action: z.literal("addProject"), path: z.string().min(1).max(4096).optional() })
     .strict(),
+  z.object({ action: z.literal("removeProject"), projectId: id }).strict(),
   z.object({ action: z.literal("branches"), projectId: id }).strict(),
   z.object({ action: z.literal("quota"), provider, refresh: z.boolean().optional() }).strict(),
   z.object({ action: z.literal("deleteInfo"), taskId: id }).strict(),

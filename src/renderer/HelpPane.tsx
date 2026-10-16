@@ -72,6 +72,10 @@ const TOPICS: Topic[] = [
           Há um limite global de execuções ao mesmo tempo (padrão: 2). Checks também contam para esse
           limite.
         </li>
+        <li>
+          <b>Encerrar se parado</b>: se o agente ficar esse tempo sem mostrar nada e sem você digitar,
+          a execução é encerrada e a vaga é liberada. Conversas ativas nunca são cortadas; 0 desativa.
+        </li>
       </ul>
     ),
   },

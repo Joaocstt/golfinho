@@ -69,6 +69,10 @@ export class Store {
     this.db.prepare("INSERT INTO projects VALUES(?,?)").run(p.id, JSON.stringify(p));
     return p;
   }
+  // Só remove o registro do Golfinho. A pasta e o repositório Git não são tocados.
+  removeProject(id: string) {
+    this.db.prepare("DELETE FROM projects WHERE id = ?").run(id);
+  }
   project(id: string): Project {
     const p = this.projects().find((p) => p.id === id);
     if (!p) throw new Error("Projeto não encontrado.");

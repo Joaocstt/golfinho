@@ -216,7 +216,30 @@ button.primary:hover {
   scrollbar-width: thin;
 }
 .project-group {
+  position: relative;
   margin-bottom: 9px;
+}
+/* Remover projeto: aparece ao passar o mouse sobre o grupo, por cima do contador. */
+.project-remove {
+  position: absolute;
+  top: 7px;
+  right: 4px;
+  display: none;
+  padding: 2px;
+  border: 0;
+  border-radius: 4px;
+  background: #171717;
+  color: #8a8a8a;
+}
+.project-group:hover .project-remove,
+.project-remove:focus-visible {
+  display: inline-flex;
+}
+.project-remove:hover:not(:disabled) {
+  color: #f87171;
+}
+.project-remove:disabled {
+  opacity: 0.4;
 }
 .project-row {
   display: flex;
@@ -2851,7 +2874,7 @@ select {
 }
 .help-columns {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
   gap: 12px;
 }
 .help-box {
@@ -2867,31 +2890,39 @@ select {
   font-size: var(--text-md);
   margin: 0 0 10px;
 }
+/* Itens empilhados: termo em cima, explicação embaixo, com largura total da caixa. */
 .help-box dl {
   margin: 0;
-  display: grid;
-  grid-template-columns: max-content 1fr;
-  gap: 8px 14px;
+  display: flex;
+  flex-direction: column;
   font-size: var(--text-sm);
 }
 .help-box dt {
   color: var(--foreground);
   font-weight: 500;
+  line-height: 1.4;
+  margin-top: 12px;
+}
+.help-box dt:first-child {
+  margin-top: 0;
+}
+.help-box dt kbd {
+  display: inline-block;
 }
 .help-box dd {
-  margin: 0;
+  margin: 4px 0 0;
   color: var(--muted);
-  line-height: 1.45;
+  line-height: 1.55;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+.help-box dd:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
 }
 @media (max-width: 700px) {
   .help-page {
     padding: 20px 16px 32px;
-  }
-  .help-box dl {
-    grid-template-columns: 1fr;
-  }
-  .help-box dd {
-    margin-bottom: 6px;
   }
 }
 
@@ -3191,4 +3222,125 @@ select {
   background: #16a34a1f;
   border-radius: 999px;
   padding: 1px 7px;
+}
+
+/* Escolha do agente no formulário: três botões com ícone, no lugar de uma lista nativa. */
+.agent-field {
+  margin-bottom: 12px;
+  min-width: 0;
+}
+.agent-field-label {
+  display: block;
+  font-size: var(--text-sm);
+  color: #b3b3b3;
+}
+.agent-picker {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+  margin-top: 6px;
+  padding: 3px;
+  border: 1px solid var(--input);
+  border-radius: 6px;
+  background: #ffffff06;
+}
+.agent-option {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 5px 6px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: #a8a8a8;
+  font-size: var(--text-sm);
+}
+.agent-option span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-option:hover {
+  background: #ffffff0a;
+  color: #e5e5e5;
+}
+.agent-option.active {
+  background: #ffffff17;
+  border-color: #ffffff26;
+  color: #fafafa;
+}
+.agent-option.missing {
+  opacity: 0.5;
+}
+.agent-hint {
+  display: block;
+  margin-top: 5px;
+  font-size: var(--text-xs);
+  color: #d4a300;
+}
+
+/* Formulário de nova tarefa: espaçamento em grade, em vez de margens soltas por campo. */
+.task-form .form-intro {
+  margin-bottom: 20px;
+}
+.task-form .form-grid {
+  gap: 16px 14px;
+  margin-bottom: 16px;
+}
+.task-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 0;
+}
+.task-form input,
+.task-form select,
+.task-form .agent-picker {
+  margin-top: 0;
+  height: 38px;
+  box-sizing: border-box;
+}
+.task-form .agent-picker {
+  display: grid;
+  align-items: stretch;
+  padding: 3px;
+}
+.task-form .wide {
+  grid-column: 1 / -1;
+}
+.task-form .agent-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 0;
+}
+.task-form .agent-field-label {
+  font-size: var(--text-sm);
+}
+.task-form .check-row {
+  flex-direction: row;
+  margin: 0 0 16px;
+  padding: 10px 12px;
+  border: 1px solid var(--input);
+  border-radius: 6px;
+  background: #ffffff06;
+  color: #d4d4d4;
+  font-size: var(--text-md);
+}
+.task-form .form-hint-block {
+  margin-top: 0;
+  color: #8a8a8a;
+}
+.task-form .form-footnote {
+  margin: 4px 0 18px;
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  color: #8a8a8a;
+}
+.task-form .full {
+  margin-top: 0;
+  padding: 9px;
 }

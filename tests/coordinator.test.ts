@@ -10,10 +10,10 @@ function setup(
   const store = new Store(":memory:");
   store.addProject({ id: "p", name: "Repo", path: "/repo", remotes: ["origin"] });
   store.addProject({ id: "q", name: "Other", path: "/other", remotes: ["origin"] });
-  const started: { cwd: string; args: string[]; exit: (code: number) => void; writes: string[] }[] = [];
+  const started: { cwd: string; args: string[]; exit: (code: number) => void; data: (text: string) => void; writes: string[] }[] = [];
   const driver: Driver = {
-    start: async (_cmd, args, cwd, _data, exit) => {
-      const entry = { cwd, args, exit, writes: [] as string[] };
+    start: async (_cmd, args, cwd, data, exit) => {
+      const entry = { cwd, args, exit, data, writes: [] as string[] };
       started.push(entry);
       return {
         write(text: string) {
@@ -47,7 +47,7 @@ function setup(
     "/wt",
     finder as never,
   );
-  const create = (projectId: string, branch: string) =>
+  const create = (projectId: string, branch: string, timeoutMinutes = 0) =>
     store.createTask({
       projectId,
       branch,
@@ -56,7 +56,7 @@ function setup(
       provider: "codex",
       base: "main",
       remote: "origin",
-      timeoutMinutes: 0,
+      timeoutMinutes,
     });
   return { store, c, started, create };
 }
@@ -99,8 +99,8 @@ it("keeps a cancelled worktree owned until its process acknowledges exit", async
     b = create("q", "golfinho/b");
   // start a driver whose stop request does not immediately end the process.
   const driver: Driver = {
-    start: async (_c, args, cwd, _d, exit) => {
-      started.push({ cwd, args, exit, writes: [] });
+    start: async (_c, args, cwd, data, exit) => {
+      started.push({ cwd, args, exit, data, writes: [] });
       return { write() {}, resize() {}, stop() {} };
     },
   };
@@ -411,6 +411,49 @@ it("não retoma no terminal a conversa do chat e a exclui da descoberta", async 
     await vi.advanceTimersByTimeAsync(2000);
     expect(started[0].args).not.toContain("resume");
     expect(excludes[0]).toEqual(["chat-1"]);
+    await c.shutdown();
+    store.close();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("encerra a execução só depois do tempo sem atividade", async () => {
+  vi.useFakeTimers();
+  try {
+    const { store, c, started, create } = setup(async () => null);
+    const task = create("p", "golfinho/parada", 1);
+    c.queue(task.id);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(started).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(55_000);
+    expect(store.task(task.id).status).toBe("running");
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(store.task(task.id).status).not.toBe("running");
+    expect(store.events(task.id).some((e) => e.message.includes("Sem atividade por 1 min"))).toBe(true);
+    await c.shutdown();
+    store.close();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("saída do agente e digitação mantêm a execução viva além do prazo total", async () => {
+  vi.useFakeTimers();
+  try {
+    const { store, c, started, create } = setup(async () => null);
+    const task = create("p", "golfinho/conversa", 1);
+    c.queue(task.id);
+    await vi.advanceTimersByTimeAsync(50);
+    await vi.advanceTimersByTimeAsync(50_000);
+    started[0].data("o agente respondeu");
+    await vi.advanceTimersByTimeAsync(50_000);
+    c.input(task.id, "continua");
+    await vi.advanceTimersByTimeAsync(50_000);
+    // Já são 150 s desde o início, mas nunca 60 s seguidos parados.
+    expect(store.task(task.id).status).toBe("running");
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(store.task(task.id).status).not.toBe("running");
     await c.shutdown();
     store.close();
   } finally {

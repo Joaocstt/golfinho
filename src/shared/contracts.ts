@@ -179,6 +179,7 @@ export interface CreateTask {
 export type Request =
   | { action: "snapshot" }
   | { action: "addProject"; path?: string }
+  | { action: "removeProject"; projectId: string }
   | { action: "createTask"; input: CreateTask }
   | { action: "branches"; projectId: string }
   | { action: "quota"; provider: Provider; refresh?: boolean }

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React from "react";
-import { render, screen, fireEvent, waitFor, cleanup, act } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, cleanup, act, within } from "@testing-library/react";
 import { afterEach, describe, it, expect, vi } from "vitest";
 import type { Snapshot, Task, Signal } from "../src/shared/contracts";
 // O terminal de shell depende de xterm e ResizeObserver, que o jsdom não tem.
@@ -75,10 +75,7 @@ describe("interface de tarefas", () => {
     const request = setup();
     await screen.findByText("Projeto real");
     fireEvent.click(screen.getByRole("button", { name: "Nova tarefa" }));
-    fireEvent.change(screen.getByLabelText("Título"), { target: { value: "Corrigir login" } });
-    fireEvent.change(screen.getByLabelText("Instruções"), {
-      target: { value: "Corrigir autenticação" },
-    });
+    // O formulário não tem mais título nem instruções: o título vira o nome da branch.
     fireEvent.change(screen.getByLabelText("Branch da tarefa"), {
       target: { value: "golfinho/login" },
     });
@@ -88,11 +85,29 @@ describe("interface de tarefas", () => {
       expect(request).toHaveBeenCalledWith({
         action: "createTask",
         input: expect.objectContaining({
-          title: "Corrigir login",
-          prompt: "Corrigir autenticação",
+          title: "",
+          prompt: "",
           branch: "golfinho/login",
           projectId: "p",
         }),
+      }),
+    );
+  });
+  it("escolhe o agente pelos botões com ícone, com Codex como padrão", async () => {
+    const request = setup();
+    await screen.findByText("Projeto real");
+    fireEvent.click(screen.getByRole("button", { name: "Nova tarefa" }));
+    const group = screen.getByRole("radiogroup", { name: "Agente" });
+    expect(within(group).getByRole("radio", { checked: true }).textContent).toContain("Codex");
+    fireEvent.click(within(group).getByRole("radio", { name: /claude/i }));
+    expect(within(group).getByRole("radio", { checked: true }).textContent).toMatch(/claude/i);
+    fireEvent.change(screen.getByLabelText("Branch da tarefa"), { target: { value: "golfinho/agente" } });
+    await baseCarregada();
+    fireEvent.click(screen.getByRole("button", { name: "Criar tarefa" }));
+    await waitFor(() =>
+      expect(request).toHaveBeenCalledWith({
+        action: "createTask",
+        input: expect.objectContaining({ provider: "claude", branch: "golfinho/agente" }),
       }),
     );
   });
@@ -105,8 +120,6 @@ describe("interface de tarefas", () => {
     expect(base.tagName).toBe("SELECT");
     expect(base.value).toBe("develop");
     expect([...base.options].map((o) => o.value)).toEqual(["develop", "main"]);
-    fireEvent.change(screen.getByLabelText("Título"), { target: { value: "Login" } });
-    fireEvent.change(screen.getByLabelText("Instruções"), { target: { value: "Corrigir" } });
     fireEvent.change(screen.getByLabelText("Branch da tarefa"), {
       target: { value: "golfinho/login" },
     });
@@ -123,8 +136,6 @@ describe("interface de tarefas", () => {
     setup([], true);
     await screen.findByText("Projeto real");
     fireEvent.click(screen.getByRole("button", { name: "Nova tarefa" }));
-    fireEvent.change(screen.getByLabelText("Título"), { target: { value: "Login" } });
-    fireEvent.change(screen.getByLabelText("Instruções"), { target: { value: "Corrigir" } });
     fireEvent.change(screen.getByLabelText("Branch da tarefa"), {
       target: { value: "golfinho/login" },
     });
@@ -243,7 +254,7 @@ it("respeita limites do backend nos formulários", async () => {
   expect(screen.getByLabelText("Branch da tarefa").getAttribute("placeholder")).toBe(
     "golfinho/minha-tarefa",
   );
-  expect(screen.getByLabelText("Timeout (minutos)").getAttribute("min")).toBe("0");
+  expect(screen.getByLabelText("Encerrar se parado (minutos)").getAttribute("min")).toBe("0");
   fireEvent.click(screen.getByRole("button", { name: "Fechar janela" }));
   fireEvent.click(screen.getByRole("button", { name: "Configurações" }));
   expect(screen.getByLabelText("Execuções simultâneas").getAttribute("max")).toBe("8");

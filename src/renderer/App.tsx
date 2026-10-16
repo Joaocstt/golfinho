@@ -590,6 +590,30 @@ export default function App() {
                   )}
                   <small>{snapshot.tasks.filter((t) => t.projectId === p.id).length}</small>
                 </button>
+                <button
+                  className="project-remove"
+                  aria-label={`Remover ${p.name} do Golfinho`}
+                  title={
+                    snapshot.tasks.some((t) => t.projectId === p.id)
+                      ? "Exclua as tarefas deste projeto antes de removê-lo"
+                      : "Remover do Golfinho (a pasta não é apagada)"
+                  }
+                  disabled={busy || snapshot.tasks.some((t) => t.projectId === p.id)}
+                  onClick={() => {
+                    if (
+                      !window.confirm(
+                        `Remover "${p.name}" do Golfinho? A pasta e o repositório Git não são alterados.`,
+                      )
+                    )
+                      return;
+                    perform(async () => {
+                      await request({ action: "removeProject", projectId: p.id });
+                      if (project === p.id) setProject("");
+                    });
+                  }}
+                >
+                  <X size={12} />
+                </button>
                 <div className="branch-tree">
                   {snapshot.tasks
                     .filter((t) => t.projectId === p.id && matches(t))
@@ -1557,10 +1581,13 @@ export default function App() {
                   <dd>{task.published ? "Publicada" : "Não publicada"}</dd>
                 </dl>
               </div>
-              <div className="inspector-section instructions">
-                <h4>Instruções</h4>
-                <p>{task.prompt}</p>
-              </div>
+              {/* Tarefas antigas ainda têm instruções; as novas abrem a CLI vazia e não mostram a seção. */}
+              {task.prompt.trim() && (
+                <div className="inspector-section instructions">
+                  <h4>Instruções</h4>
+                  <p>{task.prompt}</p>
+                </div>
+              )}
               <div className="inspector-files">
                 <div className="sidebar-label">
                   Alterações
@@ -1807,6 +1834,7 @@ function TaskForm({
   const [refsFailed, setRefsFailed] = useState(false);
   // Trabalhar numa branch que já existe, em vez de criar uma golfinho/... nova.
   const [adopt, setAdopt] = useState(false);
+  const [provider, setProvider] = useState<Provider>("codex");
   useEffect(() => {
     if (!p) return;
     let alive = true;
@@ -1824,15 +1852,18 @@ function TaskForm({
   const loadingRefs = !refs && !refsFailed;
   return (
     <form
+      className="task-form"
       onSubmit={(e) => {
         e.preventDefault();
         const data = new FormData(e.currentTarget);
         const existing = String(data.get("existing"));
         onSubmit({
           projectId: p,
-          title: String(data.get("title")),
-          prompt: String(data.get("prompt")),
-          provider: data.get("provider") as Provider,
+          // Sem título e instruções no formulário: o título vira o nome da branch e a CLI abre vazia,
+          // pronta para a conversa no Terminal ou no Chat.
+          title: "",
+          prompt: "",
+          provider,
           branch: adopt ? existing : String(data.get("branch")),
           base: adopt ? existing : String(data.get("base")),
           remote: String(data.get("remote")),
@@ -1842,7 +1873,7 @@ function TaskForm({
       }}
     >
       <p className="form-intro">
-        Descreva o resultado esperado, se quiser. A tarefa será criada como rascunho.
+        A tarefa é criada como rascunho. Depois, converse com o agente pelo Terminal ou pelo Chat.
       </p>
       <div className="form-grid">
         <label>
@@ -1855,27 +1886,50 @@ function TaskForm({
             ))}
           </select>
         </label>
-        <label>
-          Agente
-          <select name="provider">
-            {(["codex", "claude", "antigravity"] as const).map((provider) => (
-              <option key={provider}>{provider}</option>
-            ))}
-          </select>
-        </label>
+        {/* Botões em vez de <select>: a lista nativa não mostra ícones. */}
+        <div className="agent-field">
+          <span className="agent-field-label" id="agent-label">
+            Agente
+          </span>
+          <div
+            className="agent-picker"
+            role="radiogroup"
+            aria-labelledby="agent-label"
+            onKeyDown={(e) => {
+              if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
+              e.preventDefault();
+              const all: Provider[] = ["codex", "claude", "antigravity"];
+              const next = all[(all.indexOf(provider) + (e.key === "ArrowRight" ? 1 : all.length - 1)) % all.length];
+              setProvider(next);
+              e.currentTarget.querySelector<HTMLButtonElement>(`[data-provider="${next}"]`)?.focus();
+            }}
+          >
+            {(["codex", "claude", "antigravity"] as const).map((option) => {
+              const info = snapshot.agents.find((a) => a.provider === option);
+              const missing = info ? !info.available : false;
+              return (
+                <button
+                  key={option}
+                  type="button"
+                  role="radio"
+                  data-provider={option}
+                  aria-checked={provider === option}
+                  tabIndex={provider === option ? 0 : -1}
+                  className={"agent-option" + (provider === option ? " active" : "") + (missing ? " missing" : "")}
+                  title={missing ? "CLI não encontrada. Configure o caminho em Configurações." : info?.label}
+                  onClick={() => setProvider(option)}
+                >
+                  <AgentIcon provider={option} size={16} />
+                  <span>{info?.label ?? option}</span>
+                </button>
+              );
+            })}
+          </div>
+          {snapshot.agents.find((a) => a.provider === provider)?.available === false && (
+            <small className="agent-hint">CLI não encontrada. Configure o caminho em Configurações.</small>
+          )}
+        </div>
       </div>
-      <label>
-        Título
-        <input name="title" placeholder="Opcional. Sem ele, usa o nome da branch" />
-      </label>
-      <label>
-        Instruções
-        <textarea
-          name="prompt"
-          rows={5}
-          placeholder="Opcional. Contexto, resultado esperado e critérios de aceite. Sem elas, a CLI abre vazia"
-        />
-      </label>
       <label className="check-row">
         <input type="checkbox" checked={adopt} onChange={(e) => setAdopt(e.target.checked)} />
         Trabalhar em uma branch que já existe
@@ -1937,14 +1991,25 @@ function TaskForm({
             ))}
           </select>
         </label>
-        <label>
-          Timeout (minutos)
-          <input name="timeout" type="number" min={0} max={1440} defaultValue={60} required />
+        <label className="wide">
+          Encerrar se parado (minutos)
+          <input
+            name="timeout"
+            type="number"
+            min={0}
+            max={1440}
+            defaultValue={60}
+            required
+            aria-describedby="timeout-hint"
+          />
         </label>
+        <small id="timeout-hint" className="form-hint-block wide">
+          Se o agente ficar esse tempo sem mostrar nada e sem você digitar, a execução é encerrada.
+          Conversas ativas nunca são cortadas. Use 0 para desativar.
+        </small>
       </div>
-      <p className="notice">
-        Timeout 0 desativa o limite de tempo. A branch é criada localmente na execução. Publicação
-        exige sua ação explícita.
+      <p className="form-footnote">
+        A branch é criada localmente na execução. Publicar exige sua ação explícita.
       </p>
       {!project?.remotes.length && (
         <p className="notice">

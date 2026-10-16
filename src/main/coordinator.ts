@@ -42,6 +42,9 @@ interface Execution {
   path: string;
   cancelled: boolean;
   timer?: ReturnType<typeof setTimeout>;
+  // Inatividade: a execução termina se ficar idleMs sem saída da CLI e sem digitação.
+  idleMs?: number;
+  lastActivity?: number;
   dimensions?: [number, number];
 }
 export class Coordinator {
@@ -223,7 +226,10 @@ export class Coordinator {
         args,
         e.path,
         (data) => {
-          if (!this.stopping && this.active.get(id) === e) this.logs.append(id, data);
+          if (!this.stopping && this.active.get(id) === e) {
+            this.logs.append(id, data);
+            e.lastActivity = Date.now();
+          }
         },
         (code) => this.ended(id, e, code),
       );
@@ -238,11 +244,11 @@ export class Coordinator {
       // voltar à conversa anterior, perdendo tudo que foi feito nesta.
       void this.detectSession(id, e, t.provider, started);
       if (e.dimensions) handle.resize(...e.dimensions);
-      if (t.timeoutMinutes)
-        e.timer = setTimeout(() => {
-          this.store.note(id, "Prazo da execução atingido.");
-          this.cancel(id);
-        }, t.timeoutMinutes * 60_000);
+      if (t.timeoutMinutes) {
+        e.idleMs = t.timeoutMinutes * 60_000;
+        e.lastActivity = Date.now();
+        this.armIdle(id, e);
+      }
       this.changed();
     } catch (error) {
       if (error instanceof PendingChangesError && !this.stopping && !e.cancelled) {
@@ -367,9 +373,24 @@ export class Coordinator {
     this.changed();
   }
   input(id: string, data: string) {
-    const h = this.active.get(id)?.handle;
+    const e = this.active.get(id);
+    const h = e?.handle;
     if (!h) throw new Error("Não há terminal ativo. Coloque a tarefa na fila.");
+    e!.lastActivity = Date.now();
     h.write(data);
+  }
+  // Um cronômetro só, conferido no vencimento: se houve atividade no meio, ele é remarcado
+  // para o novo prazo em vez de ser recriado a cada linha de saída.
+  private armIdle(id: string, e: Execution) {
+    if (!e.idleMs) return;
+    const remaining = e.idleMs - (Date.now() - (e.lastActivity ?? Date.now()));
+    e.timer = setTimeout(() => {
+      if (this.active.get(id) !== e || e.cancelled || !e.idleMs) return;
+      if (Date.now() - (e.lastActivity ?? 0) >= e.idleMs) {
+        this.store.note(id, `Sem atividade por ${Math.round(e.idleMs / 60_000)} min: execução encerrada.`);
+        this.cancel(id);
+      } else this.armIdle(id, e);
+    }, Math.max(1000, remaining));
   }
   resize(id: string, cols: number, rows: number) {
     const execution = this.active.get(id); if (!execution) return;
