@@ -8,6 +8,7 @@ import {
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 import type { ChatBlock, ChatEvent, ChatHistoryItem, Provider } from "../shared/contracts";
+import type { ChatImage } from "./chatImages";
 import { CodexChatSession } from "./codexChat";
 // Resumo curto da ferramenta para o cartão de aprovação. Comando e caminho são o que a pessoa
 // precisa ver para decidir; o resto do input fica de fora.
@@ -43,18 +44,33 @@ export class ChatSession {
   private closed = false;
   private running: Query | null = null;
   private pending = new Map<string, Pending>();
+  private interrupted = false;
   constructor(
     private readonly cwd: string,
     private readonly emit: (event: ChatEvent) => void,
     private readonly options: ChatOptions = {},
   ) {}
-  send(text: string) {
+  send(text: string, images: ChatImage[] = []) {
+    // Com imagens, a mensagem vira uma lista de blocos: as imagens em base64 e depois o texto.
+    const content = images.length
+      ? [
+          ...images.map((image) => ({
+            type: "image" as const,
+            source: {
+              type: "base64" as const,
+              media_type: image.mediaType as "image/png" | "image/jpeg" | "image/gif" | "image/webp",
+              data: image.base64,
+            },
+          })),
+          ...(text ? [{ type: "text" as const, text }] : []),
+        ]
+      : text;
     const message: SDKUserMessage = {
       type: "user",
-      message: { role: "user", content: text },
+      message: { role: "user", content },
       parent_tool_use_id: null,
     };
-    this.emit({ type: "user", text });
+    this.emit({ type: "user", text, ...(images.length ? { images: images.map((image) => image.path) } : {}) });
     if (!this.running) this.start();
     if (this.wake) {
       const resume = this.wake;
@@ -76,6 +92,13 @@ export class ChatSession {
         : { behavior: "deny", message: "Negado pela pessoa no chat." };
     this.emit({ type: "approval_resolved", id, behavior });
     pending.resolve(result);
+  }
+  // Para o turno atual sem fechar a conversa: o próximo envio continua na mesma sessão.
+  interrupt() {
+    if (!this.running) return;
+    this.interrupted = true;
+    for (const id of [...this.pending.keys()]) this.decide(id, "deny", false);
+    void this.running.interrupt().catch(() => undefined);
   }
   stop() {
     this.closed = true;
@@ -140,6 +163,11 @@ export class ChatSession {
           });
       }
     } else if (message.type === "result") {
+      if (this.interrupted) {
+        this.interrupted = false;
+        this.emit({ type: "status", state: "idle", message: "Interrompido." });
+        return;
+      }
       const ok = message.subtype === "success";
       this.emit({
         type: "status",
@@ -170,8 +198,9 @@ export class ChatSession {
 }
 // Conversa de um provedor, vista pelo ChatManager. Claude e Codex implementam a mesma interface.
 export interface ChatBackend {
-  send(text: string): void;
+  send(text: string, images?: ChatImage[]): void;
   decide(id: string, behavior: "allow" | "deny", always: boolean): void;
+  interrupt(): void;
   stop(): void;
 }
 export interface ChatTarget {
@@ -200,7 +229,7 @@ export class ChatManager {
       this.emitFor(taskId, seq, event);
     };
   }
-  send(taskId: string, target: ChatTarget, text: string) {
+  send(taskId: string, target: ChatTarget, text: string, images: ChatImage[] = []) {
     let session = this.sessions.get(taskId);
     if (!session) {
       const emit = this.emitter(taskId);
@@ -214,7 +243,7 @@ export class ChatManager {
           : new ChatSession(target.cwd, emit, options);
       this.sessions.set(taskId, session);
     }
-    session.send(text);
+    session.send(text, images);
   }
   // Histórico da tarefa. Sem sessão viva, aprovações que ficaram abertas já não podem ser
   // respondidas: o processo que as esperava acabou. Elas são fechadas como negadas.
@@ -233,6 +262,9 @@ export class ChatManager {
   }
   decide(taskId: string, id: string, behavior: "allow" | "deny", always: boolean) {
     this.sessions.get(taskId)?.decide(id, behavior, always);
+  }
+  interrupt(taskId: string) {
+    this.sessions.get(taskId)?.interrupt();
   }
   stop(taskId: string) {
     this.sessions.get(taskId)?.stop();

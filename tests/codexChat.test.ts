@@ -150,3 +150,25 @@ it("retoma a thread salva com thread/resume e avisa o id", async () => {
   expect(child().sent.find((m: any) => m.method === "thread/resume").params.threadId).toBe("thread-salva");
   expect(saved).toEqual(["thread-salva"]);
 });
+it("imagens vão à Codex como localImage antes do texto", async () => {
+  session.send("veja", [{ path: "C:/app/chat-images/a.png", mediaType: "image/png", base64: "QUJD" }]);
+  await tick();
+  await tick();
+  const turn = child().sent.find((m: any) => m.method === "turn/start");
+  expect(turn.params.input).toEqual([
+    { type: "localImage", path: "C:/app/chat-images/a.png" },
+    { type: "text", text: "veja" },
+  ]);
+  expect(events).toContainEqual({ type: "user", text: "veja", images: ["C:/app/chat-images/a.png"] });
+});
+it("Parar manda turn/interrupt com o id do turno e mostra Interrompido", async () => {
+  session.send("faça algo longo");
+  await tick();
+  await tick();
+  session.interrupt();
+  const interrupt = child().sent.find((m: any) => m.method === "turn/interrupt");
+  expect(interrupt.params).toEqual({ threadId: "thread-1", turnId: "turn-1" });
+  reply(child().stdout, { method: "turn/completed", params: { turn: { status: "interrupted" } } });
+  await tick();
+  expect(events.at(-1)).toEqual({ type: "status", state: "idle", message: "Interrompido." });
+});

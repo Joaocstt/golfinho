@@ -394,3 +394,26 @@ it("keeps the task queued with a warning, not failed, when the project folder ha
   c.shutdown();
   store.close();
 });
+
+it("não retoma no terminal a conversa do chat e a exclui da descoberta", async () => {
+  vi.useFakeTimers();
+  try {
+    const excludes: (string[] | undefined)[] = [];
+    const { store, c, started, create } = setup(async (_provider, _cwd, _since, exclude?: string[]) => {
+      excludes.push(exclude);
+      return null;
+    });
+    const task = create("p", "golfinho/chat-e-terminal");
+    store.setChatSession(task.id, "chat-1");
+    // Id gravado por uma detecção antiga, que confundiu a conversa do chat com a da CLI.
+    store.update(task.id, { sessionId: "chat-1" }, "id antigo");
+    c.queue(task.id);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(started[0].args).not.toContain("resume");
+    expect(excludes[0]).toEqual(["chat-1"]);
+    await c.shutdown();
+    store.close();
+  } finally {
+    vi.useRealTimers();
+  }
+});

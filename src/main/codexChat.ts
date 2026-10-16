@@ -4,6 +4,7 @@ import type { ChatEvent } from "../shared/contracts";
 import { executablePath } from "./agents";
 import { launchTarget } from "./shellCommand";
 import type { ChatBackend, ChatOptions } from "./chat";
+import type { ChatImage } from "./chatImages";
 // Versão do cliente informada ao app-server. Acompanha a versão do app em package.json.
 const CLIENT_VERSION = "0.1.5";
 type Json = Record<string, any>;
@@ -26,7 +27,9 @@ export class CodexChatSession implements ChatBackend {
   private pending = new Map<string, Approval>();
   private buffer = "";
   private turnActive = false;
-  private queue: string[] = [];
+  private turnId: string | null = null;
+  private interrupted = false;
+  private queue: { text: string; images: ChatImage[] }[] = [];
   private closed = false;
   constructor(
     private readonly cwd: string,
@@ -34,10 +37,11 @@ export class CodexChatSession implements ChatBackend {
     private readonly emit: (event: ChatEvent) => void,
     private readonly options: ChatOptions = {},
   ) {}
-  send(text: string) {
-    this.emit({ type: "user", text });
-    if (this.turnActive) this.queue.push(text);
-    else void this.runTurn(text);
+  send(text: string, images: ChatImage[] = []) {
+    this.emit({ type: "user", text, ...(images.length ? { images: images.map((image) => image.path) } : {}) });
+    const entry = { text, images };
+    if (this.turnActive) this.queue.push(entry);
+    else void this.runTurn(entry);
   }
   decide(id: string, behavior: "allow" | "deny", always: boolean) {
     const approval = this.pending.get(id);
@@ -48,6 +52,19 @@ export class CodexChatSession implements ChatBackend {
     this.write({ id: approval.requestId, result: { decision } });
     this.emit({ type: "approval_resolved", id, behavior });
   }
+  // Para o turno atual sem fechar a conversa. Sem o id do turno ainda, a interrupção sai
+  // assim que o turn/start responder.
+  interrupt() {
+    if (!this.turnActive) return;
+    this.interrupted = true;
+    this.queue.length = 0;
+    for (const id of [...this.pending.keys()]) this.decide(id, "deny", false);
+    this.sendInterrupt();
+  }
+  private sendInterrupt() {
+    if (this.threadId && this.turnId)
+      void this.request("turn/interrupt", { threadId: this.threadId, turnId: this.turnId }).catch(() => undefined);
+  }
   stop() {
     this.closed = true;
     for (const id of [...this.pending.keys()]) this.decide(id, "deny", false);
@@ -57,16 +74,22 @@ export class CodexChatSession implements ChatBackend {
     this.child?.kill();
     this.child = null;
   }
-  private async runTurn(text: string) {
+  private async runTurn({ text, images }: { text: string; images: ChatImage[] }) {
     this.turnActive = true;
     this.emit({ type: "status", state: "running" });
     try {
       await this.start();
-      await this.request("turn/start", {
+      const started = await this.request("turn/start", {
         threadId: this.threadId,
         cwd: this.cwd,
-        input: [{ type: "text", text }],
+        // A Codex lê a imagem do disco pelo caminho; o texto vem depois, como no chat do Claude.
+        input: [
+          ...images.map((image) => ({ type: "localImage", path: image.path })),
+          ...(text ? [{ type: "text", text }] : []),
+        ],
       });
+      this.turnId = started.turn?.id ?? null;
+      if (this.interrupted) this.sendInterrupt();
     } catch (error) {
       this.turnActive = false;
       this.emit({ type: "status", state: "error", message: (error as Error).message });
@@ -195,7 +218,14 @@ export class CodexChatSession implements ChatBackend {
       }
     } else if (method === "turn/completed") {
       this.turnActive = false;
+      this.turnId = null;
       const status = params.turn?.status;
+      if (this.interrupted || status === "interrupted") {
+        this.interrupted = false;
+        this.queue.length = 0;
+        this.emit({ type: "status", state: "idle", message: "Interrompido." });
+        return;
+      }
       if (status === "failed") {
         this.emit({ type: "status", state: "error", message: params.turn?.error?.message ?? "O turno falhou." });
         this.queue.length = 0;

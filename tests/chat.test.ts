@@ -19,6 +19,7 @@ vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
           resolve({ value, done: false });
         } else queue.push(value);
       },
+      interrupt: vi.fn(async () => undefined),
       close: vi.fn(() => {
         finished = true;
         if (waiting) {
@@ -161,4 +162,24 @@ it("histórico sem sessão viva fecha aprovações abertas como negadas e para o
   expect(appended).toContainEqual({ type: "approval_resolved", id: "a1", behavior: "deny" });
   expect(appended).toContainEqual({ type: "status", state: "idle" });
   expect(history.length).toBe(4);
+});
+it("imagens vão ao Claude como blocos base64 antes do texto e aparecem no evento do usuário", async () => {
+  manager.send("t1", CLAUDE, "veja", [{ path: "C:/app/chat-images/a.png", mediaType: "image/png", base64: "QUJD" }]);
+  const first = await sdk.calls[0].prompt[Symbol.asyncIterator]().next();
+  expect(first.value.message.content).toEqual([
+    { type: "image", source: { type: "base64", media_type: "image/png", data: "QUJD" } },
+    { type: "text", text: "veja" },
+  ]);
+  expect(events.map((e) => e.event)).toContainEqual({ type: "user", text: "veja", images: ["C:/app/chat-images/a.png"] });
+});
+it("Parar interrompe o turno, nega aprovações abertas e mostra Interrompido", async () => {
+  manager.send("t1", CLAUDE, "faça algo longo");
+  const pending = sdk.calls[0].options.canUseTool("Bash", { command: "npm test" }, { signal: new AbortController().signal });
+  await tick();
+  manager.interrupt("t1");
+  expect(sdk.streams[0].interrupt).toHaveBeenCalled();
+  await expect(pending).resolves.toEqual({ behavior: "deny", message: "Negado pela pessoa no chat." });
+  sdk.streams[0].push({ type: "result", subtype: "error_during_execution" });
+  await tick();
+  expect(events.at(-1)?.event).toEqual({ type: "status", state: "idle", message: "Interrompido." });
 });

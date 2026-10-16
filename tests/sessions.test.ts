@@ -101,3 +101,14 @@ it("sem instruções a CLI abre vazia, sem argumento em branco", () => {
   expect(invocation("claude", REPO, "").args).toEqual(["--permission-mode", "manual"]);
   expect(invocation("antigravity", REPO, "").args).toEqual([]);
 });
+it("ignora a sessão do chat ao procurar a sessão da CLI na mesma pasta", async () => {
+  const dir = join(home, ".codex", "sessions", "2026");
+  const agora = Date.now();
+  escreve(join(dir, "rollout-cli.jsonl"), [meta("sessao-da-cli", REPO)], agora - 2000);
+  escreve(join(dir, "rollout-chat.jsonl"), [meta("sessao-do-chat", REPO)], agora);
+  expect(await findSession("codex", REPO, agora - 60_000, home)).toBe("sessao-do-chat");
+  expect(await findSession("codex", REPO, agora - 60_000, home, ["sessao-do-chat"])).toBe("sessao-da-cli");
+  const claudeDir = join(home, ".claude", "projects", "-repo-alvo");
+  escreve(join(claudeDir, "chat-claude.jsonl"), [{ cwd: REPO }]);
+  expect(await findSession("claude", REPO, agora - 60_000, home, ["chat-claude"])).toBeNull();
+});

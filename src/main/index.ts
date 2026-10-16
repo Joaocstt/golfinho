@@ -14,6 +14,7 @@ import { requestSchema } from "./schema";
 import type { Signal } from "../shared/contracts";
 import { Shells } from "./shells";
 import { ChatManager } from "./chat";
+import { ChatImages, IMAGE_EXTENSIONS } from "./chatImages";
 import { vaultFrom } from "./vault";
 import { configureAskpass, askpassFile } from "./ssh";
 import { writeFileSync, chmodSync } from "node:fs";
@@ -66,6 +67,21 @@ else {
       writeFileSync(askpass, script.content, { mode: 0o700 });
       chmodSync(askpass, 0o700);
       configureAskpass(askpass);
+      // Anexos do chat ficam numa pasta do app; imagens coladas (pasta clipboard) também valem.
+      const images = new ChatImages(join(home, "chat-images"), [join(home, "chat-images"), join(home, "clipboard")]);
+      const chatImages = {
+        pick: async () => {
+          const result = await dialog.showOpenDialog(window!, {
+            title: "Anexar imagens",
+            properties: ["openFile", "multiSelections"],
+            filters: [{ name: "Imagens", extensions: IMAGE_EXTENSIONS }],
+          });
+          if (result.canceled) return [];
+          return Promise.all(result.filePaths.slice(0, 8).map((file) => images.import(file)));
+        },
+        verify: (path: string) => images.verify(path),
+        dataUrl: (path: string) => images.dataUrl(path),
+      };
       const service = new Service(store, git, coordinator, logs, changed, async () => {
         const result = await dialog.showOpenDialog(window!, {
           title: "Selecionar repositório Git",
@@ -92,7 +108,7 @@ else {
           await writeFile(file, png);
           return file;
         },
-      }, shells, vaultFrom(safeStorage), chat);
+      }, shells, vaultFrom(safeStorage), chat, chatImages);
       window = new BrowserWindow({
         // Limitada à área útil do monitor: com escala do Windows acima de 100%, 950 px lógicos
         // passam da tela e escondem a parte de baixo, onde fica o campo de digitação.

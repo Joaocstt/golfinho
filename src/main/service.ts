@@ -6,6 +6,7 @@ import type { Logs } from "./logs";
 import { agentInfo, invocation } from "./agents";
 import { interactiveShell } from "./shellCommand";
 import type { ChatManager } from "./chat";
+import type { ChatImage } from "./chatImages";
 import { checkoutOf, requireCheckout } from "./checkout";
 import type { Shells } from "./shells";
 import { homedir } from "node:os";
@@ -38,7 +39,16 @@ export class Service {
     private shells?: Shells,
     private vault?: Vault,
     private chat?: ChatManager,
+    private chatImages?: {
+      pick(): Promise<string[]>;
+      verify(path: string): Promise<ChatImage>;
+      dataUrl(path: string): Promise<string>;
+    },
   ) {}
+  private requireChatImages() {
+    if (!this.chatImages) throw new Error("Imagens indisponíveis neste ambiente.");
+    return this.chatImages;
+  }
   private requireChat() {
     if (!this.chat) throw new Error("Chat indisponível neste ambiente.");
     return this.chat;
@@ -462,7 +472,10 @@ export class Service {
         // A pasta é a mesma da aba de arquivos: a worktree da tarefa, ou o projeto antes dela.
         const { root } = await this.treeRoot(r.taskId);
         const target = { provider: task.provider, cwd: root, executable: this.store.settings().executables[task.provider] };
-        this.requireChat().send(r.taskId, target, r.text);
+        // Cada imagem é conferida aqui (pasta do app, tipo e tamanho) antes de ir para o agente.
+        const images = await Promise.all((r.images ?? []).map((path) => this.requireChatImages().verify(path)));
+        if (!r.text.trim() && !images.length) throw new Error("Escreva uma mensagem ou anexe uma imagem.");
+        this.requireChat().send(r.taskId, target, r.text, images);
         return null;
       }
       case "chatDecide":
@@ -471,8 +484,15 @@ export class Service {
       case "chatStop":
         this.requireChat().stop(r.taskId);
         return null;
+      case "chatInterrupt":
+        this.requireChat().interrupt(r.taskId);
+        return null;
       case "chatHistory":
         return this.requireChat().history(r.taskId);
+      case "chatPickImages":
+        return this.requireChatImages().pick();
+      case "chatImage":
+        return this.requireChatImages().dataUrl(r.path);
       case "changes":
         return this.git.changes((await this.treeRoot(r.taskId)).root);
       case "readFile":

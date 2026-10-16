@@ -73,7 +73,9 @@ export class Coordinator {
       provider: Provider,
       cwd: string,
       since: number,
-    ) => Promise<string | null> = findSession,
+      exclude: string[],
+    ) => Promise<string | null> = (provider, cwd, since, exclude) =>
+      findSession(provider, cwd, since, undefined, exclude),
   ) {}
   // Tenta iniciar as tarefas da fila agora, sem esperar a próxima liberação de vaga.
   kick() {
@@ -125,7 +127,16 @@ export class Coordinator {
     for (const delay of [1500, 3000, 6000, 12000, 20000]) {
       await new Promise((resolve) => setTimeout(resolve, delay));
       if (this.stopping || this.active.get(id) !== e) return;
-      const session = await this.finder(provider, e.path, since);
+      // A conversa do chat grava na mesma pasta; sem excluí-la, o terminal tentaria retomar a
+      // sessão que o chat mantém aberta, e a CLI recusa ("open in another app").
+      let exclude: string[];
+      try {
+        const chat = this.store.task(id).chatSessionId;
+        exclude = chat ? [chat] : [];
+      } catch {
+        return;
+      }
+      const session = await this.finder(provider, e.path, since, exclude);
       if (this.stopping || this.active.get(id) !== e) return;
       if (!session) continue;
       try {
@@ -200,7 +211,8 @@ export class Coordinator {
         this.store.update(id, { setupDone: true }, "Setup da pasta concluído.");
       }
       const cmd = this.store.settings().executables[t.provider];
-      const resume = t.sessionId ?? null;
+      // Um id igual ao do chat veio de uma detecção antiga e errada: começa uma sessão nova.
+      const resume = t.sessionId && t.sessionId !== t.chatSessionId ? t.sessionId : null;
       const args = invocation(t.provider, e.path, t.prompt, resume).args;
       this.logs.append(
         id,

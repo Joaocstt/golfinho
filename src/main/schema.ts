@@ -117,7 +117,16 @@ export const requestSchema = z.discriminatedUnion("action", [
     })
     .strict(),
   z.object({ action: z.literal("shellClose"), shellId: id }).strict(),
-  z.object({ action: z.literal("chatSend"), taskId: id, text: z.string().min(1).max(64 * 1024) }).strict(),
+  z
+    .object({
+      action: z.literal("chatSend"),
+      taskId: id,
+      text: z.string().max(64 * 1024),
+      images: z.array(z.string().min(1).max(4096)).max(8).optional(),
+    })
+    .strict(),
+  z.object({ action: z.literal("chatPickImages") }).strict(),
+  z.object({ action: z.literal("chatImage"), path: z.string().min(1).max(4096) }).strict(),
   z
     .object({
       action: z.literal("chatDecide"),
@@ -128,6 +137,7 @@ export const requestSchema = z.discriminatedUnion("action", [
     })
     .strict(),
   z.object({ action: z.literal("chatStop"), taskId: id }).strict(),
+  z.object({ action: z.literal("chatInterrupt"), taskId: id }).strict(),
   z.object({ action: z.literal("chatHistory"), taskId: id }).strict(),
   z.object({ action: z.literal("endSession"), taskId: id }).strict(),
   z.object({ action: z.literal("testActivate"), taskId: id }).strict(),
