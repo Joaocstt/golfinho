@@ -486,7 +486,12 @@ export class Service {
         const task = this.store.task(r.taskId);
         // A pasta é a mesma da aba de arquivos: a worktree da tarefa, ou o projeto antes dela.
         const { root } = await this.treeRoot(r.taskId);
-        const target = { provider: task.provider, cwd: root, executable: this.store.settings().executables[task.provider] };
+        const target = {
+          provider: task.provider,
+          cwd: root,
+          executable: this.store.settings().executables[task.provider],
+          model: task.model ?? null,
+        };
         // Cada imagem é conferida aqui (pasta do app, tipo e tamanho) antes de ir para o agente.
         const images = await Promise.all((r.images ?? []).map((path) => this.requireChatImages().verify(path)));
         if (!r.text.trim() && !images.length) throw new Error("Escreva uma mensagem ou anexe uma imagem.");
@@ -495,6 +500,23 @@ export class Service {
       }
       case "chatDecide":
         this.requireChat().decide(r.taskId, r.id, r.behavior, r.always ?? false);
+        return null;
+      case "setChatModel": {
+        const t = this.store.task(r.taskId);
+        if (["running", "waiting", "queued"].includes(t.status))
+          throw new Error("Aguarde a tarefa terminar antes de trocar o modelo.");
+        this.store.setModel(t.id, r.model);
+        // O processo atual é encerrado; a próxima mensagem abre outro com o modelo novo e a mesma conversa.
+        this.requireChat().stop(t.id);
+        this.store.note(t.id, `Modelo do chat: ${r.model ?? "padrão"}. A conversa continua.`);
+        this.changed();
+        return null;
+      }
+      case "chatReset":
+        this.requireChat().reset(r.taskId);
+        return null;
+      case "chatCompact":
+        await this.requireChat().compact(r.taskId);
         return null;
       case "chatStop":
         this.requireChat().stop(r.taskId);

@@ -199,6 +199,11 @@ export class Store {
       .reverse()
       .map((r) => ({ seq: Number(r.id), event: JSON.parse(String(r.body)) }));
   }
+  setModel(taskId: string, model: string | null) {
+    const task = this.task(taskId);
+    task.model = model;
+    this.write(task);
+  }
   setChatSession(taskId: string, sessionId: string) {
     const task = this.task(taskId);
     task.chatSessionId = sessionId;

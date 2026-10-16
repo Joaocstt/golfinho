@@ -17,6 +17,8 @@ export interface Project {
 }
 export interface Task {
   id: string;
+  /** Modelo escolhido no chat; null usa o padrão da CLI. */
+  model?: string | null;
   projectId: string;
   title: string;
   prompt: string;
@@ -230,6 +232,9 @@ export type Request =
   | { action: "chatImage"; path: string }
   | { action: "chatDecide"; taskId: string; id: string; behavior: "allow" | "deny"; always?: boolean }
   | { action: "chatStop"; taskId: string }
+  | { action: "chatReset"; taskId: string }
+  | { action: "setChatModel"; taskId: string; model: string | null }
+  | { action: "chatCompact"; taskId: string }
   | { action: "chatInterrupt"; taskId: string }
   | { action: "chatHistory"; taskId: string }
   | { action: "saveFile"; taskId: string; path: string; content: string }
@@ -289,7 +294,9 @@ export type ChatEvent =
   | { type: "tool_result"; text: string; isError: boolean }
   | { type: "approval"; id: string; toolName: string; summary: string; canAlwaysAllow: boolean }
   | { type: "approval_resolved"; id: string; behavior: "allow" | "deny" }
-  | { type: "status"; state: "running" | "idle" | "error"; message?: string };
+  | { type: "status"; state: "running" | "idle" | "error"; message?: string }
+  // Contexto em uso: tokens da última chamada e o tamanho da janela do modelo, quando a CLI informa.
+  | { type: "context"; used: number; limit: number | null };
 // Evento do chat com a posição dele no histórico da tarefa (usada para não repetir na tela).
 export interface ChatHistoryItem {
   seq: number;

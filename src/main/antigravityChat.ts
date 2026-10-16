@@ -146,6 +146,7 @@ export class AntigravityChatSession implements ChatBackend {
       "--output-format",
       "stream-json",
       ...(this.options.resume ? ["--conversation", this.options.resume] : []),
+      ...(this.options.model ? ["--model", this.options.model] : []),
     ];
     const target = launchTarget(this.executable, args);
     const child = spawn(target.file, target.args, { cwd: this.cwd, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });

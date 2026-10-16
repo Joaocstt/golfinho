@@ -41,6 +41,7 @@ import { ChatPane } from "./ChatPane";
 import { ShellPane } from "./ShellPane";
 import { AgentIcon } from "./agentIcons";
 import { CommitPanel } from "./CommitPanel";
+import { AgentQuotaTip } from "./AgentQuota";
 import { SshPanel } from "./SshPanel";
 import { HelpPane } from "./HelpPane";
 import { ReviewFiles } from "./ReviewFiles";
@@ -367,6 +368,27 @@ export default function App() {
     resizeCleanup.current = end;
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", end);
+  }
+  // Consumo mostrado ao passar o mouse na barra inferior. O serviço já guarda a leitura por um minuto.
+  const [quotaTips, setQuotaTips] = useState<Partial<Record<Provider, ProviderQuota>>>({});
+  const [quotaLoading, setQuotaLoading] = useState<Set<Provider>>(new Set());
+  async function loadQuotaTip(provider: Provider) {
+    setQuotaLoading((all) => new Set(all).add(provider));
+    try {
+      const quota = await request<ProviderQuota>({ action: "quota", provider });
+      setQuotaTips((all) => ({ ...all, [provider]: quota }));
+    } catch (e) {
+      setQuotaTips((all) => ({
+        ...all,
+        [provider]: { provider, available: true, plan: "", groups: [], error: (e as Error).message },
+      }));
+    } finally {
+      setQuotaLoading((all) => {
+        const next = new Set(all);
+        next.delete(provider);
+        return next;
+      });
+    }
   }
   function navigate(action: () => void) {
     if (dirty && !window.confirm("Descartar alterações não salvas do arquivo?")) return;
@@ -1144,7 +1166,7 @@ export default function App() {
               <div className="tab-body" ref={bodyRef} style={bodyStyle()}>
                 {shown("Chat") && (
                   <div className="tab-slot bare" style={place("Chat")}>
-                    <ChatPane taskId={task.id} provider={task.provider} onError={report} />
+                    <ChatPane taskId={task.id} provider={task.provider} model={task.model ?? null} onError={report} />
                   </div>
                 )}
                 {shown("Terminal") && (
@@ -1404,9 +1426,14 @@ export default function App() {
           </span>
           <div className="agent-status">
             {snapshot?.agents.map((a) => (
-              <span key={a.provider} title={a.executable}>
+              <span key={a.provider} onMouseEnter={() => void loadQuotaTip(a.provider)}>
                 <i className={a.available ? "ready" : "unavailable"} />
                 <AgentIcon provider={a.provider} /> {a.label}
+                <AgentQuotaTip
+                  label={a.label}
+                  quota={quotaTips[a.provider]}
+                  loading={quotaLoading.has(a.provider)}
+                />
               </span>
             ))}
           </div>

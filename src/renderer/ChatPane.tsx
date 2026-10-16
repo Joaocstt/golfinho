@@ -2,14 +2,43 @@ import React, { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Paperclip, X } from "lucide-react";
-import type { ChatBlock, ChatEvent, ChatHistoryItem, Request } from "../shared/contracts";
+import type { ChatBlock, ChatEvent, ChatHistoryItem, Provider, Request } from "../shared/contracts";
 export interface ChatPaneProps {
   taskId: string;
   provider: string;
+  model?: string | null;
   onError: (e: unknown) => void;
 }
 // Cada provedor tem a sua cor de destaque, para não parecer a conversa de outro.
-const LABELS: Record<string, string> = { claude: "Claude", codex: "Codex" };
+const LABELS: Record<string, string> = { claude: "Claude", codex: "Codex", antigravity: "Antigravity" };
+// Modelos oferecidos em cada CLI. Vazio = padrão da própria CLI.
+const MODELS: Record<string, { value: string; label: string }[]> = {
+  claude: [
+    { value: "", label: "Padrão" },
+    { value: "opus", label: "Opus" },
+    { value: "sonnet", label: "Sonnet" },
+    { value: "haiku", label: "Haiku" },
+  ],
+  codex: [
+    { value: "", label: "Padrão" },
+    { value: "gpt-5.6-sol", label: "GPT-5.6 Sol" },
+    { value: "gpt-5.6-luna", label: "GPT-5.6 Luna" },
+    { value: "gpt-5.6-terra", label: "GPT-5.6 Terra" },
+    { value: "gpt-6-sol", label: "GPT-6 Sol" },
+    { value: "gpt-6-luna", label: "GPT-6 Luna" },
+  ],
+  antigravity: [
+    { value: "", label: "Padrão" },
+    { value: "gemini-3.8-flash-high", label: "Gemini 3.8 Flash (High)" },
+    { value: "gemini-3.8-flash-medium", label: "Gemini 3.8 Flash (Medium)" },
+    { value: "gemini-3.8-flash-low", label: "Gemini 3.8 Flash (Low)" },
+    { value: "claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
+    { value: "claude-opus-4-6-thinking", label: "Claude Opus 4.6" },
+    { value: "gpt-oss-120b-medium", label: "GPT-OSS 120B" },
+  ],
+};
+const SUMMARY_REQUEST =
+  "Escreva um resumo para continuar esta tarefa em uma conversa nova: objetivo, o que já foi feito, decisões tomadas, arquivos alterados e próximos passos. Responda só com o resumo, em português.";
 const RESULT_LIMIT = 600;
 const MAX_ATTACHMENTS = 8;
 const request = <T,>(r: Request) => window.golfinho.request(r) as Promise<T>;
@@ -77,11 +106,58 @@ function Blocks({ blocks }: { blocks: ChatBlock[] }) {
     </>
   );
 }
-export function ChatPane({ taskId, provider, onError }: ChatPaneProps) {
+export function ChatPane({ taskId, provider, model, onError }: ChatPaneProps) {
   const [items, setItems] = useState<ChatHistoryItem[]>([]);
   const [draft, setDraft] = useState("");
   const [attachments, setAttachments] = useState<string[]>([]);
   const [viewer, setViewer] = useState<string | null>(null);
+  // Último uso de contexto informado pela CLI (o chat guarda esses eventos no histórico).
+  const context = [...items].reverse().map((i) => i.event).find((e) => e.type === "context") as
+    | { type: "context"; used: number; limit: number | null }
+    | undefined;
+  // Nova conversa com resumo: a CLI atual escreve o resumo; quando ela termina, a conversa é
+  // reaberta com esse resumo como primeira mensagem. O histórico visível continua.
+  const runningNow = [...items].reverse().map((i) => i.event).find((e) => e.type === "status");
+  const isRunning = runningNow?.type === "status" && runningNow.state === "running";
+  const pct = context?.limit ? Math.round((context.used / context.limit) * 100) : null;
+  const [handoff, setHandoff] = useState(false);
+  const askedAt = useRef(0);
+  const finishing = useRef(false);
+  function startHandoff() {
+    askedAt.current = items.length;
+    finishing.current = false;
+    setHandoff(true);
+    request({ action: "chatSend", taskId, text: SUMMARY_REQUEST }).catch((e) => {
+      setHandoff(false);
+      onError(e);
+    });
+  }
+  useEffect(() => {
+    if (!handoff || finishing.current) return;
+    const after = items.slice(askedAt.current).map((i) => i.event);
+    const last = [...after].reverse().find((e) => e.type === "status");
+    if (!last || last.type !== "status" || last.state === "running") return;
+    finishing.current = true;
+    setHandoff(false);
+    if (last.state === "error") return onError(new Error("Não foi possível gerar o resumo."));
+    const summary = after
+      .filter((e) => e.type === "assistant")
+      .flatMap((e) => (e.type === "assistant" ? e.blocks : []))
+      .filter((b) => b.kind === "text")
+      .map((b) => (b.kind === "text" ? b.text : ""))
+      .join("\n")
+      .trim();
+    if (!summary) return onError(new Error("O agente não devolveu um resumo."));
+    void (async () => {
+      try {
+        await request({ action: "chatReset", taskId });
+        await request({ action: "chatSend", taskId, text: `Resumo da conversa anterior, para continuar:\n\n${summary}` });
+      } catch (e) {
+        onError(e);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items, handoff]);
   const bottom = useRef<HTMLDivElement>(null);
   useEffect(() => {
     let active = true;
@@ -259,6 +335,56 @@ export function ChatPane({ taskId, provider, onError }: ChatPaneProps) {
             ))}
           </div>
         )}
+        <div className="chat-tools">
+          {context && (
+          <div className="chat-context" title={`${context.used.toLocaleString("pt-BR")}${context.limit ? ` / ${context.limit.toLocaleString("pt-BR")}` : ""} tokens (última chamada)`}>
+            <span>
+              Contexto{context.limit ? ` ${Math.round((context.used / context.limit) * 100)}%` : ""}
+            </span>
+            {context.limit && (
+              <div className="chat-context-bar">
+                <i style={{ width: `${Math.min(100, (context.used / context.limit) * 100)}%` }} />
+              </div>
+            )}
+          </div>
+        )}
+          {handoff ? (
+            <span className="chat-handoff">Pedindo resumo ao agente atual…</span>
+          ) : (
+            <>
+              {pct !== null && pct >= 80 && (
+                <button disabled={isRunning} onClick={startHandoff}>
+                  Nova conversa com resumo
+                </button>
+              )}
+              {pct !== null && pct >= 80 && provider === "codex" && (
+                <button
+                  disabled={isRunning}
+                  onClick={() => request({ action: "chatCompact", taskId }).catch(onError)}
+                >
+                  Compactar
+                </button>
+              )}
+              <label className="chat-model">
+                Modelo
+                <select
+                  aria-label="Modelo do chat"
+                  value={model ?? ""}
+                  disabled={isRunning}
+                  onChange={(e) =>
+                    request({ action: "setChatModel", taskId, model: e.target.value || null }).catch(onError)
+                  }
+                >
+                  {(MODELS[provider] ?? MODELS.claude).map((m) => (
+                    <option key={m.value} value={m.value}>
+                      {m.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </>
+          )}
+        </div>
         <div className="chat-input-row">
           <button
             type="button"

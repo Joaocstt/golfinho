@@ -35,6 +35,7 @@ interface Pending {
 // Como retomar uma conversa salva: o id da sessão anterior e o aviso quando o id novo aparece.
 export interface ChatOptions {
   resume?: string | null;
+  model?: string | null;
   onSession?: (id: string) => void;
 }
 // Uma conversa do Claude por tarefa. As mensagens entram por uma fila, então o SDK mantém a
@@ -46,6 +47,7 @@ export class ChatSession {
   private running: Query | null = null;
   private pending = new Map<string, Pending>();
   private interrupted = false;
+  private contextUsed = 0;
   constructor(
     private readonly cwd: string,
     private readonly emit: (event: ChatEvent) => void,
@@ -122,6 +124,7 @@ export class ChatSession {
       options: {
         cwd: this.cwd,
         resume: this.options.resume ?? undefined,
+        model: this.options.model ?? undefined,
         permissionMode: "default",
         canUseTool: (toolName, input, options) => this.approve(toolName, input, options),
       },
@@ -141,6 +144,12 @@ export class ChatSession {
   private route(message: SDKMessage) {
     if (message.type === "system" && message.subtype === "init") this.options.onSession?.(message.session_id);
     if (message.type === "assistant") {
+      // Contexto em uso: entrada da última chamada (com cache), que é o que a janela carrega.
+      const usage = message.message.usage as unknown as Record<string, number> | undefined;
+      if (usage) {
+        this.contextUsed =
+          (usage.input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0);
+      }
       const blocks: ChatBlock[] = [];
       for (const part of message.message.content) {
         if (part.type === "text") blocks.push({ kind: "text", text: part.text });
@@ -169,6 +178,8 @@ export class ChatSession {
         this.emit({ type: "status", state: "idle", message: "Interrompido." });
         return;
       }
+      const model = Object.values(message.modelUsage ?? {})[0];
+      if (this.contextUsed > 0) this.emit({ type: "context", used: this.contextUsed, limit: model?.contextWindow ?? null });
       const ok = message.subtype === "success";
       this.emit({
         type: "status",
@@ -203,11 +214,14 @@ export interface ChatBackend {
   decide(id: string, behavior: "allow" | "deny", always: boolean): void;
   interrupt(): void;
   stop(): void;
+  // Compactação nativa, quando a CLI tem uma. Sem ela, a conversa precisa ser refeita.
+  compact?(): Promise<void>;
 }
 export interface ChatTarget {
   provider: Provider;
   cwd: string;
   executable: string;
+  model?: string | null;
 }
 // Onde a conversa fica guardada. O ChatManager não sabe de banco: recebe estas funções.
 export interface ChatStorage {
@@ -235,7 +249,8 @@ export class ChatManager {
     if (!session) {
       const emit = this.emitter(taskId);
       const options: ChatOptions = {
-        resume: this.storage.sessionId(taskId),
+        resume: this.storage.sessionId(taskId) || null,
+        model: target.model,
         onSession: (id) => this.storage.saveSessionId(taskId, id),
       };
       session =
@@ -272,6 +287,17 @@ export class ChatManager {
   stop(taskId: string) {
     this.sessions.get(taskId)?.stop();
     this.sessions.delete(taskId);
+  }
+  // Nova conversa: a sessão atual é fechada e a próxima mensagem abre outra, sem retomar a antiga.
+  // O histórico visível continua no armazenamento.
+  reset(taskId: string) {
+    this.stop(taskId);
+    this.storage.saveSessionId(taskId, "");
+  }
+  async compact(taskId: string) {
+    const session = this.sessions.get(taskId);
+    if (!session?.compact) throw new Error("Este agente não tem compactação; use Nova conversa com resumo.");
+    await session.compact();
   }
   stopAll() {
     for (const taskId of [...this.sessions.keys()]) this.stop(taskId);

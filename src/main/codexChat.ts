@@ -52,6 +52,13 @@ export class CodexChatSession implements ChatBackend {
     this.write({ id: approval.requestId, result: { decision } });
     this.emit({ type: "approval_resolved", id, behavior });
   }
+  // Compactação nativa do Codex: a conversa continua, com o histórico resumido pela própria CLI.
+  async compact() {
+    if (!this.threadId) throw new Error("Envie uma mensagem antes de compactar.");
+    if (this.turnActive) throw new Error("Aguarde o turno terminar para compactar.");
+    await this.request("thread/compact/start", { threadId: this.threadId });
+    this.emit({ type: "status", state: "idle", message: "Contexto compactado." });
+  }
   // Para o turno atual sem fechar a conversa. Sem o id do turno ainda, a interrupção sai
   // assim que o turn/start responder.
   interrupt() {
@@ -82,6 +89,7 @@ export class CodexChatSession implements ChatBackend {
       const started = await this.request("turn/start", {
         threadId: this.threadId,
         cwd: this.cwd,
+        model: this.options.model ?? undefined,
         // A Codex lê a imagem do disco pelo caminho; o texto vem depois, como no chat do Claude.
         input: [
           ...images.map((image) => ({ type: "localImage", path: image.path })),
@@ -196,6 +204,15 @@ export class CodexChatSession implements ChatBackend {
     this.emit({ type: "status", state: "error", message: `A Codex pediu algo que o chat ainda não cobre (${method}).` });
   }
   private notification(method: string, params: Json) {
+    if (method === "thread/tokenUsage/updated") {
+      const usage = params.tokenUsage ?? {};
+      this.emit({
+        type: "context",
+        used: Number(usage.last?.inputTokens ?? 0),
+        limit: typeof usage.modelContextWindow === "number" ? usage.modelContextWindow : null,
+      });
+      return;
+    }
     if (method === "item/started") {
       const item = params.item ?? {};
       if (item.type === "commandExecution")

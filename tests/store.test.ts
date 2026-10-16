@@ -14,6 +14,16 @@ const input = {
   timeoutMinutes: 0,
 };
 describe("persistent tasks", () => {
+  it("guarda o modelo escolhido no chat e mantém a sessão para retomar", () => {
+    const store = new Store(":memory:");
+    store.addProject({ id: "p", name: "Repo", path: "/repo", remotes: ["origin"] });
+    const t = store.createTask(input);
+    store.setChatSession(t.id, "sessao-1");
+    store.setModel(t.id, "opus");
+    expect(store.task(t.id).model).toBe("opus");
+    expect(store.task(t.id).chatSessionId).toBe("sessao-1");
+    store.close();
+  });
   it("permite voltar uma tarefa concluída para a fila", () => {
     const store = new Store(":memory:");
     store.addProject({ id: "p", name: "Repo", path: "/repo", remotes: ["origin"] });
