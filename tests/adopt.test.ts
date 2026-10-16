@@ -97,6 +97,8 @@ it("excluir a tarefa remove a pasta, mas mantém a branch que já existia", asyn
   }
 });
 
+// Cria repositórios e executa clone, commits, fetch e pushes locais. No CI Windows,
+// o custo de iniciar o Git sob concorrência pode exceder os 5 s padrão do Vitest.
 it("publica a branch existente sem force e recusa quando o remoto está à frente", async () => {
   const f = setup();
   try {
@@ -123,7 +125,7 @@ it("publica a branch existente sem force e recusa quando o remoto está à frent
     f.store.close();
     rmSync(f.root, { recursive: true, force: true });
   }
-});
+}, 20_000);
 
 it("guarda as alterações pendentes em git stash e deixa a pasta limpa", async () => {
   const f = setup();
