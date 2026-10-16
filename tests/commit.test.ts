@@ -55,6 +55,7 @@ function setup() {
   );
   return { root, dir, store, service, task, opened };
 }
+// Criar o repositório e a worktree pode exceder 5 s no CI Windows sob concorrência.
 it("conta as alterações sem commit na pasta da tarefa", async () => {
   const f = setup();
   try {
@@ -65,7 +66,7 @@ it("conta as alterações sem commit na pasta da tarefa", async () => {
     f.store.close();
     rmSync(f.root, { recursive: true, force: true });
   }
-});
+}, 20_000);
 // Usa um executável de shell falso; no Windows não há como executá-lo como agente.
 it.skipIf(process.platform === "win32")("envia o pedido de commit ao agente já na abertura, na pasta da tarefa", async () => {
   const f = setup();

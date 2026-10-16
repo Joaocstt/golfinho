@@ -129,6 +129,7 @@ it("lists local branches with the active one identified and no remote refs", asy
   }
 });
 
+// Os comandos reais de Git podem exceder 5 s no CI Windows sob concorrência.
 it("deletes only golfinho branches and leaves the active checkout on the base", async () => {
   const f = fixture();
   try {
@@ -149,7 +150,7 @@ it("deletes only golfinho branches and leaves the active checkout on the base", 
   } finally {
     rmSync(f.root, { recursive: true, force: true });
   }
-});
+}, 20_000);
 
 it("refuses to delete the active branch when there is nowhere to switch to", async () => {
   const f = fixture();
