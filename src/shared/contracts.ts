@@ -218,6 +218,9 @@ export type Request =
   | { action: "shellInput"; shellId: string; data: string }
   | { action: "shellResize"; shellId: string; cols: number; rows: number }
   | { action: "shellClose"; shellId: string }
+  | { action: "chatSend"; taskId: string; text: string }
+  | { action: "chatDecide"; taskId: string; id: string; behavior: "allow" | "deny"; always?: boolean }
+  | { action: "chatStop"; taskId: string }
   | { action: "saveFile"; taskId: string; path: string; content: string }
   | { action: "runCheck"; taskId: string; command: string }
   | { action: "summary"; taskId: string; summary: string }
@@ -263,8 +266,19 @@ export type Response =
   | ProviderQuota
   | string
   | null;
+// Eventos do chat com o Claude (Agent SDK). A aprovação de ferramenta chega como "approval" e
+// é respondida pela ação chatDecide; o SDK fica esperando até a resposta.
+export type ChatBlock = { kind: "text"; text: string } | { kind: "tool"; name: string; summary: string };
+export type ChatEvent =
+  | { type: "user"; text: string }
+  | { type: "assistant"; blocks: ChatBlock[] }
+  | { type: "tool_result"; text: string; isError: boolean }
+  | { type: "approval"; id: string; toolName: string; summary: string; canAlwaysAllow: boolean }
+  | { type: "approval_resolved"; id: string; behavior: "allow" | "deny" }
+  | { type: "status"; state: "running" | "idle" | "error"; message?: string };
 export type Signal =
   | { kind: "changed" }
+  | { kind: "chat"; taskId: string; event: ChatEvent }
   | { kind: "terminal"; taskId: string; data: string; offset: number }
   | { kind: "shell"; id: string; data: string }
   | { kind: "shellEnded"; id: string; code: number };

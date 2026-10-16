@@ -36,6 +36,7 @@ import type {
   ProviderQuota,
 } from "../shared/contracts";
 import { TerminalPane, DiffPane, FileEditor, FileTree } from "./Editors";
+import { ChatPane } from "./ChatPane";
 import { ShellPane } from "./ShellPane";
 import { AgentIcon } from "./agentIcons";
 import { SshPanel } from "./SshPanel";
@@ -928,7 +929,8 @@ export default function App() {
               <div className="workbar">
                 <div className="tab-group">
                   <div className="tabs">
-                  {["Terminal", "Shell", "Diff", "Arquivos", "Histórico", "Checks"]
+                  {["Terminal", "Chat", "Shell", "Diff", "Arquivos", "Histórico", "Checks"]
+                    .filter((t) => t !== "Chat" || task.provider === "claude")
                     .filter((t) => t !== "Shell" || task.branchCreated)
                     .map((t) => (
                     <button
@@ -1164,6 +1166,11 @@ export default function App() {
                 </p>
               )}
               <div className="tab-body" ref={bodyRef} style={bodyStyle()}>
+                {shown("Chat") && (
+                  <div className="tab-slot bare" style={place("Chat")}>
+                    <ChatPane taskId={task.id} onError={report} />
+                  </div>
+                )}
                 {shown("Terminal") && (
                   <div className="tab-slot bare" style={place("Terminal")}>
                   <TerminalPane

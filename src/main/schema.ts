@@ -117,6 +117,17 @@ export const requestSchema = z.discriminatedUnion("action", [
     })
     .strict(),
   z.object({ action: z.literal("shellClose"), shellId: id }).strict(),
+  z.object({ action: z.literal("chatSend"), taskId: id, text: z.string().min(1).max(64 * 1024) }).strict(),
+  z
+    .object({
+      action: z.literal("chatDecide"),
+      taskId: id,
+      id,
+      behavior: z.enum(["allow", "deny"]),
+      always: z.boolean().optional(),
+    })
+    .strict(),
+  z.object({ action: z.literal("chatStop"), taskId: id }).strict(),
   z.object({ action: z.literal("endSession"), taskId: id }).strict(),
   z.object({ action: z.literal("testActivate"), taskId: id }).strict(),
   z.object({ action: z.literal("testRestore"), taskId: id }).strict(),

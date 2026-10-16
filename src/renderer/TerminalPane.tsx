@@ -4,6 +4,8 @@ import React, { useEffect, useRef, useState } from "react";
 import { Terminal, type IBufferRange } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon, type ISearchOptions } from "@xterm/addon-search";
+import { WebLinksAddon } from "@xterm/addon-web-links";
+import { Unicode11Addon } from "@xterm/addon-unicode11";
 import {
   ArrowDown,
   ChevronDown,
@@ -35,28 +37,28 @@ const clamp = (size: number) => Math.max(10, Math.min(22, size));
 // A saída das CLIs é quase toda colorida. Uma paleta própria mantém negrito, erro e
 // diff legíveis sobre este fundo, em vez do vermelho/verde saturado padrão do xterm.
 export const terminalTheme = {
-  background: "#282c34",
-  foreground: "#c6d7e8",
-  cursor: "#fafafa",
-  cursorAccent: "#282c34",
-  selectionBackground: "#3e4a5b",
-  selectionForeground: "#ffffff",
-  black: "#3f4451",
-  red: "#e06c75",
-  green: "#8cc265",
-  yellow: "#d6a35c",
-  blue: "#61afef",
-  magenta: "#c678dd",
-  cyan: "#56b6c2",
-  white: "#c6ccd7",
-  brightBlack: "#6b7384",
-  brightRed: "#ec8d94",
-  brightGreen: "#a5d684",
-  brightYellow: "#e5c07b",
-  brightBlue: "#7cc3ff",
-  brightMagenta: "#d7a0ea",
-  brightCyan: "#73c7d1",
-  brightWhite: "#e6e9ef",
+  background: "#262624",
+  foreground: "#d4d1c5",
+  cursor: "#d97757",
+  cursorAccent: "#262624",
+  selectionBackground: "#4a4640",
+  selectionForeground: "#f5f3ec",
+  black: "#3a3834",
+  red: "#e0826a",
+  green: "#a8b97f",
+  yellow: "#dcb36b",
+  blue: "#8fb0d1",
+  magenta: "#c09ac4",
+  cyan: "#86b9b1",
+  white: "#c9c6ba",
+  brightBlack: "#77736a",
+  brightRed: "#eea08a",
+  brightGreen: "#c2d196",
+  brightYellow: "#eac789",
+  brightBlue: "#aac6e3",
+  brightMagenta: "#d4b4d8",
+  brightCyan: "#a3cfc8",
+  brightWhite: "#f5f3ec",
 };
 const request = <T,>(r: Request) => window.golfinho.request(r) as Promise<T>;
 const searchOptions: ISearchOptions = {
@@ -148,7 +150,10 @@ export function TerminalPane({ taskId, active = false, provider, status, onError
     if (event.type !== "keydown" || !event.ctrlKey || event.altKey || event.metaKey) return true;
     const key = event.key.toLowerCase();
     let handled = true;
-    if (event.shiftKey && key === "f") commands.current.openSearch();
+    // Ctrl+C copia quando há seleção, como no Windows; sem seleção continua sendo interrupção da CLI.
+    if (!event.shiftKey && key === "c" && terminalRef.current?.hasSelection()) {
+      void commands.current.copy();
+    } else if (event.shiftKey && key === "f") commands.current.openSearch();
     else if (event.shiftKey && key === "c") void commands.current.copy();
     else if (event.shiftKey && key === "v") void commands.current.paste();
     else if (key === "+" || key === "=") commands.current.zoom(1);
@@ -179,6 +184,12 @@ export function TerminalPane({ taskId, active = false, provider, status, onError
     const search = new SearchAddon({ highlightLimit: 1000 });
     terminal.loadAddon(fit);
     terminal.loadAddon(search);
+    // Links da saída (ex.: a URL de login da CLI) são clicáveis. O main abre no navegador.
+    terminal.loadAddon(new WebLinksAddon((_event, uri) => window.open(uri, "_blank")));
+    // Largura correta para emoji e símbolos usados pelas CLIs; sem isso o cursor sai do lugar.
+    const unicode = new Unicode11Addon();
+    terminal.loadAddon(unicode);
+    terminal.unicode.activeVersion = "11";
     terminal.open(host.current!);
     terminalRef.current = terminal;
     searchRef.current = search;

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, clipboard } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, clipboard, shell } from "electron";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { mkdirSync } from "node:fs";
@@ -13,6 +13,7 @@ import { Service } from "./service";
 import { requestSchema } from "./schema";
 import type { Signal } from "../shared/contracts";
 import { Shells } from "./shells";
+import { ChatManager } from "./chat";
 import { vaultFrom } from "./vault";
 import { configureAskpass, askpassFile } from "./ssh";
 import { writeFileSync, chmodSync } from "node:fs";
@@ -25,6 +26,7 @@ let coordinator: Coordinator | undefined;
 let store: Store | undefined;
 let logs: TerminalLogs | undefined;
 let shells: Shells | undefined;
+let chat: ChatManager | undefined;
 let closing = false;
 let shutdownDone = false;
 const requests = new Set<Promise<unknown>>();
@@ -52,6 +54,7 @@ else {
       logs = new TerminalLogs(directory, signal);
       coordinator = new Coordinator(store, git, ptyDriver, logs, changed, join(home, "worktrees"));
       shells = new Shells(ptyDriver, signal);
+      chat = new ChatManager((taskId, event) => signal({ kind: "chat", taskId, event }));
       // O askpass não contém segredo: lê a senha da variável que o app passa só a esse processo.
       const script = askpassFile();
       const askpass = join(home, script.name);
@@ -84,7 +87,7 @@ else {
           await writeFile(file, png);
           return file;
         },
-      }, shells, vaultFrom(safeStorage));
+      }, shells, vaultFrom(safeStorage), chat);
       window = new BrowserWindow({
         width: 1400,
         height: 950,
@@ -101,7 +104,11 @@ else {
         },
       });
       window.setMenuBarVisibility(false);
-      window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+      // Links da CLI abrem no navegador padrão; só http e https, nada de outros esquemas.
+      window.webContents.setWindowOpenHandler(({ url }) => {
+        if (/^https?:\/\//i.test(url)) void shell.openExternal(url);
+        return { action: "deny" };
+      });
       window.webContents.on("will-navigate", (event) => event.preventDefault());
       ipcMain.handle("golfinho:request", async (event, input: unknown) => {
         if (closing) return { ok: false, error: "Golfinho está encerrando as execuções." };
@@ -170,6 +177,7 @@ else {
     closing = true;
     void (async () => {
       shells?.closeAll();
+      chat?.stopAll();
       await coordinator?.shutdown();
       await Promise.allSettled([...requests]);
       logs?.flush();

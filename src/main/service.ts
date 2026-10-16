@@ -5,6 +5,7 @@ import type { Coordinator } from "./coordinator";
 import type { Logs } from "./logs";
 import { agentInfo, invocation } from "./agents";
 import { interactiveShell } from "./shellCommand";
+import type { ChatManager } from "./chat";
 import { checkoutOf, requireCheckout } from "./checkout";
 import type { Shells } from "./shells";
 import { homedir } from "node:os";
@@ -36,7 +37,12 @@ export class Service {
     },
     private shells?: Shells,
     private vault?: Vault,
+    private chat?: ChatManager,
   ) {}
+  private requireChat() {
+    if (!this.chat) throw new Error("Chat indisponível neste ambiente.");
+    return this.chat;
+  }
   private passwordFor(connectionId: string): string | null {
     const body = this.store.secret(connectionId);
     if (body === null) return null;
@@ -449,6 +455,18 @@ export class Service {
         return null;
       case "shellClose":
         this.requireShells().close(r.shellId);
+        return null;
+      case "chatSend": {
+        // A pasta é a mesma da aba de arquivos: a worktree da tarefa, ou o projeto antes dela.
+        const { root } = await this.treeRoot(r.taskId);
+        this.requireChat().send(r.taskId, root, r.text);
+        return null;
+      }
+      case "chatDecide":
+        this.requireChat().decide(r.taskId, r.id, r.behavior, r.always ?? false);
+        return null;
+      case "chatStop":
+        this.requireChat().stop(r.taskId);
         return null;
       case "changes":
         return this.git.changes((await this.treeRoot(r.taskId)).root);
