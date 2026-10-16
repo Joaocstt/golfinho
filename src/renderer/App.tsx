@@ -19,6 +19,7 @@ import {
   Gauge,
   Server,
   ChevronDown,
+  CircleHelp,
 } from "lucide-react";
 import type {
   Snapshot,
@@ -40,6 +41,8 @@ import { ChatPane } from "./ChatPane";
 import { ShellPane } from "./ShellPane";
 import { AgentIcon } from "./agentIcons";
 import { SshPanel } from "./SshPanel";
+import { HelpPane } from "./HelpPane";
+import { ReviewFiles } from "./ReviewFiles";
 import { RemoteTree } from "./RemoteTree";
 import { RemoteViewer } from "./RemoteViewer";
 import golfinhoLogo from "../../build/icon.png";
@@ -100,6 +103,7 @@ const labels: Record<string, string> = {
   cancelled: "Cancelada",
 };
 const date = (s: string) => new Date(s).toLocaleString("pt-BR");
+const AGENT_NAMES: Record<string, string> = { codex: "Codex", claude: "Claude", antigravity: "Antigravity" };
 const OPEN_KEY = "golfinho.workspaces";
 export default function App() {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null),
@@ -113,7 +117,6 @@ export default function App() {
     [events, setEvents] = useState<TaskEvent[]>([]),
     [checks, setChecks] = useState<Check[]>([]),
     [file, setFile] = useState(""),
-    [summary, setSummary] = useState(""),
     [command, setCommand] = useState(""),
     [dirty, setDirty] = useState(false);
   const [query, setQuery] = useState(""),
@@ -133,6 +136,7 @@ export default function App() {
   const [deleting, setDeleting] = useState("");
   const [dashboard, setDashboard] = useState(false);
   const [sshView, setSshView] = useState(false);
+  const [helpView, setHelpView] = useState(false);
   // Servidores expandidos na barra lateral, e o arquivo remoto aberto na área principal.
   const [sshOpen, setSshOpen] = useState<Record<string, boolean>>({});
   const [remoteFile, setRemoteFile] = useState<{ connectionId: string; path: string } | null>(null);
@@ -178,6 +182,10 @@ export default function App() {
   useEffect(() => {
     if (dashboard || activeGeneral || selected) setSshView(false);
   }, [dashboard, activeGeneral, selected]);
+  // Qualquer outra visão desliga a Ajuda.
+  useEffect(() => {
+    if (dashboard || activeGeneral || selected || sshView) setHelpView(false);
+  }, [dashboard, activeGeneral, selected, sshView]);
   const resizeCleanup = useRef<() => void>(() => {});
   useEffect(() => () => resizeCleanup.current(), []);
   const detailEpoch = useRef(0),
@@ -280,7 +288,6 @@ export default function App() {
     setTab("Terminal");
     setSecondTab(null);
     setDirty(false);
-    setSummary(task?.reviewSummary ?? "");
     if (selected) void loadDetails(selected);
     else detailEpoch.current++;
   }, [selected, loadDetails]);
@@ -506,6 +513,14 @@ export default function App() {
           </span>
           <strong>golfinho</strong>
           <button
+            aria-label="Ajuda"
+            title="Ajuda: como o Golfinho funciona"
+            className={helpView ? "active" : ""}
+            onClick={() => navigate(() => (setDashboard(false), setSshView(false), setActiveGeneral(""), setSelected(""), setHelpView(true)))}
+          >
+            <CircleHelp size={14} />
+          </button>
+          <button
             aria-label="Configurações"
             title="Configurações"
             onClick={() => setModal("settings")}
@@ -567,6 +582,12 @@ export default function App() {
                   <ChevronRight size={11} />
                   <FolderGit2 size={13} />
                   <span>{p.name}</span>
+                  {snapshot.activeBranches?.[p.id] && (
+                    <span className="project-branch" title="Branch ativa na pasta do projeto">
+                      <GitBranch size={11} />
+                      {snapshot.activeBranches[p.id]}
+                    </span>
+                  )}
                   <small>{snapshot.tasks.filter((t) => t.projectId === p.id).length}</small>
                 </button>
                 <div className="branch-tree">
@@ -579,17 +600,33 @@ export default function App() {
                       >
                         <button aria-label={t.title} onClick={() => openTask(t.id)}>
                           <div className="branch-task-head">
-                            <i className={"state-dot " + t.status} />
-                            <span>{t.branch}</span>
-                            <small>
+                            <span className="branch-task-dot">
+                              <i className={"state-dot " + t.status} />
+                            </span>
+                            <span className="branch-task-name">{t.title}</span>
+                            {!t.worktreePath && snapshot.activeBranches?.[p.id] === t.branch && (
+                              <span className="branch-active" title="A pasta do projeto está nesta branch">
+                                ativa
+                              </span>
+                            )}
+                          </div>
+                          <div className="branch-task-meta">
+                            <span className={"branch-task-status " + t.status}>
                               {labels[t.status]}
                               {t.status === "running" && ` · ${ago(t.updatedAt, now)}`}
-                            </small>
+                            </span>
+                            <span className="branch-task-agent">
+                              <AgentIcon provider={t.provider} />
+                              {AGENT_NAMES[t.provider] ?? t.provider}
+                            </span>
                           </div>
-                          <div className="branch-task-title">
-                            <span>{t.title}</span>
-                            <small><AgentIcon provider={t.provider} /> {t.provider}</small>
-                          </div>
+                          {/* A branch só aparece quando diz algo que o título não diz. */}
+                          {t.branch !== t.title && (
+                            <div className="branch-task-branch" title={t.branch}>
+                              <GitBranch size={11} />
+                              <span>{t.branch}</span>
+                            </div>
+                          )}
                         </button>
                         <button
                           className="branch-task-delete"
@@ -641,36 +678,44 @@ export default function App() {
       />
       <div className="workspace">
         <header className="topbar">
-          <div className="workspace-tabs" role="tablist" aria-label="Workspaces">
+          {/* Com abas de tarefa ou terminal abertas, as abas fixas mostram só o ícone. */}
+          <div
+            className={"workspace-tabs" + (open.length || general.length ? " compact" : "")}
+            role="tablist"
+            aria-label="Workspaces"
+          >
             <button
               role="tab"
               aria-label="Visão geral das tarefas"
-              aria-selected={!selected}
-              className={!selected ? "active" : ""}
-              onClick={() => navigate(() => (setDashboard(false), setSshView(false), setActiveGeneral(""), setSelected("")))}
+              title="Tarefas"
+              aria-selected={!selected && !dashboard && !sshView && !helpView && !activeGeneral}
+              className={!selected && !dashboard && !sshView && !helpView && !activeGeneral ? "active" : ""}
+              onClick={() => navigate(() => (setDashboard(false), setSshView(false), setHelpView(false), setActiveGeneral(""), setSelected("")))}
             >
               <List size={12} />
-              Tarefas
+              <span className="nav-label">Tarefas</span>
             </button>
             <button
               role="tab"
               aria-label="Painel de consumo"
+              title="Consumo"
               aria-selected={dashboard}
               className={dashboard ? "active" : ""}
               onClick={() => navigate(() => (setDashboard(true), setSshView(false), setActiveGeneral(""), setSelected("")))}
             >
               <Gauge size={12} />
-              Consumo
+              <span className="nav-label">Consumo</span>
             </button>
             <button
               role="tab"
               aria-label="Conexões SSH"
+              title="SSH"
               aria-selected={sshView}
               className={sshView ? "active" : ""}
               onClick={() => navigate(() => (setDashboard(false), setActiveGeneral(""), setSelected(""), setSshView(true)))}
             >
               <Server size={12} />
-              SSH
+              <span className="nav-label">SSH</span>
             </button>
             {open
               .map((id) => snapshot?.tasks.find((t) => t.id === id))
@@ -797,6 +842,7 @@ export default function App() {
             </div>
           )}
           {dashboard && <UsageDashboard />}
+          {helpView && <HelpPane />}
           {sshView && snapshot && (
             <SshPanel
               connections={snapshot.settings.ssh}
@@ -833,7 +879,7 @@ export default function App() {
               />
             </section>
           ))}
-          {!task && !dashboard && !sshView && !activeGeneral && (
+          {!task && !dashboard && !sshView && !helpView && !activeGeneral && (
             <section className="overview">
               <div className="overview-head">
                 <h1>{snapshot?.projects.find((p) => p.id === project)?.name ?? "Tarefas"}</h1>
@@ -894,13 +940,17 @@ export default function App() {
             <section className="detail" hidden={Boolean(activeGeneral) || sshView}>
               <div className="detail-head">
                 <div>
-                  <div className="eyebrow">TAREFA · {labels[task.status]}</div>
-                  <h2>{task.title}</h2>
+                  {/* Status ao lado do título, no lugar da linha "TAREFA · …"; a branch só se repete se for diferente. */}
+                  <div className="detail-title">
+                    <h2>{task.title}</h2>
+                    <span className={"status-pill " + task.status}>{labels[task.status]}</span>
+                  </div>
                   <p>
-                    <GitBranch size={14} />
-                    {task.branch}{" "}
+                    <GitBranch size={13} />
+                    {task.branch !== task.title && <>{task.branch} </>}
                     <span>
-                      ← {task.base} · {task.remote}
+                      {task.branch !== task.title ? "← " : "a partir de "}
+                      {task.base} · {task.remote}
                     </span>
                   </p>
                 </div>
@@ -1032,8 +1082,10 @@ export default function App() {
                           void act("activate");
                         })
                       }
+                      aria-label="Ativar branch no repositório"
+                      title="Ativa a branch desta tarefa na pasta do projeto"
                     >
-                      Ativar branch no repositório
+                      Ativar branch
                     </button>
                   )}
                   {["draft", "failed", "cancelled", "interrupted", "review"].includes(
@@ -1072,8 +1124,9 @@ export default function App() {
                           )
                             void act("testActivate");
                         }}
+                        aria-label="Testar na pasta do projeto"
                       >
-                        Testar na pasta do projeto
+                        Testar no projeto
                       </button>
                     )}
                   {task.testCheckout && (
@@ -1110,8 +1163,13 @@ export default function App() {
                     </button>
                   )}
                   {task.branchCreated && !["running", "waiting", "queued"].includes(task.status) && (
-                    <button disabled={busy} onClick={openReview}>
-                      Revisar alterações
+                    <button
+                      disabled={busy}
+                      aria-label="Revisar alterações"
+                      title="Abre o diff e o resumo do que mudou"
+                      onClick={openReview}
+                    >
+                      Revisar
                     </button>
                   )}
                   {task.status === "review" && (
@@ -1120,8 +1178,14 @@ export default function App() {
                     </button>
                   )}
                   {task.status === "completed" && !task.published && (
-                    <button disabled={busy} className="primary" onClick={() => void openPublish()}>
-                      Publicar branch no remoto
+                    <button
+                      disabled={busy}
+                      className="primary"
+                      aria-label="Publicar branch no remoto"
+                      title="Faz um push comum da branch, sem --force"
+                      onClick={() => void openPublish()}
+                    >
+                      Publicar
                     </button>
                   )}
                   {task.published && <span className="published">Branch publicada</span>}
@@ -1154,8 +1218,9 @@ export default function App() {
                     </div>
                   </div>
                 )}
-              {task.status === "interrupted" && (
-                <p className="notice">
+              {/* Com sessão salva, o botão Retomar sessão resolve; o aviso só faz sentido sem ela. */}
+              {task.status === "interrupted" && !task.sessionId && (
+                <p className="notice notice-compact">
                   Processo interrompido. A sessão anterior não é recuperável: revise os arquivos ou
                   coloque a tarefa na fila de novo.
                 </p>
@@ -1224,23 +1289,17 @@ export default function App() {
                     </div>
                   ) : (
                     <>
-                      <div className="file-tabs">
-                        {review.files.map((f) => (
-                          <button
-                            key={f.path}
-                            className={"chip " + (file === f.path ? "active" : "")}
-                            style={{ ["--chip-color" as string]: CHANGE_COLOR[f.status] }}
-                            title={`${CHANGE_WORD[f.status]} · ${f.path}`}
-                            onClick={() => setFile(f.path)}
-                          >
-                            <span className="chip-status">{CHANGE_WORD[f.status]}</span>
-                            <span className="chip-dir">{f.path.slice(0, f.path.lastIndexOf("/") + 1)}</span>
-                            <span className="chip-name">{f.path.slice(f.path.lastIndexOf("/") + 1)}</span>
-                          </button>
-                        ))}
-                      </div>
-                      {review.files.find((f) => f.path === file) ? (
-                        <DiffPane file={review.files.find((f) => f.path === file)!} />
+                      {review.files.length ? (
+                        <div className="review-layout">
+                          <ReviewFiles files={review.files} selected={file} onSelect={setFile} />
+                          <div className="review-main">
+                            {review.files.find((f) => f.path === file) ? (
+                              <DiffPane file={review.files.find((f) => f.path === file)!} />
+                            ) : (
+                              <div className="empty">Escolha um arquivo na lista para ver o que mudou.</div>
+                            )}
+                          </div>
+                        </div>
                       ) : (
                         <div className="empty">Nenhuma alteração encontrada nesta branch.</div>
                       )}
@@ -1249,18 +1308,6 @@ export default function App() {
                           Arquivos também alterados em “{o.title}”: {o.paths.join(", ")}
                         </p>
                       ))}
-                      <label className="summary">
-                        Resumo da revisão
-                        <textarea value={summary} onChange={(e) => setSummary(e.target.value)} />
-                      </label>
-                      <button
-                        disabled={busy}
-                        onClick={() =>
-                          perform(() => request({ action: "summary", taskId: task.id, summary }))
-                        }
-                      >
-                        Salvar resumo
-                      </button>
                     </>
                   ))}
                   </div>

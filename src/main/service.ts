@@ -172,14 +172,21 @@ export class Service {
         if (!this.clipboard) throw new Error("Clipboard indisponível neste ambiente.");
         if (Buffer.byteLength(r.text,"utf8") > 2*1024*1024) throw new Error("Seleção excede 2 MiB."); await this.clipboard.write(r.text); return null;
       }
-      case "snapshot":
+      case "snapshot": {
+        const projects = this.store.projects();
+        // Branch atual da pasta de cada projeto, para a lateral mostrar qual tarefa está ativa.
+        const active = await Promise.all(
+          projects.map(async (p) => [p.id, await this.git.current(p.path).catch(() => "")] as const),
+        );
         return {
-          projects: this.store.projects(),
+          projects,
+          activeBranches: Object.fromEntries(active),
           tasks: this.store.tasks().map(task => ({ ...task, terminalReady: this.coordinator.ready(task.id) })),
           settings: this.store.settings(),
           agents: agentInfo(this.store.settings()),
           sshPasswords: this.store.secretIds(),
         };
+      }
       case "addProject": {
         const path = r.path ?? (await this.chooseFolder());
         if (!path) return null;

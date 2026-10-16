@@ -164,10 +164,6 @@ export function ChatPane({ taskId, provider, onError }: ChatPaneProps) {
   }
   return (
     <div className={`chat-pane chat-${provider}`}>
-      <div className="chat-header">
-        <span>{LABELS[provider] ?? "Chat"}</span>
-        <span className="chat-header-note">conversa desta tarefa</span>
-      </div>
       <div className="chat-log">
         {items.length === 0 && (
           <p className="chat-empty">Escreva uma mensagem para começar a conversa nesta tarefa.</p>

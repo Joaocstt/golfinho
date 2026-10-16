@@ -112,6 +112,8 @@ export interface Snapshot {
   tasks: Task[];
   settings: Settings;
   agents: AgentInfo[];
+  /** Branch em uso na pasta de cada projeto (id do projeto → branch); vazio quando não dá para ler. */
+  activeBranches?: Record<string, string>;
 }
 export interface FileChange {
   path: string;

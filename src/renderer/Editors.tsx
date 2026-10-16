@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, ChevronRight, File, Folder, RefreshCw } from "lucide-react";
+import { ChevronDown, ChevronRight, ChevronUp, Eye, EyeOff, File, Folder, RefreshCw } from "lucide-react";
 import * as monaco from "monaco-editor";
 import EditorWorker from "monaco-editor/editor/editor.worker.js?worker";
 import type { Changes, FileChange, Request, TreeEntry, TreeListing } from "../shared/contracts";
 import { languageFor } from "./language";
+import { countLines } from "./diffStats";
 (self as unknown as { MonacoEnvironment: unknown }).MonacoEnvironment = {
   getWorker: () => new EditorWorker(),
 };
@@ -31,32 +32,132 @@ function ensureDiffTheme() {
   });
   diffThemeReady = true;
 }
+const VIEW_KEY = "golfinho.diff.sideBySide";
+function savedSideBySide() {
+  try {
+    return localStorage.getItem(VIEW_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+// Diff de um arquivo. Por padrão mostra só os trechos alterados (com contexto) em modo unificado,
+// que é o jeito mais rápido de ver o que mudou; o resto do arquivo abre ao clicar na faixa recolhida.
 export function DiffPane({ file }: { file: FileChange }) {
   const host = useRef<HTMLDivElement>(null);
+  const editorRef = useRef<monaco.editor.IStandaloneDiffEditor | null>(null);
+  const [sideBySide, setSideBySide] = useState(savedSideBySide);
+  const [showAll, setShowAll] = useState(false);
+  const [stats, setStats] = useState<{ added: number; removed: number; hunks: number } | null>(null);
   useEffect(() => {
     if (file.binary || file.error) return;
     ensureDiffTheme();
-    const original = monaco.editor.createModel(file.original);
-    const modified = monaco.editor.createModel(file.modified);
+    setStats(null);
+    const language = languageOf(file.path);
+    const original = monaco.editor.createModel(file.original, language);
+    const modified = monaco.editor.createModel(file.modified, language);
     const editor = monaco.editor.createDiffEditor(host.current!, {
       theme: DIFF_THEME,
       automaticLayout: true,
       readOnly: true,
       minimap: { enabled: false },
       fontSize: 13,
+      renderSideBySide: savedSideBySide(),
+      // A escolha vem do botão Unificado/Lado a lado. Sem isto, o Monaco força o unificado
+      // abaixo de 900 px de largura e o botão parece não funcionar.
+      useInlineViewWhenSpaceIsLimited: false,
+      renderMarginRevertIcon: false,
+      hideUnchangedRegions: { enabled: true, contextLineCount: 3, minimumLineCount: 4, revealLineCount: 20 },
     });
     editor.setModel({ original, modified });
+    editorRef.current = editor;
+    let first = true;
+    const updated = editor.onDidUpdateDiff(() => {
+      const changes = editor.getLineChanges() ?? [];
+      setStats(countLines(changes));
+      // Na primeira vez, já leva à primeira mudança.
+      if (first && changes.length) {
+        first = false;
+        const line = changes[0].modifiedStartLineNumber || changes[0].modifiedEndLineNumber || 1;
+        editor.getModifiedEditor().revealLineInCenter(line);
+      }
+    });
     return () => {
+      updated.dispose();
+      editorRef.current = null;
       editor.dispose();
       original.dispose();
       modified.dispose();
     };
   }, [file]);
+  useEffect(() => {
+    editorRef.current?.updateOptions({ renderSideBySide: sideBySide, useInlineViewWhenSpaceIsLimited: false });
+    try {
+      localStorage.setItem(VIEW_KEY, sideBySide ? "1" : "0");
+    } catch {}
+  }, [sideBySide]);
+  useEffect(() => {
+    editorRef.current?.updateOptions({ hideUnchangedRegions: { enabled: !showAll } });
+  }, [showAll]);
   if (file.error) return <div className="empty">Não foi possível ler este arquivo: {file.error}</div>;
-  return file.binary ? (
-    <div className="empty">Arquivo binário: revisão textual indisponível.</div>
-  ) : (
-    <div ref={host} className="editor-host" />
+  if (file.binary) return <div className="empty">Arquivo binário: revisão textual indisponível.</div>;
+  return (
+    <div className="diff-pane">
+      <div className="diff-toolbar">
+        <span className="diff-stats" aria-live="polite">
+          {stats ? (
+            stats.hunks ? (
+              <>
+                <b className="diff-added">+{stats.added}</b>
+                <b className="diff-removed">−{stats.removed}</b>
+                <span>
+                  {stats.hunks} {stats.hunks === 1 ? "trecho alterado" : "trechos alterados"}
+                </span>
+              </>
+            ) : (
+              <span>Sem diferenças de conteúdo</span>
+            )
+          ) : (
+            <span>Comparando…</span>
+          )}
+        </span>
+        <div className="diff-nav">
+          <button
+            title="Mudança anterior"
+            aria-label="Mudança anterior"
+            disabled={!stats?.hunks}
+            onClick={() => editorRef.current?.goToDiff("previous")}
+          >
+            <ChevronUp size={14} /> Anterior
+          </button>
+          <button
+            title="Próxima mudança"
+            aria-label="Próxima mudança"
+            disabled={!stats?.hunks}
+            onClick={() => editorRef.current?.goToDiff("next")}
+          >
+            <ChevronDown size={14} /> Próxima
+          </button>
+        </div>
+        <button
+          className="diff-all"
+          aria-pressed={showAll}
+          title={showAll ? "Recolher os trechos sem mudança" : "Mostrar também os trechos sem mudança"}
+          onClick={() => setShowAll((all) => !all)}
+        >
+          {showAll ? <EyeOff size={14} /> : <Eye size={14} />}
+          {showAll ? "Só mudanças" : "Arquivo inteiro"}
+        </button>
+        <div className="diff-view" role="group" aria-label="Modo de exibição">
+          <button aria-pressed={!sideBySide} onClick={() => setSideBySide(false)}>
+            Unificado
+          </button>
+          <button aria-pressed={sideBySide} onClick={() => setSideBySide(true)}>
+            Lado a lado
+          </button>
+        </div>
+      </div>
+      <div ref={host} className="editor-host" />
+    </div>
   );
 }
 // Escolhe a linguagem pela extensão; sem extensão reconhecida, texto puro.
