@@ -1,4 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import type { ChatBlock, ChatEvent, ChatHistoryItem, Request } from "../shared/contracts";
 export interface ChatPaneProps {
   taskId: string;
@@ -20,9 +22,9 @@ function Blocks({ blocks }: { blocks: ChatBlock[] }) {
     <>
       {blocks.map((block, index) =>
         block.kind === "text" ? (
-          <p key={index} className="chat-text">
-            {block.text}
-          </p>
+          <div key={index} className="chat-text">
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{block.text}</ReactMarkdown>
+          </div>
         ) : (
           <div key={index} className="chat-tool">
             <span className="chat-tool-name">{block.name}</span>
@@ -99,11 +101,16 @@ export function ChatPane({ taskId, provider, onError }: ChatPaneProps) {
               </div>
             );
           if (event.type === "tool_result") {
+            // Uma linha resumida; o conteúdo completo abre só ao clicar.
             const text = event.text.length > RESULT_LIMIT ? `${event.text.slice(0, RESULT_LIMIT)}…` : event.text;
+            const summary = (event.text.split("\n")[0] ?? "").slice(0, 140) || "sem saída";
             return (
-              <pre key={seq} className={event.isError ? "chat-result error" : "chat-result"}>
-                {text || "(sem saída)"}
-              </pre>
+              <details key={seq} className={event.isError ? "chat-result-block error" : "chat-result-block"}>
+                <summary>
+                  <span className="chat-result-mark">{event.isError ? "✗" : "✓"}</span> {summary}
+                </summary>
+                <pre className="chat-result">{text || "(sem saída)"}</pre>
+              </details>
             );
           }
           if (event.type === "approval") {

@@ -5,6 +5,21 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { GitService } from "../src/main/git";
+// Criar symlink exige permissão extra no Windows (Modo de Desenvolvedor ou administrador).
+// Sem ela, os testes que dependem de link são pulados em vez de falhar.
+function canSymlink(): boolean {
+  const dir = mkdtempSync(join(tmpdir(), "golfinho-symlink-probe-"));
+  try {
+    symlinkSync(dir, join(dir, "probe"));
+    return true;
+  } catch {
+    return false;
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+const itWithLinks = canSymlink() ? it : it.skip;
+
 const run = (cwd: string, ...args: string[]) =>
   execFileSync("git", args, { cwd, stdio: "pipe" }).toString().trim();
 function fixture() {
@@ -34,7 +49,7 @@ it("creates a task branch without worktrees and publishes only the selected ref"
     rmSync(f.root, { recursive: true, force: true });
   }
 });
-it("blocks dirty branch switches and includes untracked files in review", async () => {
+itWithLinks("blocks dirty branch switches and includes untracked files in review", async () => {
   const f = fixture();
   try {
     const base = await f.git.prepare(f.repo, "golfinho/task", "main", false);
@@ -64,7 +79,7 @@ it("publishes to a configured option-like remote without interpreting it as a fl
     rmSync(f.root, { recursive: true, force: true });
   }
 });
-it("fingerprints large untracked assets and symlink identity without following targets", async () => {
+itWithLinks("fingerprints large untracked assets and symlink identity without following targets", async () => {
   const f = fixture();
   try {
     writeFileSync(join(f.repo, "large.bin"), Buffer.alloc(3 * 1024 * 1024, 7));
