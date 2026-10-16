@@ -3431,6 +3431,15 @@ select {
 .task-form .form-intro {
   margin-bottom: 20px;
 }
+.task-form .task-folder-notice {
+  margin: 0 0 16px;
+  padding: 10px 12px;
+}
+.task-folder-notice strong {
+  display: block;
+  margin-bottom: 4px;
+  font-weight: 500;
+}
 .task-form .form-grid {
   gap: 16px 14px;
   margin-bottom: 16px;

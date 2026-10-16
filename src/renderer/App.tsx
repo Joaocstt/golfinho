@@ -1138,6 +1138,14 @@ function TaskForm({
           )}
         </div>
       </div>
+      <div className="notice notice-warn task-folder-notice" role="note">
+        <strong>As tarefas deste projeto compartilham a mesma pasta.</strong>
+        <p>
+          Ao iniciar uma tarefa, o app pode trocar a branch dessa pasta. Antes de iniciar outra,
+          encerre ou interrompa os agentes que estiverem trabalhando no mesmo projeto pelo Terminal,
+          Chat ou sessões avulsas, para evitar misturar alterações entre tarefas.
+        </p>
+      </div>
       <label className="check-row">
         <input type="checkbox" checked={adopt} onChange={(e) => setAdopt(e.target.checked)} />
         Trabalhar em uma branch que já existe
