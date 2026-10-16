@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Paperclip, X } from "lucide-react";
@@ -40,6 +40,7 @@ const MODELS: Record<string, { value: string; label: string }[]> = {
 const SUMMARY_REQUEST =
   "Escreva um resumo para continuar esta tarefa em uma conversa nova: objetivo, o que já foi feito, decisões tomadas, arquivos alterados e próximos passos. Responda só com o resumo, em português.";
 const RESULT_LIMIT = 600;
+const MESSAGES_PAGE = 200;
 const MAX_ATTACHMENTS = 8;
 const request = <T,>(r: Request) => window.golfinho.request(r) as Promise<T>;
 // Preview das imagens: o main confere o caminho e devolve um data URL; aqui só fica o cache.
@@ -88,7 +89,7 @@ function merge(current: ChatHistoryItem[], incoming: ChatHistoryItem[]): ChatHis
   for (const item of incoming) bySeq.set(item.seq, item);
   return [...bySeq.values()].sort((a, b) => a.seq - b.seq);
 }
-function Blocks({ blocks }: { blocks: ChatBlock[] }) {
+const Blocks = memo(function Blocks({ blocks }: { blocks: ChatBlock[] }) {
   return (
     <>
       {blocks.map((block, index) =>
@@ -105,7 +106,7 @@ function Blocks({ blocks }: { blocks: ChatBlock[] }) {
       )}
     </>
   );
-}
+});
 export function ChatPane({ taskId, provider, model, onError }: ChatPaneProps) {
   const [items, setItems] = useState<ChatHistoryItem[]>([]);
   const [draft, setDraft] = useState("");
@@ -189,15 +190,18 @@ export function ChatPane({ taskId, provider, model, onError }: ChatPaneProps) {
     document.addEventListener("keydown", close);
     return () => document.removeEventListener("keydown", close);
   }, [viewer]);
-  const events = items.map((item) => item.event);
+  const events = useMemo(() => items.map((item) => item.event), [items]);
   const lastStatus = [...events].reverse().find((e): e is Extract<ChatEvent, { type: "status" }> => e.type === "status");
   const busy = lastStatus?.state === "running";
   useEffect(() => {
     bottom.current?.scrollIntoView({ block: "end" });
   }, [items, busy]);
-  const resolved = new Map<string, "allow" | "deny">();
-  for (const event of events)
-    if (event.type === "approval_resolved") resolved.set(event.id, event.behavior);
+  const resolved = useMemo(() => {
+    const map = new Map<string, "allow" | "deny">();
+    for (const event of events)
+      if (event.type === "approval_resolved") map.set(event.id, event.behavior);
+    return map;
+  }, [events]);
   function addAttachments(paths: string[]) {
     setAttachments((current) => {
       const next = [...current, ...paths.filter((p) => !current.includes(p))];
@@ -235,16 +239,20 @@ export function ChatPane({ taskId, provider, model, onError }: ChatPaneProps) {
   function interrupt() {
     request({ action: "chatInterrupt", taskId }).catch(onError);
   }
-  function decide(id: string, behavior: "allow" | "deny", always = false) {
-    request({ action: "chatDecide", taskId, id, behavior, always }).catch(onError);
-  }
-  return (
-    <div className={`chat-pane chat-${provider}`}>
-      <div className="chat-log">
-        {items.length === 0 && (
-          <p className="chat-empty">Escreva uma mensagem para começar a conversa nesta tarefa.</p>
-        )}
-        {items.map(({ seq, event }) => {
+  const decide = useCallback(
+    (id: string, behavior: "allow" | "deny", always = false) => {
+      request({ action: "chatDecide", taskId, id, behavior, always }).catch(onError);
+    },
+    [taskId, onError],
+  );
+  // Últimas mensagens; as anteriores entram com "Carregar anteriores". A lista é memorizada:
+  // digitar no campo não refaz as mensagens.
+  const [shown, setShown] = useState(MESSAGES_PAGE);
+  useEffect(() => setShown(MESSAGES_PAGE), [taskId]);
+  const shownItems = items.length > shown ? items.slice(items.length - shown) : items;
+  const messages = useMemo(
+    () =>
+      shownItems.map(({ seq, event }) => {
           if (event.type === "user")
             return (
               <div key={seq} className="chat-user">
@@ -312,7 +320,21 @@ export function ChatPane({ taskId, provider, model, onError }: ChatPaneProps) {
               </p>
             );
           return null;
-        })}
+      }),
+    [shownItems, resolved, provider, decide],
+  );
+  return (
+    <div className={`chat-pane chat-${provider}`}>
+      <div className="chat-log">
+        {items.length === 0 && (
+          <p className="chat-empty">Escreva uma mensagem para começar a conversa nesta tarefa.</p>
+        )}
+        {items.length > shownItems.length && (
+          <button type="button" className="chat-more" onClick={() => setShown((n) => n + MESSAGES_PAGE)}>
+            Carregar anteriores ({items.length - shownItems.length})
+          </button>
+        )}
+        {messages}
         <div ref={bottom} />
       </div>
       <form
