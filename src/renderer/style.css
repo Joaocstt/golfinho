@@ -2329,7 +2329,39 @@ select {
   font-size: 11px;
 }
 
-/* Chat com o Claude: mensagens, ferramentas e cartões de aprovação. */
+/* Chat com o Claude ou com a Codex: mensagens, ferramentas e cartões de aprovação. */
+.chat-pane {
+  --chat-accent: #d97757;
+}
+.chat-pane.chat-codex {
+  --chat-accent: #7d9cff;
+  background: #1b1d23;
+  color: #d3d8e6;
+}
+.chat-pane.chat-codex .chat-user {
+  background: #2a2e38;
+}
+.chat-pane.chat-codex .chat-approval {
+  background: #242730;
+  border-color: #3a404c;
+}
+.chat-pane.chat-codex .chat-result {
+  background: #15171c;
+}
+.chat-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 10px 16px;
+  border-bottom: 1px solid #3a3834;
+  font-weight: 600;
+  font-size: 13px;
+}
+.chat-header-note {
+  font-weight: 400;
+  color: #8f8b80;
+  font-size: 12px;
+}
 .chat-pane {
   display: flex;
   flex-direction: column;
@@ -2350,6 +2382,9 @@ select {
   gap: 12px;
   font-size: 14px;
   line-height: 1.55;
+}
+.chat-log > * {
+  flex-shrink: 0;
 }
 .chat-empty,
 .chat-busy {
@@ -2380,7 +2415,7 @@ select {
   margin: 4px 0;
 }
 .chat-tool-name {
-  color: #d97757;
+  color: var(--chat-accent);
   font-weight: 600;
 }
 .chat-tool code,
@@ -2424,7 +2459,7 @@ select {
 .chat-approval-actions button,
 .chat-input button {
   border: 1px solid #5a554c;
-  background: #d97757;
+  background: var(--chat-accent);
   color: #1f1e1c;
   border-radius: 8px;
   padding: 5px 12px;

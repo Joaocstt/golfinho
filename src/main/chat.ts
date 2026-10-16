@@ -7,7 +7,8 @@ import {
   type SDKMessage,
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
-import type { ChatBlock, ChatEvent } from "../shared/contracts";
+import type { ChatBlock, ChatEvent, ChatHistoryItem, Provider } from "../shared/contracts";
+import { CodexChatSession } from "./codexChat";
 // Resumo curto da ferramenta para o cartão de aprovação. Comando e caminho são o que a pessoa
 // precisa ver para decidir; o resto do input fica de fora.
 export function summarize(toolName: string, input: Record<string, unknown>): string {
@@ -29,6 +30,11 @@ interface Pending {
   suggestions: PermissionUpdate[];
   resolve: (result: PermissionResult) => void;
 }
+// Como retomar uma conversa salva: o id da sessão anterior e o aviso quando o id novo aparece.
+export interface ChatOptions {
+  resume?: string | null;
+  onSession?: (id: string) => void;
+}
 // Uma conversa do Claude por tarefa. As mensagens entram por uma fila, então o SDK mantém a
 // sessão aberta entre um turno e o seguinte.
 export class ChatSession {
@@ -40,6 +46,7 @@ export class ChatSession {
   constructor(
     private readonly cwd: string,
     private readonly emit: (event: ChatEvent) => void,
+    private readonly options: ChatOptions = {},
   ) {}
   send(text: string) {
     const message: SDKUserMessage = {
@@ -90,6 +97,7 @@ export class ChatSession {
       prompt: this.input(),
       options: {
         cwd: this.cwd,
+        resume: this.options.resume ?? undefined,
         permissionMode: "default",
         canUseTool: (toolName, input, options) => this.approve(toolName, input, options),
       },
@@ -107,6 +115,7 @@ export class ChatSession {
     }
   }
   private route(message: SDKMessage) {
+    if (message.type === "system" && message.subtype === "init") this.options.onSession?.(message.session_id);
     if (message.type === "assistant") {
       const blocks: ChatBlock[] = [];
       for (const part of message.message.content) {
@@ -159,17 +168,68 @@ export class ChatSession {
     });
   }
 }
-// Conversas por tarefa. A saída vai para o renderer pela função de emissão recebida.
+// Conversa de um provedor, vista pelo ChatManager. Claude e Codex implementam a mesma interface.
+export interface ChatBackend {
+  send(text: string): void;
+  decide(id: string, behavior: "allow" | "deny", always: boolean): void;
+  stop(): void;
+}
+export interface ChatTarget {
+  provider: Provider;
+  cwd: string;
+  executable: string;
+}
+// Onde a conversa fica guardada. O ChatManager não sabe de banco: recebe estas funções.
+export interface ChatStorage {
+  append(taskId: string, event: ChatEvent): number;
+  list(taskId: string): ChatHistoryItem[];
+  sessionId(taskId: string): string | null;
+  saveSessionId(taskId: string, sessionId: string): void;
+}
+// Conversas por tarefa. Cada evento é guardado antes de ir para a tela, então a conversa volta
+// ao reabrir a tarefa, e a sessão é retomada pelo id guardado.
 export class ChatManager {
-  private sessions = new Map<string, ChatSession>();
-  constructor(private readonly emitFor: (taskId: string, event: ChatEvent) => void) {}
-  send(taskId: string, cwd: string, text: string) {
+  private sessions = new Map<string, ChatBackend>();
+  constructor(
+    private readonly emitFor: (taskId: string, seq: number, event: ChatEvent) => void,
+    private readonly storage: ChatStorage,
+  ) {}
+  private emitter(taskId: string): (event: ChatEvent) => void {
+    return (event) => {
+      const seq = this.storage.append(taskId, event);
+      this.emitFor(taskId, seq, event);
+    };
+  }
+  send(taskId: string, target: ChatTarget, text: string) {
     let session = this.sessions.get(taskId);
     if (!session) {
-      session = new ChatSession(cwd, (event) => this.emitFor(taskId, event));
+      const emit = this.emitter(taskId);
+      const options: ChatOptions = {
+        resume: this.storage.sessionId(taskId),
+        onSession: (id) => this.storage.saveSessionId(taskId, id),
+      };
+      session =
+        target.provider === "codex"
+          ? new CodexChatSession(target.cwd, target.executable, emit, options)
+          : new ChatSession(target.cwd, emit, options);
       this.sessions.set(taskId, session);
     }
     session.send(text);
+  }
+  // Histórico da tarefa. Sem sessão viva, aprovações que ficaram abertas já não podem ser
+  // respondidas: o processo que as esperava acabou. Elas são fechadas como negadas.
+  history(taskId: string): ChatHistoryItem[] {
+    if (this.sessions.has(taskId)) return this.storage.list(taskId);
+    const items = this.storage.list(taskId);
+    const answered = new Set(items.filter((i) => i.event.type === "approval_resolved").map((i) => (i.event as { id: string }).id));
+    const open = items.filter((i) => i.event.type === "approval" && !answered.has((i.event as { id: string }).id));
+    const last = [...items].reverse().find((i) => i.event.type === "status");
+    const running = last !== undefined && last.event.type === "status" && last.event.state === "running";
+    if (!open.length && !running) return items;
+    const emit = this.emitter(taskId);
+    for (const item of open) emit({ type: "approval_resolved", id: (item.event as { id: string }).id, behavior: "deny" });
+    if (running) emit({ type: "status", state: "idle" });
+    return this.storage.list(taskId);
   }
   decide(taskId: string, id: string, behavior: "allow" | "deny", always: boolean) {
     this.sessions.get(taskId)?.decide(id, behavior, always);

@@ -35,6 +35,8 @@ export interface Task {
   baseCommit: string | null;
   /** Sessão da CLI para retomar a conversa; null quando não foi possível descobrir. */
   sessionId?: string | null;
+  /** Id da conversa do chat (Claude ou Codex), para retomar ao reabrir o app. */
+  chatSessionId?: string | null;
   /** Pasta de trabalho própria da tarefa (git worktree). Null em tarefas antigas, que usam o checkout do projeto. */
   worktreePath?: string | null;
   /** O setup da pasta já terminou com sucesso, então não roda de novo numa retomada. */
@@ -221,6 +223,7 @@ export type Request =
   | { action: "chatSend"; taskId: string; text: string }
   | { action: "chatDecide"; taskId: string; id: string; behavior: "allow" | "deny"; always?: boolean }
   | { action: "chatStop"; taskId: string }
+  | { action: "chatHistory"; taskId: string }
   | { action: "saveFile"; taskId: string; path: string; content: string }
   | { action: "runCheck"; taskId: string; command: string }
   | { action: "summary"; taskId: string; summary: string }
@@ -261,6 +264,7 @@ export type Response =
   | TaskEvent[]
   | Check[]
   | TerminalReplay
+  | ChatHistoryItem[]
   | ProjectRefs
   | DeleteInfo
   | ProviderQuota
@@ -276,9 +280,14 @@ export type ChatEvent =
   | { type: "approval"; id: string; toolName: string; summary: string; canAlwaysAllow: boolean }
   | { type: "approval_resolved"; id: string; behavior: "allow" | "deny" }
   | { type: "status"; state: "running" | "idle" | "error"; message?: string };
+// Evento do chat com a posição dele no histórico da tarefa (usada para não repetir na tela).
+export interface ChatHistoryItem {
+  seq: number;
+  event: ChatEvent;
+}
 export type Signal =
   | { kind: "changed" }
-  | { kind: "chat"; taskId: string; event: ChatEvent }
+  | { kind: "chat"; taskId: string; seq: number; event: ChatEvent }
   | { kind: "terminal"; taskId: string; data: string; offset: number }
   | { kind: "shell"; id: string; data: string }
   | { kind: "shellEnded"; id: string; code: number };

@@ -42,6 +42,7 @@ vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
   },
 }));
 import { ChatManager } from "../src/main/chat";
+const CLAUDE = { provider: "claude" as const, cwd: "C:/repo", executable: "claude" };
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 let events: { taskId: string; event: ChatEvent }[];
 let manager: ChatManager;
@@ -49,12 +50,17 @@ beforeEach(() => {
   sdk.calls.length = 0;
   sdk.streams.length = 0;
   events = [];
-  manager = new ChatManager((taskId, event) => events.push({ taskId, event }));
+  manager = new ChatManager((taskId, _seq, event) => events.push({ taskId, event }), {
+    append: () => 0,
+    list: () => [],
+    sessionId: () => null,
+    saveSessionId: () => undefined,
+  });
 });
 const types = () => events.map((e) => e.event.type);
 const approvalOf = () => events.map((e) => e.event).find((e) => e.type === "approval") as Extract<ChatEvent, { type: "approval" }>;
 it("envia a mensagem para o SDK na pasta da tarefa e mostra o turno", async () => {
-  manager.send("t1", "C:/repo", "olá");
+  manager.send("t1", CLAUDE, "olá");
   expect(sdk.calls[0].options.cwd).toBe("C:/repo");
   expect(sdk.calls[0].options.permissionMode).toBe("default");
   const first = await sdk.calls[0].prompt[Symbol.asyncIterator]().next();
@@ -67,7 +73,7 @@ it("envia a mensagem para o SDK na pasta da tarefa e mostra o turno", async () =
   expect(events.map((e) => e.event)).toContainEqual({ type: "status", state: "idle", message: undefined });
 });
 it("aprovação: permitir devolve a entrada original e registra a decisão", async () => {
-  manager.send("t1", "C:/repo", "rode os testes");
+  manager.send("t1", CLAUDE, "rode os testes");
   const pending = sdk.calls[0].options.canUseTool("Bash", { command: "npm test" }, {
     signal: new AbortController().signal,
   });
@@ -79,7 +85,7 @@ it("aprovação: permitir devolve a entrada original e registra a decisão", asy
   expect(types()).toContain("approval_resolved");
 });
 it("aprovação: negar devolve mensagem de negação para o Claude", async () => {
-  manager.send("t1", "C:/repo", "apague");
+  manager.send("t1", CLAUDE, "apague");
   const pending = sdk.calls[0].options.canUseTool("Write", { file_path: "a.txt" }, {
     signal: new AbortController().signal,
   });
@@ -88,7 +94,7 @@ it("aprovação: negar devolve mensagem de negação para o Claude", async () =>
   await expect(pending).resolves.toEqual({ behavior: "deny", message: "Negado pela pessoa no chat." });
 });
 it("sempre permitir só envia as sugestões quando existem", async () => {
-  manager.send("t1", "C:/repo", "x");
+  manager.send("t1", CLAUDE, "x");
   const suggestion = { type: "addRules", rules: [{ toolName: "Bash", ruleContent: "npm test" }], behavior: "allow", destination: "localSettings" };
   const pending = sdk.calls[0].options.canUseTool(
     "Bash",
@@ -105,7 +111,7 @@ it("sempre permitir só envia as sugestões quando existem", async () => {
   });
 });
 it("interromper a tarefa nega as aprovações pendentes e fecha a conversa", async () => {
-  manager.send("t1", "C:/repo", "x");
+  manager.send("t1", CLAUDE, "x");
   const pending = sdk.calls[0].options.canUseTool("Bash", { command: "rm -rf x" }, {
     signal: new AbortController().signal,
   });
@@ -115,6 +121,44 @@ it("interromper a tarefa nega as aprovações pendentes e fecha a conversa", asy
   expect(sdk.streams[0].close).toHaveBeenCalled();
 });
 it("decisão para aprovação desconhecida não faz nada", () => {
-  manager.send("t1", "C:/repo", "x");
+  manager.send("t1", CLAUDE, "x");
   expect(() => manager.decide("t1", "00000000-0000-4000-8000-000000000000", "allow", false)).not.toThrow();
+});
+it("retoma a sessão salva e guarda o id que o SDK informa", async () => {
+  const saved: string[] = [];
+  const store = {
+    append: () => 0,
+    list: () => [],
+    sessionId: () => "sessao-antiga",
+    saveSessionId: (_t: string, id: string) => saved.push(id),
+  };
+  const resumed = new ChatManager(() => undefined, store);
+  resumed.send("t9", CLAUDE, "continua");
+  expect(sdk.calls.at(-1).options.resume).toBe("sessao-antiga");
+  sdk.streams.at(-1).push({ type: "system", subtype: "init", session_id: "sessao-nova" });
+  await tick();
+  expect(saved).toEqual(["sessao-nova"]);
+});
+it("histórico sem sessão viva fecha aprovações abertas como negadas e para o estado de execução", () => {
+  const items = [
+    { seq: 1, event: { type: "status", state: "running" } },
+    { seq: 2, event: { type: "approval", id: "a1", toolName: "Bash", summary: "rm x", canAlwaysAllow: false } },
+  ] as const;
+  const appended: ChatEvent[] = [];
+  const stored = [...items] as { seq: number; event: ChatEvent }[];
+  const store = {
+    append: (_t: string, event: ChatEvent) => {
+      appended.push(event);
+      stored.push({ seq: stored.length + 1, event });
+      return stored.length;
+    },
+    list: () => stored,
+    sessionId: () => null,
+    saveSessionId: () => undefined,
+  };
+  const reopened = new ChatManager(() => undefined, store);
+  const history = reopened.history("t8");
+  expect(appended).toContainEqual({ type: "approval_resolved", id: "a1", behavior: "deny" });
+  expect(appended).toContainEqual({ type: "status", state: "idle" });
+  expect(history.length).toBe(4);
 });

@@ -457,9 +457,12 @@ export class Service {
         this.requireShells().close(r.shellId);
         return null;
       case "chatSend": {
+        const task = this.store.task(r.taskId);
+        if (task.provider === "antigravity") throw new Error("O chat está disponível para Claude e Codex.");
         // A pasta é a mesma da aba de arquivos: a worktree da tarefa, ou o projeto antes dela.
         const { root } = await this.treeRoot(r.taskId);
-        this.requireChat().send(r.taskId, root, r.text);
+        const target = { provider: task.provider, cwd: root, executable: this.store.settings().executables[task.provider] };
+        this.requireChat().send(r.taskId, target, r.text);
         return null;
       }
       case "chatDecide":
@@ -468,6 +471,8 @@ export class Service {
       case "chatStop":
         this.requireChat().stop(r.taskId);
         return null;
+      case "chatHistory":
+        return this.requireChat().history(r.taskId);
       case "changes":
         return this.git.changes((await this.treeRoot(r.taskId)).root);
       case "readFile":

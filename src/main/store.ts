@@ -8,6 +8,8 @@ import type {
   TaskEvent,
   Settings,
   Check,
+  ChatEvent,
+  ChatHistoryItem,
 } from "../shared/contracts";
 
 const allowed: Record<Status, Status[]> = {
@@ -38,7 +40,8 @@ export class Store {
       CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT NOT NULL REFERENCES tasks(id), sequence INTEGER NOT NULL, kind TEXT NOT NULL, message TEXT NOT NULL, created_at TEXT NOT NULL, UNIQUE(task_id,sequence));
       CREATE TABLE IF NOT EXISTS checks(id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES tasks(id), body TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS settings(id INTEGER PRIMARY KEY CHECK(id=1), body TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS secrets(id TEXT PRIMARY KEY, body TEXT NOT NULL);`);
+      CREATE TABLE IF NOT EXISTS secrets(id TEXT PRIMARY KEY, body TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS chat_events(id INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT NOT NULL, body TEXT NOT NULL);`);
   }
   private atomic<T>(fn: () => T): T {
     this.db.exec("BEGIN IMMEDIATE");
@@ -174,8 +177,27 @@ export class Store {
     this.atomic(() => {
       this.db.prepare("DELETE FROM events WHERE task_id=?").run(id);
       this.db.prepare("DELETE FROM checks WHERE task_id=?").run(id);
+      this.db.prepare("DELETE FROM chat_events WHERE task_id=?").run(id);
       this.db.prepare("DELETE FROM tasks WHERE id=?").run(id);
     });
+  }
+  // Conversa do chat: cada evento é uma linha; o id da linha é a posição dele no histórico.
+  chatAppend(taskId: string, event: ChatEvent): number {
+    return Number(
+      this.db.prepare("INSERT INTO chat_events(task_id,body) VALUES(?,?)").run(taskId, JSON.stringify(event)).lastInsertRowid,
+    );
+  }
+  chatEvents(taskId: string, limit = 2000): ChatHistoryItem[] {
+    return this.db
+      .prepare("SELECT id, body FROM chat_events WHERE task_id=? ORDER BY id DESC LIMIT ?")
+      .all(taskId, limit)
+      .reverse()
+      .map((r) => ({ seq: Number(r.id), event: JSON.parse(String(r.body)) }));
+  }
+  setChatSession(taskId: string, sessionId: string) {
+    const task = this.task(taskId);
+    task.chatSessionId = sessionId;
+    this.write(task);
   }
   // Valores já criptografados pelo cofre do sistema. O banco nunca vê a senha em texto.
   setSecret(id: string, body: string) {

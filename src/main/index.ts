@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, clipboard, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, clipboard, shell, screen } from "electron";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { mkdirSync } from "node:fs";
@@ -54,7 +54,12 @@ else {
       logs = new TerminalLogs(directory, signal);
       coordinator = new Coordinator(store, git, ptyDriver, logs, changed, join(home, "worktrees"));
       shells = new Shells(ptyDriver, signal);
-      chat = new ChatManager((taskId, event) => signal({ kind: "chat", taskId, event }));
+      chat = new ChatManager((taskId, seq, event) => signal({ kind: "chat", taskId, seq, event }), {
+        append: (taskId, event) => store!.chatAppend(taskId, event),
+        list: (taskId) => store!.chatEvents(taskId),
+        sessionId: (taskId) => store!.task(taskId).chatSessionId ?? null,
+        saveSessionId: (taskId, sessionId) => store!.setChatSession(taskId, sessionId),
+      });
       // O askpass não contém segredo: lê a senha da variável que o app passa só a esse processo.
       const script = askpassFile();
       const askpass = join(home, script.name);
@@ -89,8 +94,10 @@ else {
         },
       }, shells, vaultFrom(safeStorage), chat);
       window = new BrowserWindow({
-        width: 1400,
-        height: 950,
+        // Limitada à área útil do monitor: com escala do Windows acima de 100%, 950 px lógicos
+        // passam da tela e escondem a parte de baixo, onde fica o campo de digitação.
+        width: Math.min(1400, screen.getPrimaryDisplay().workAreaSize.width),
+        height: Math.min(950, screen.getPrimaryDisplay().workAreaSize.height),
         minWidth: 980,
         minHeight: 700,
         title: "Golfinho",

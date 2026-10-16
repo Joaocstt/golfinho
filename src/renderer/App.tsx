@@ -930,7 +930,7 @@ export default function App() {
                 <div className="tab-group">
                   <div className="tabs">
                   {["Terminal", "Chat", "Shell", "Diff", "Arquivos", "Histórico", "Checks"]
-                    .filter((t) => t !== "Chat" || task.provider === "claude")
+                    .filter((t) => t !== "Chat" || task.provider !== "antigravity")
                     .filter((t) => t !== "Shell" || task.branchCreated)
                     .map((t) => (
                     <button
@@ -1168,7 +1168,7 @@ export default function App() {
               <div className="tab-body" ref={bodyRef} style={bodyStyle()}>
                 {shown("Chat") && (
                   <div className="tab-slot bare" style={place("Chat")}>
-                    <ChatPane taskId={task.id} onError={report} />
+                    <ChatPane taskId={task.id} provider={task.provider} onError={report} />
                   </div>
                 )}
                 {shown("Terminal") && (

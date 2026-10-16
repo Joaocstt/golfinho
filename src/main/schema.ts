@@ -128,6 +128,7 @@ export const requestSchema = z.discriminatedUnion("action", [
     })
     .strict(),
   z.object({ action: z.literal("chatStop"), taskId: id }).strict(),
+  z.object({ action: z.literal("chatHistory"), taskId: id }).strict(),
   z.object({ action: z.literal("endSession"), taskId: id }).strict(),
   z.object({ action: z.literal("testActivate"), taskId: id }).strict(),
   z.object({ action: z.literal("testRestore"), taskId: id }).strict(),
