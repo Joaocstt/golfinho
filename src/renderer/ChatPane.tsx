@@ -89,16 +89,43 @@ function merge(current: ChatHistoryItem[], incoming: ChatHistoryItem[]): ChatHis
   for (const item of incoming) bySeq.set(item.seq, item);
   return [...bySeq.values()].sort((a, b) => a.seq - b.seq);
 }
+// Bloco de código das respostas: nome da linguagem e botão de copiar.
+function CodeBlock({ children, ...props }: React.HTMLAttributes<HTMLPreElement> & { children?: React.ReactNode }) {
+  const [copied, setCopied] = useState(false);
+  const child = React.Children.only(children) as React.ReactElement<{ className?: string; children?: React.ReactNode }>;
+  const language = /language-([\w+-]+)/.exec(child.props?.className ?? "")?.[1] ?? "texto";
+  const text = String(child.props?.children ?? "").replace(/\n$/, "");
+  function copy() {
+    void window.golfinho.request({ action: "writeClipboard", text }).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    });
+  }
+  return (
+    <div className="chat-code">
+      <div className="chat-code-head">
+        <span>{language}</span>
+        <button type="button" onClick={copy}>
+          {copied ? "Copiado" : "Copiar"}
+        </button>
+      </div>
+      <pre {...props}>{children}</pre>
+    </div>
+  );
+}
 const Blocks = memo(function Blocks({ blocks }: { blocks: ChatBlock[] }) {
   return (
     <>
       {blocks.map((block, index) =>
         block.kind === "text" ? (
           <div key={index} className="chat-text">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{block.text}</ReactMarkdown>
+            <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ pre: CodeBlock }}>
+              {block.text}
+            </ReactMarkdown>
           </div>
         ) : (
           <div key={index} className="chat-tool">
+            <span className="chat-tool-icon" aria-hidden="true">⚙</span>
             <span className="chat-tool-name">{block.name}</span>
             <code>{block.summary}</code>
           </div>
@@ -160,6 +187,12 @@ export function ChatPane({ taskId, provider, model, onError }: ChatPaneProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [items, handoff]);
   const bottom = useRef<HTMLDivElement>(null);
+  const logRef = useRef<HTMLDivElement>(null);
+  const [away, setAway] = useState(false);
+  function onLogScroll(e: React.UIEvent<HTMLDivElement>) {
+    const el = e.currentTarget;
+    setAway(el.scrollHeight - el.scrollTop - el.clientHeight > 120);
+  }
   useEffect(() => {
     let active = true;
     setItems([]);
@@ -252,7 +285,7 @@ export function ChatPane({ taskId, provider, model, onError }: ChatPaneProps) {
   const shownItems = items.length > shown ? items.slice(items.length - shown) : items;
   const messages = useMemo(
     () =>
-      shownItems.map(({ seq, event }) => {
+      shownItems.map(({ seq, event }, i) => {
           if (event.type === "user")
             return (
               <div key={seq} className="chat-user">
@@ -268,7 +301,11 @@ export function ChatPane({ taskId, provider, model, onError }: ChatPaneProps) {
             );
           if (event.type === "assistant")
             return (
-              <div key={seq} className="chat-assistant">
+              <div
+                key={seq}
+                className="chat-assistant"
+                data-agent={shownItems[i - 1]?.event.type === "user" ? (LABELS[provider] ?? provider) : undefined}
+              >
                 <Blocks blocks={event.blocks} />
               </div>
             );
@@ -280,6 +317,9 @@ export function ChatPane({ taskId, provider, model, onError }: ChatPaneProps) {
               <details key={seq} className={event.isError ? "chat-result-block error" : "chat-result-block"}>
                 <summary>
                   <span className="chat-result-mark">{event.isError ? "✗" : "✓"}</span> {summary}
+                  {event.text.includes("\n") && (
+                    <em className="chat-result-lines">{event.text.split("\n").length} linhas</em>
+                  )}
                 </summary>
                 <pre className="chat-result">{text || "(sem saída)"}</pre>
               </details>
@@ -325,7 +365,7 @@ export function ChatPane({ taskId, provider, model, onError }: ChatPaneProps) {
   );
   return (
     <div className={`chat-pane chat-${provider}`}>
-      <div className="chat-log">
+      <div className="chat-log" ref={logRef} onScroll={onLogScroll}>
         {items.length === 0 && (
           <p className="chat-empty">Escreva uma mensagem para começar a conversa nesta tarefa.</p>
         )}
@@ -337,6 +377,16 @@ export function ChatPane({ taskId, provider, model, onError }: ChatPaneProps) {
         {messages}
         <div ref={bottom} />
       </div>
+      {away && (
+        <button
+          type="button"
+          className="chat-to-end"
+          aria-label="Ir para o fim da conversa"
+          onClick={() => bottom.current?.scrollIntoView({ block: "end" })}
+        >
+          ↓
+        </button>
+      )}
       <form
         className="chat-input"
         onSubmit={(e) => {
@@ -356,7 +406,16 @@ export function ChatPane({ taskId, provider, model, onError }: ChatPaneProps) {
             ))}
           </div>
         )}
-        {busy && <p className="chat-busy">Pensando…</p>}
+        {busy && (
+          <p className="chat-busy">
+            <span className="chat-dots" aria-hidden="true">
+              <i />
+              <i />
+              <i />
+            </span>
+            {LABELS[provider] ?? "O agente"} está pensando
+          </p>
+        )}
         <div className="chat-tools">
           {context && (
           <div className="chat-context" title={`${context.used.toLocaleString("pt-BR")}${context.limit ? ` / ${context.limit.toLocaleString("pt-BR")}` : ""} tokens (última chamada)`}>
