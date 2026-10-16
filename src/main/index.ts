@@ -1,6 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, clipboard, shell, screen } from "electron";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { mergePath, readLoginPath } from "./loginPath";
 import { mkdirSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
@@ -32,6 +33,8 @@ let closing = false;
 let shutdownDone = false;
 const requests = new Set<Promise<unknown>>();
 if (process.env.GOLFINHO_DATA_DIR) app.setPath("userData", process.env.GOLFINHO_DATA_DIR);
+// Antes de qualquer busca de CLI: o app precisa enxergar o PATH do usuário.
+if (process.platform !== "win32") process.env.PATH = mergePath(process.env.PATH, readLoginPath());
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
   app.on("second-instance", () => {
