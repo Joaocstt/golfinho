@@ -1,6 +1,11 @@
 import { app } from "electron";
-import { autoUpdater } from "electron-updater";
+import { createRequire } from "node:module";
+import type { ProgressInfo, UpdateInfo } from "electron-updater";
 import type { UpdateStatus } from "../shared/contracts";
+
+// electron-updater é CommonJS: o import nomeado quebra no app empacotado (ESM),
+// então carregamos com require e mantemos os tipos do pacote.
+const { autoUpdater } = createRequire(import.meta.url)("electron-updater") as typeof import("electron-updater");
 
 // Primeira checagem logo depois de abrir, depois a cada 4 horas.
 const FIRST_CHECK_MS = 15_000;
@@ -31,19 +36,19 @@ export function startUpdater(notify: (status: UpdateStatus) => void): Updater {
   // Baixa em segundo plano; a instalação só acontece quando o usuário clica no aviso.
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = false;
-  autoUpdater.on("update-available", (info) => {
+  autoUpdater.on("update-available", (info: UpdateInfo) => {
     version = info.version;
     set({ state: "downloading", version, percent: 0 });
   });
-  autoUpdater.on("download-progress", (progress) => {
+  autoUpdater.on("download-progress", (progress: ProgressInfo) => {
     set({ state: "downloading", version, percent: Math.round(progress.percent) });
   });
-  autoUpdater.on("update-downloaded", (info) => {
+  autoUpdater.on("update-downloaded", (info: UpdateInfo) => {
     set({ state: "ready", version: info.version });
   });
   autoUpdater.on("update-not-available", () => set({ state: "idle" }));
   // Sem rede ou release sem arquivos não deve incomodar o usuário: registra e segue.
-  autoUpdater.on("error", (error) => {
+  autoUpdater.on("error", (error: Error) => {
     console.error("Falha ao verificar atualização:", error);
     if (current.state === "downloading") set({ state: "idle" });
   });
