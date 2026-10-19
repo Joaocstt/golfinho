@@ -119,7 +119,7 @@ export const requestSchema = z.discriminatedUnion("action", [
     })
     .strict(),
   z.object({ action: z.literal("uncommitted"), taskId: id }).strict(),
-  z.object({ action: z.literal("shellInput"), shellId: id, data: z.string().max(65536) }).strict(),
+  z.object({ action: z.literal("shellInput"), shellId: id, data: z.string() }).strict(),
   z
     .object({
       action: z.literal("shellResize"),

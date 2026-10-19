@@ -25,6 +25,16 @@ it("aceita mensagens longas no chat", () => {
   ).toBe(true);
 });
 
+it("aceita entradas longas no terminal", () => {
+  expect(
+    requestSchema.safeParse({
+      action: "shellInput",
+      shellId: "0199cf80-3b73-7252-9458-adfe7a905da5",
+      data: "a".repeat(64 * 1024 + 1),
+    }).success,
+  ).toBe(true);
+});
+
 it("aceita criar tarefa sem título nem instruções", () => {
   const base = {
     action: "createTask",
