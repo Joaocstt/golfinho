@@ -1,5 +1,5 @@
 import { TerminalMenu } from "./TerminalMenu";
-import { clipboardToPaste } from "./clipboardPaste";
+import { clipboardToPaste, filesToPaste } from "./clipboardPaste";
 import React, { useEffect, useRef, useState } from "react";
 import { Terminal, type IBufferRange } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
@@ -383,10 +383,31 @@ export function TerminalPane({ taskId, active = false, autoFocus = true, focusRe
   // Com a CLI pronta o cursor já indica que o terminal aceita entrada; só os estados
   // em que digitar não faz nada merecem ocupar espaço permanente na tela.
   const flag = active ? "" : status === "running" ? "Preparando CLI" : "Somente leitura";
+  function dragOver(e: React.DragEvent<HTMLDivElement>) {
+    if ([...e.dataTransfer.types].includes("Files")) e.preventDefault();
+  }
+  function dropFiles(e: React.DragEvent<HTMLDivElement>) {
+    if (![...e.dataTransfer.types].includes("Files")) return;
+    e.preventDefault();
+    const current = terminalRef.current;
+    if (!current) return;
+    if (!ready.current) {
+      error.current(new Error("A CLI não está rodando. Inicie a tarefa para soltar arquivos aqui."));
+      return;
+    }
+    try {
+      current.paste(filesToPaste(e.dataTransfer.files));
+      current.focus();
+    } catch (err) {
+      error.current(err);
+    }
+  }
   return (
     <div
       className="terminal-pane"
       data-chrome={searchOpen || menuOpen ? "open" : undefined}
+      onDragOver={dragOver}
+      onDrop={dropFiles}
       onKeyDown={(e) => {
         if (e.key === "Escape" && menuOpen) {
           setMenuOpen(false);

@@ -6,7 +6,7 @@ import type { Provider, Request, Signal } from "../shared/contracts";
 type ShellSignal = Extract<Signal, { kind: "shell" | "shellEnded" }>;
 import { terminalTheme } from "./TerminalPane";
 import { TerminalMenu } from "./TerminalMenu";
-import { clipboardToPaste } from "./clipboardPaste";
+import { clipboardToPaste, filesToPaste } from "./clipboardPaste";
 const request = <T,>(r: Request) => window.golfinho.request(r) as Promise<T>;
 // Aberturas em andamento por sessão, para o efeito duplicado do StrictMode reaproveitar a mesma.
 const starts = new Map<string, Promise<string>>();
@@ -157,8 +157,21 @@ export function ShellPane({
       terminal.dispose();
     };
   }, [scopeKey, restart]);
+  function dragOver(e: React.DragEvent<HTMLDivElement>) {
+    if ([...e.dataTransfer.types].includes("Files")) e.preventDefault();
+  }
+  function dropFiles(e: React.DragEvent<HTMLDivElement>) {
+    if (![...e.dataTransfer.types].includes("Files")) return;
+    e.preventDefault();
+    try {
+      terminalRef.current?.paste(filesToPaste(e.dataTransfer.files));
+      terminalRef.current?.focus();
+    } catch (err) {
+      errorRef.current(err);
+    }
+  }
   return (
-    <div className="shell-pane">
+    <div className="shell-pane" onDragOver={dragOver} onDrop={dropFiles}>
       {ended !== null && (
         <div className="shell-ended">
           O shell encerrou (código {ended}).
