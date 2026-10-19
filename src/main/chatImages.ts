@@ -9,7 +9,7 @@ const TYPES: Record<string, string> = {
   ".webp": "image/webp",
 };
 export const IMAGE_EXTENSIONS = Object.keys(TYPES).map((ext) => ext.slice(1));
-export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+export const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
 export interface ChatImage {
   path: string;
   mediaType: string;
@@ -29,7 +29,7 @@ export class ChatImages {
     if (!type) throw new Error("Formato não suportado. Use PNG, JPG, GIF ou WebP.");
     const info = await stat(source);
     if (!info.isFile()) throw new Error("O item escolhido não é um arquivo.");
-    if (info.size > MAX_IMAGE_BYTES) throw new Error("Imagem excede 5 MiB.");
+    if (info.size > MAX_IMAGE_BYTES) throw new Error("Imagem excede 20 MiB.");
     await mkdir(this.dir, { recursive: true });
     const target = join(this.dir, `${randomUUID()}${extname(source).toLowerCase()}`);
     await copyFile(source, target);
@@ -53,7 +53,7 @@ export class ChatImages {
     if (!inside.some(Boolean)) throw new Error("A imagem precisa ser anexada pelo chat.");
     const info = await stat(real);
     if (!info.isFile()) throw new Error("A imagem não é um arquivo.");
-    if (info.size > MAX_IMAGE_BYTES) throw new Error("Imagem excede 5 MiB.");
+    if (info.size > MAX_IMAGE_BYTES) throw new Error("Imagem excede 20 MiB.");
     return { path: real, mediaType, base64: (await readFile(real)).toString("base64") };
   }
   async dataUrl(path: string): Promise<string> {

@@ -1,4 +1,4 @@
-import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Paperclip, X } from "lucide-react";
@@ -7,6 +7,8 @@ export interface ChatPaneProps {
   taskId: string;
   provider: string;
   model?: string | null;
+  draft: string;
+  onDraftChange: (draft: string) => void;
   onError: (e: unknown) => void;
   approvalTarget?: { id: string; version: number };
 }
@@ -43,6 +45,9 @@ const SUMMARY_REQUEST =
 const RESULT_LIMIT = 600;
 const MESSAGES_PAGE = 200;
 const MAX_ATTACHMENTS = 8;
+const COMPOSER_MIN_HEIGHT = 48;
+const COMPOSER_MAX_HEIGHT = 176;
+const isImageFile = (file: File) => file.type.startsWith("image/") || /\.(png|jpe?g|gif|webp)$/i.test(file.name);
 const request = <T,>(r: Request) => window.golfinho.request(r) as Promise<T>;
 // Preview das imagens: o main confere o caminho e devolve um data URL; aqui só fica o cache.
 const previews = new Map<string, string>();
@@ -135,9 +140,8 @@ const Blocks = memo(function Blocks({ blocks }: { blocks: ChatBlock[] }) {
     </>
   );
 });
-export function ChatPane({ taskId, provider, model, onError, approvalTarget }: ChatPaneProps) {
+export function ChatPane({ taskId, provider, model, draft, onDraftChange, onError, approvalTarget }: ChatPaneProps) {
   const [items, setItems] = useState<ChatHistoryItem[]>([]);
-  const [draft, setDraft] = useState("");
   const [attachments, setAttachments] = useState<string[]>([]);
   const [viewer, setViewer] = useState<string | null>(null);
   // Último uso de contexto informado pela CLI (o chat guarda esses eventos no histórico).
@@ -189,7 +193,16 @@ export function ChatPane({ taskId, provider, model, onError, approvalTarget }: C
   }, [items, handoff]);
   const bottom = useRef<HTMLDivElement>(null);
   const logRef = useRef<HTMLDivElement>(null);
+  const composerRef = useRef<HTMLTextAreaElement>(null);
   const [away, setAway] = useState(false);
+  useLayoutEffect(() => {
+    const composer = composerRef.current;
+    if (!composer) return;
+    composer.style.height = "auto";
+    const height = Math.min(Math.max(composer.scrollHeight, COMPOSER_MIN_HEIGHT), COMPOSER_MAX_HEIGHT);
+    composer.style.height = `${height}px`;
+    composer.style.overflowY = composer.scrollHeight > COMPOSER_MAX_HEIGHT ? "auto" : "hidden";
+  }, [draft]);
   function onLogScroll(e: React.UIEvent<HTMLDivElement>) {
     const el = e.currentTarget;
     setAway(el.scrollHeight - el.scrollTop - el.clientHeight > 120);
@@ -246,9 +259,10 @@ export function ChatPane({ taskId, provider, model, onError, approvalTarget }: C
   function attach() {
     request<string[]>({ action: "chatPickImages" }).then(addAttachments).catch(onError);
   }
-  // Colar uma imagem (Ctrl+V) reaproveita a mesma rotina do terminal: o main salva o arquivo.
+  // O macOS pode representar uma imagem colada como arquivo (Files) em vez de image/*.
   function paste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
-    const hasImage = [...e.clipboardData.items].some((item) => item.type.startsWith("image/"));
+    const hasImage = [...e.clipboardData.items].some((item) => item.type.startsWith("image/")) ||
+      [...e.clipboardData.files].some(isImageFile);
     if (!hasImage) return;
     e.preventDefault();
     request<string | null>({ action: "pasteImage" })
@@ -257,11 +271,25 @@ export function ChatPane({ taskId, provider, model, onError, approvalTarget }: C
       })
       .catch(onError);
   }
+  function dragOver(e: React.DragEvent<HTMLDivElement>) {
+    if ([...e.dataTransfer.types].includes("Files")) e.preventDefault();
+  }
+  function dropFiles(e: React.DragEvent<HTMLDivElement>) {
+    if (![...e.dataTransfer.types].includes("Files")) return;
+    e.preventDefault();
+    const files = [...e.dataTransfer.files].filter(isImageFile);
+    if (!files.length) return;
+    try {
+      const paths = files.slice(0, MAX_ATTACHMENTS).map((file) => window.golfinho.getPathForFile(file)).filter(Boolean);
+      if (!paths.length) throw new Error("Não foi possível ler os arquivos arrastados.");
+      request<string[]>({ action: "chatImportImages", paths }).then(addAttachments).catch(onError);
+    } catch (error) { onError(error); }
+  }
   async function send() {
     const text = draft.trim();
     if (!text && !attachments.length) return;
     const images = attachments;
-    setDraft("");
+    onDraftChange("");
     setAttachments([]);
     try {
       await request({ action: "chatSend", taskId, text, ...(images.length ? { images } : {}) });
@@ -380,7 +408,7 @@ export function ChatPane({ taskId, provider, model, onError, approvalTarget }: C
     [shownItems, resolved, provider, decide],
   );
   return (
-    <div className={`chat-pane chat-${provider}`}>
+    <div className={`chat-pane chat-${provider}`} onDragOver={dragOver} onDrop={dropFiles}>
       <div className="chat-log" ref={logRef} onScroll={onLogScroll}>
         {items.length === 0 && (
           <p className="chat-empty">Escreva uma mensagem para começar a conversa nesta tarefa.</p>
@@ -487,16 +515,17 @@ export function ChatPane({ taskId, provider, model, onError, approvalTarget }: C
             type="button"
             className="chat-attach"
             aria-label="Anexar imagens"
-            title="Anexar imagens (ou cole com Ctrl+V)"
+            title="Anexar imagens (ou cole com ⌘V / Ctrl+V)"
             onClick={attach}
           >
             <Paperclip size={16} />
           </button>
           <textarea
+            ref={composerRef}
             value={draft}
             placeholder={`Mensagem para ${LABELS[provider] ?? "o agente"} (Enter envia, Shift+Enter quebra linha)`}
             rows={2}
-            onChange={(e) => setDraft(e.target.value)}
+            onChange={(e) => onDraftChange(e.target.value)}
             onPaste={paste}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {

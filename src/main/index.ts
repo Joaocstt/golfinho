@@ -91,6 +91,7 @@ else {
           if (result.canceled) return [];
           return Promise.all(result.filePaths.slice(0, 8).map((file) => images.import(file)));
         },
+        import: (path: string) => images.import(path),
         verify: (path: string) => images.verify(path),
         dataUrl: (path: string) => images.dataUrl(path),
       };
@@ -104,14 +105,11 @@ else {
         read: () => clipboard.readText(),
         write: (text) => clipboard.writeText(text),
         // Imagem da área de transferência: salva em arquivo, para o caminho ser colado no terminal.
+        // readImage usa a API nativa do macOS, que reconhece TIFF/representações internas
+        // do Finder mesmo quando a área da página não anuncia um item image/*.
         image: async () => {
-          for (const item of await clipboard.read()) {
-            const type = item.types.find((t) => t.startsWith("image/"));
-            if (!type) continue;
-            const blob = await item.getType(type);
-            if ("arrayBuffer" in blob) return Buffer.from(await blob.arrayBuffer());
-          }
-          return null;
+          const image = clipboard.readImage();
+          return image.isEmpty() ? null : image.toPNG();
         },
         saveImage: async (png) => {
           const dir = join(app.getPath("userData"), "clipboard");
@@ -131,7 +129,9 @@ else {
         title: "Golfinho",
         icon,
         backgroundColor: "#0b1220",
-        show: false,
+        // No desenvolvimento, mostre a janela durante o carregamento para que falhas no
+        // primeiro paint não deixem o app aberto em segundo plano sem nenhuma janela visível.
+        show: Boolean(process.env.ELECTRON_RENDERER_URL),
         webPreferences: {
           preload: join(here, "../preload/index.cjs"),
           contextIsolation: true,

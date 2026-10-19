@@ -272,6 +272,26 @@ it("notifica aprovação no Chat de tarefa fechada e só navega ao abrir o pedid
   act(() => signal?.({ kind: "chat", taskId: "other", seq: 2, event: { type: "approval_resolved", id: "approval-1", behavior: "deny" } }));
   expect(screen.queryByText("main precisa de permissão")).toBeNull();
 });
+it("mantém o rascunho do chat ao trocar de aba", async () => {
+  setup([editableTask]);
+  fireEvent.click(await screen.findByRole("button", { name: "Editar arquivo" }));
+  const workspace = screen.getByRole("region", { name: "Tarefa golfinho/edit" });
+  fireEvent.click(within(workspace).getByRole("button", { name: "Chat" }));
+  const composer = await within(workspace).findByPlaceholderText(/Mensagem para Codex/);
+  fireEvent.change(composer, { target: { value: "rascunho que não pode sumir" } });
+  fireEvent.click(within(workspace).getByRole("button", { name: "Terminal" }));
+  fireEvent.click(within(workspace).getByRole("button", { name: "Chat" }));
+  expect((await within(workspace).findByPlaceholderText(/Mensagem para Codex/) as HTMLTextAreaElement).value)
+    .toBe("rascunho que não pode sumir");
+});
+it("abre o campo do chat com altura para duas linhas", async () => {
+  setup([editableTask]);
+  fireEvent.click(await screen.findByRole("button", { name: "Editar arquivo" }));
+  const workspace = screen.getByRole("region", { name: "Tarefa golfinho/edit" });
+  fireEvent.click(within(workspace).getByRole("button", { name: "Chat" }));
+  const composer = await within(workspace).findByPlaceholderText(/Mensagem para Codex/) as HTMLTextAreaElement;
+  expect(composer.style.height).toBe("48px");
+});
 it("notifica pergunta do Terminal em segundo plano e mantém a divisão ao abrir", async () => {
   setup([{ ...editableTask, status: "running" }, { ...editableTask, id: "other", title: "Outra tarefa", branch: "main", status: "running" }]);
   fireEvent.click(await screen.findByRole("button", { name: "Editar arquivo" }));

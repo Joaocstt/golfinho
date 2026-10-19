@@ -41,6 +41,7 @@ export class Service {
     private chat?: ChatManager,
     private chatImages?: {
       pick(): Promise<string[]>;
+      import(path: string): Promise<string>;
       verify(path: string): Promise<ChatImage>;
       dataUrl(path: string): Promise<string>;
     },
@@ -528,6 +529,8 @@ export class Service {
         return this.requireChat().history(r.taskId);
       case "chatPickImages":
         return this.requireChatImages().pick();
+      case "chatImportImages":
+        return Promise.all(r.paths.map((path) => this.requireChatImages().import(path)));
       case "chatImage":
         return this.requireChatImages().dataUrl(r.path);
       case "commitFiles":

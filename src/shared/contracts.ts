@@ -229,6 +229,7 @@ export type Request =
   | { action: "shellClose"; shellId: string }
   | { action: "chatSend"; taskId: string; text: string; images?: string[] }
   | { action: "chatPickImages" }
+  | { action: "chatImportImages"; paths: string[] }
   | { action: "chatImage"; path: string }
   | { action: "chatDecide"; taskId: string; id: string; behavior: "allow" | "deny"; always?: boolean }
   | { action: "chatStop"; taskId: string }
@@ -317,6 +318,7 @@ export type UpdateStatus =
   | { state: "ready"; version: string };
 export interface GolfinhoAPI {
   request(request: Request): Promise<Response>;
+  getPathForFile(file: File): string;
   subscribe(listener: (signal: Signal) => void): () => void;
   update: {
     status(): Promise<UpdateStatus>;

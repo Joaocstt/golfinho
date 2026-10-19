@@ -15,6 +15,16 @@ it("allows bounded clipboard text and rejects unexpected payloads",()=>{
  expect(requestSchema.safeParse({action:"readClipboard",command:"x"}).success).toBe(false);
 });
 
+it("aceita mensagens longas no chat", () => {
+  expect(
+    requestSchema.safeParse({
+      action: "chatSend",
+      taskId: "0199cf80-3b73-7252-9458-adfe7a905da5",
+      text: "a".repeat(64 * 1024 + 1),
+    }).success,
+  ).toBe(true);
+});
+
 it("aceita criar tarefa sem título nem instruções", () => {
   const base = {
     action: "createTask",

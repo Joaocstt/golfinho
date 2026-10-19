@@ -1,6 +1,9 @@
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, webUtils } from "electron";
 import type { GolfinhoAPI, Signal, UpdateStatus } from "../shared/contracts";
 const api: GolfinhoAPI = {
+  getPathForFile(file) {
+    return webUtils.getPathForFile(file);
+  },
   async request(request) {
     const result = await ipcRenderer.invoke("golfinho:request", request);
     if (!result.ok) throw new Error(result.error);

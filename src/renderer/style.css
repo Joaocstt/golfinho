@@ -2883,13 +2883,29 @@ select {
 }
 .chat-input textarea {
   flex: 1;
+  max-height: 176px;
   resize: none;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: #77736a #242321;
   background: #1f1e1c;
   color: #d4d1c5;
   border: 1px solid #3a3834;
   border-radius: 10px;
   padding: 8px 10px;
   font: inherit;
+}
+.chat-input textarea::-webkit-scrollbar {
+  width: 9px;
+}
+.chat-input textarea::-webkit-scrollbar-track {
+  background: #242321;
+  border-radius: 8px;
+}
+.chat-input textarea::-webkit-scrollbar-thumb {
+  background: #77736a;
+  border: 2px solid #242321;
+  border-radius: 8px;
 }
 .chat-input button:disabled {
   opacity: 0.5;

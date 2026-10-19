@@ -34,3 +34,33 @@ it("sem imagem na área de transferência, pasteImage não devolve caminho", asy
   expect(await service.request({ action: "pasteImage" } as never)).toBeNull();
   store.close();
 });
+it("importa imagens anexadas pelo chat", async () => {
+  const store = new Store(":memory:");
+  const imported: string[] = [];
+  const service = new Service(
+    store,
+    {} as GitService,
+    {} as Coordinator,
+    { append() {}, replay() { return { data: "", nextOffset: 0 }; }, remove() {} },
+    () => {},
+    async () => null,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    {
+      pick: async () => [],
+      import: async (path) => {
+        imported.push(path);
+        return `/dados/chat/${path}`;
+      },
+      verify: async () => ({ path: "", mediaType: "image/png", base64: "" }),
+      dataUrl: async () => "",
+    },
+  );
+  await expect(
+    service.request({ action: "chatImportImages", paths: ["foto.png", "quadro.webp"] }),
+  ).resolves.toEqual(["/dados/chat/foto.png", "/dados/chat/quadro.webp"]);
+  expect(imported).toEqual(["foto.png", "quadro.webp"]);
+  store.close();
+});

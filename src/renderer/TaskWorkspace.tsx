@@ -45,6 +45,12 @@ const labels: Record<string, string> = {
 };
 const date = (s: string) => new Date(s).toLocaleString("pt-BR");
 const request = <T,>(r: Request) => window.golfinho.request(r) as Promise<T>;
+function savedTab(taskId: string) {
+  try {
+    const value = localStorage.getItem(`golfinho.task.${taskId}.tab`);
+    return value && ["Terminal", "Chat", "Shell", "Diff", "Commit", "Arquivos", "Histórico", "Checks"].includes(value) ? value : "Terminal";
+  } catch { return "Terminal"; }
+}
 export interface TaskWorkspaceHandle {
   canLeave(): boolean;
   openPermission(source: "Terminal" | "Chat", approvalId?: string): boolean;
@@ -80,13 +86,17 @@ export const TaskWorkspace = forwardRef<TaskWorkspaceHandle, Props>(function Tas
   const resizeCleanup = useRef<() => void>(() => {});
   useEffect(() => () => resizeCleanup.current(), []);
   const detailEpoch = useRef(0);
-  const [tab, setTab] = useState("Terminal"),
+  const [tab, setTab] = useState(() => savedTab(task.id)),
     [review, setReview] = useState<Review | null>(null),
     [events, setEvents] = useState<TaskEvent[]>([]),
     [checks, setChecks] = useState<Check[]>([]),
+    [chatDraft, setChatDraft] = useState(""),
     [file, setFile] = useState(""),
     [command, setCommand] = useState(""),
     [dirty, setDirty] = useState(false);
+  useEffect(() => {
+    try { localStorage.setItem(`golfinho.task.${task.id}.tab`, tab); } catch { /* preferência opcional */ }
+  }, [task.id, tab]);
   // Divisão de painéis: a aba principal e a secundária dividem a área de trabalho.
   const [secondTab, setSecondTab] = useState<string | null>(null),
     [splitDir, setSplitDir] = useState<"right" | "bottom">(() => storedSplit().dir),
@@ -282,7 +292,7 @@ export const TaskWorkspace = forwardRef<TaskWorkspaceHandle, Props>(function Tas
         return;
       setDirty(false);
       setFile("");
-      setTab("Terminal");
+      if (action === "finish" || task.status === "draft") setTab("Terminal");
       setReview(null);
     }
     return perform(() => request({ action, taskId: task.id }));
@@ -504,7 +514,7 @@ export const TaskWorkspace = forwardRef<TaskWorkspaceHandle, Props>(function Tas
               <div className="tab-body" ref={bodyRef} style={bodyStyle()}>
                 {shown("Chat") && (
                   <div className="tab-slot bare" style={place("Chat")}>
-                    <ChatPane taskId={task.id} provider={task.provider} model={task.model ?? null} onError={report}
+                    <ChatPane taskId={task.id} provider={task.provider} model={task.model ?? null} draft={chatDraft} onDraftChange={setChatDraft} onError={report}
                       approvalTarget={approvalTarget} />
                   </div>
                 )}

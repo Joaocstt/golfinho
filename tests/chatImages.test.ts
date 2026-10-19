@@ -30,13 +30,16 @@ it("recusa caminho fora das pastas do app", async () => {
   writeFileSync(outside, PNG);
   await expect(images.verify(outside)).rejects.toThrow("anexada pelo chat");
 });
-it("recusa formato que não é imagem e arquivo grande demais", async () => {
+it("aceita imagens de até 20 MiB e recusa formatos ou tamanhos inválidos", async () => {
   const text = join(root, "clipboard", "notas.txt");
   writeFileSync(text, "x");
   await expect(images.verify(text)).rejects.toThrow("Formato não suportado");
+  const tenMiB = join(root, "dez-mib.png");
+  writeFileSync(tenMiB, Buffer.alloc(10 * 1024 * 1024));
+  await expect(images.import(tenMiB)).resolves.toMatch(/chat-images/);
   const big = join(root, "grande.png");
   writeFileSync(big, Buffer.alloc(MAX_IMAGE_BYTES + 1));
-  await expect(images.import(big)).rejects.toThrow("5 MiB");
+  await expect(images.import(big)).rejects.toThrow("20 MiB");
 });
 it("recusa caminho relativo", async () => {
   await expect(images.verify("clipboard/x.png")).rejects.toThrow("inválido");
