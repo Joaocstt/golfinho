@@ -300,6 +300,10 @@ export class ChatManager {
     if (!session?.compact) throw new Error("Este agente não tem compactação; use Nova conversa com resumo.");
     await session.compact();
   }
+  // Registra um evento que não veio de uma CLI (ex.: troca de agente), salvando e mostrando na conversa.
+  record(taskId: string, event: ChatEvent) {
+    this.emitter(taskId)(event);
+  }
   stopAll() {
     for (const taskId of [...this.sessions.keys()]) this.stop(taskId);
   }

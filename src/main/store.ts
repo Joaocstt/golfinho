@@ -4,6 +4,7 @@ import type {
   Task,
   Status,
   Project,
+  Provider,
   CreateTask,
   TaskEvent,
   Settings,
@@ -203,6 +204,19 @@ export class Store {
     const task = this.task(taskId);
     task.model = model;
     this.write(task);
+  }
+  // Ids de sessão e o modelo pertencem a cada CLI: ao trocar de agente, nada disso é reaproveitado.
+  setProvider(taskId: string, provider: Provider, message: string): Task {
+    return this.atomic(() => {
+      const t = this.task(taskId);
+      t.provider = provider;
+      t.sessionId = null;
+      t.chatSessionId = null;
+      t.model = null;
+      this.write(t);
+      this.event(taskId, "updated", message);
+      return t;
+    });
   }
   setChatSession(taskId: string, sessionId: string) {
     const task = this.task(taskId);

@@ -58,6 +58,7 @@ function setup(tasks: Task[] = [], rejectCreate = false, chatHistory: Record<str
   const listeners = new Set<(s: Signal) => void>();
   signal = (s) => listeners.forEach((listener) => listener(s));
   window.golfinho = {
+    getPathForFile: () => '',
     request,
     update:{status:async()=>({state:'unsupported'}),install:async()=>{},subscribe:()=>()=>{}},
     subscribe: (listener) => {
@@ -440,7 +441,7 @@ it("permite tentar novamente quando o workspace não carrega", async () => {
     .fn()
     .mockRejectedValueOnce(new Error("Backend indisponível"))
     .mockResolvedValue(snapshot);
-  window.golfinho = { request, update:{status:async()=>({state:'unsupported'}),install:async()=>{},subscribe:()=>()=>{}}, subscribe: () => () => {} };
+  window.golfinho = { request, getPathForFile: () => '', update:{status:async()=>({state:'unsupported'}),install:async()=>{},subscribe:()=>()=>{}}, subscribe: () => () => {} };
   render(<App />);
   fireEvent.click(await screen.findByRole("button", { name: "Tentar novamente" }));
   expect(await screen.findByText("Projeto real")).toBeTruthy();
@@ -484,6 +485,7 @@ it("mantém dirty quando usuário edita durante salvamento IPC", async () => {
     await vi.importActual<typeof import("../src/renderer/Editors")>("../src/renderer/Editors");
   let resolveSave: () => void = () => {};
   window.golfinho = {
+    getPathForFile: () => '',
     update:{status:async()=>({state:'unsupported'}),install:async()=>{},subscribe:()=>()=>{}},
     request: vi.fn(async (r) => {
       if (r.action === "readTree") return "inicial";
@@ -642,4 +644,41 @@ it("abre terminal geral pelo + da barra superior, sem tarefa", async () => {
   expect(document.querySelectorAll(".workspace-tab")).toHaveLength(1);
   fireEvent.click(screen.getByRole("button", { name: /Fechar Shell/ }));
   expect(document.querySelectorAll(".workspace-tab")).toHaveLength(0);
+});
+it("mostra no Chat a troca de agente, mantendo a conversa anterior visível", async () => {
+  const history: ChatHistoryItem[] = [
+    { seq: 1, event: { type: "user", text: "Corrija o teste" } },
+    { seq: 2, event: { type: "agent_changed", from: "Claude Code", to: "Codex" } },
+  ];
+  setup([editableTask], false, { [editableTask.id]: history });
+  fireEvent.click(await screen.findByRole("button", { name: "Editar arquivo" }));
+  const workspace = screen.getByRole("region", { name: "Tarefa golfinho/edit" });
+  fireEvent.click(within(workspace).getByRole("button", { name: "Chat" }));
+  expect(await screen.findByText("Corrija o teste")).toBeTruthy();
+  expect(screen.getByText(/Agente trocado de Claude Code para Codex/)).toBeTruthy();
+});
+it("seletor de agente envia a troca e fica desabilitado com a tarefa rodando", async () => {
+  const originalAgents = snapshot.agents;
+  snapshot.agents = [...originalAgents, { provider: "claude", label: "Claude Code", available: true, executable: "claude" }];
+  try {
+    const request = setup([editableTask]);
+    fireEvent.click(await screen.findByRole("button", { name: "Editar arquivo" }));
+    const workspace = screen.getByRole("region", { name: "Tarefa golfinho/edit" });
+    const select = within(workspace).getByRole("combobox", { name: "Agente da tarefa" }) as HTMLSelectElement;
+    expect(select.value).toBe("codex");
+    expect(select.disabled).toBe(false);
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    fireEvent.change(select, { target: { value: "claude" } });
+    confirm.mockRestore();
+    await waitFor(() =>
+      expect(request).toHaveBeenCalledWith({ action: "setTaskAgent", taskId: editableTask.id, provider: "claude" }),
+    );
+  } finally {
+    snapshot.agents = originalAgents;
+  }
+  cleanup();
+  setup([{ ...editableTask, status: "running" }]);
+  fireEvent.click(await screen.findByRole("button", { name: "Editar arquivo" }));
+  const running = screen.getByRole("region", { name: "Tarefa golfinho/edit" });
+  expect((within(running).getByRole("combobox", { name: "Agente da tarefa" }) as HTMLSelectElement).disabled).toBe(true);
 });

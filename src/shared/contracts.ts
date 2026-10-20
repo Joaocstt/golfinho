@@ -235,6 +235,7 @@ export type Request =
   | { action: "chatStop"; taskId: string }
   | { action: "chatReset"; taskId: string }
   | { action: "setChatModel"; taskId: string; model: string | null }
+  | { action: "setTaskAgent"; taskId: string; provider: Provider }
   | { action: "chatCompact"; taskId: string }
   | { action: "chatInterrupt"; taskId: string }
   | { action: "chatHistory"; taskId: string }
@@ -297,7 +298,9 @@ export type ChatEvent =
   | { type: "approval_resolved"; id: string; behavior: "allow" | "deny" }
   | { type: "status"; state: "running" | "idle" | "error"; message?: string }
   // Contexto em uso: tokens da última chamada e o tamanho da janela do modelo, quando a CLI informa.
-  | { type: "context"; used: number; limit: number | null };
+  | { type: "context"; used: number; limit: number | null }
+  // Marca no histórico em que a tarefa passou a usar outro agente. A conversa antiga fica visível.
+  | { type: "agent_changed"; from: string; to: string };
 // Evento do chat com a posição dele no histórico da tarefa (usada para não repetir na tela).
 export interface ChatHistoryItem {
   seq: number;

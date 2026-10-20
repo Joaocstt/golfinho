@@ -151,6 +151,7 @@ export const requestSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("chatStop"), taskId: id }).strict(),
   z.object({ action: z.literal("chatReset"), taskId: id }).strict(),
   z.object({ action: z.literal("setChatModel"), taskId: id, model: z.string().min(1).max(200).nullable() }).strict(),
+  z.object({ action: z.literal("setTaskAgent"), taskId: id, provider }).strict(),
   z.object({ action: z.literal("chatCompact"), taskId: id }).strict(),
   z.object({ action: z.literal("chatInterrupt"), taskId: id }).strict(),
   z.object({ action: z.literal("chatHistory"), taskId: id }).strict(),

@@ -397,6 +397,14 @@ export function ChatPane({ taskId, provider, model, draft, onDraftChange, onErro
                 {event.message}
               </p>
             );
+          if (event.type === "agent_changed")
+            return (
+              <div key={seq} className="chat-divider" role="separator">
+                <span>
+                  Agente trocado de {event.from} para {event.to}. A conversa anterior não é retomada.
+                </span>
+              </div>
+            );
           if (event.type === "status" && event.state === "error")
             return (
               <p key={seq} className="chat-error">

@@ -270,6 +270,20 @@ export const TaskWorkspace = forwardRef<TaskWorkspaceHandle, Props>(function Tas
       }
     });
   }
+  function changeAgent(provider: Provider) {
+    if (provider === task.provider) return;
+    const from = snapshot.agents.find((a) => a.provider === task.provider)?.label ?? task.provider;
+    const to = snapshot.agents.find((a) => a.provider === provider)?.label ?? provider;
+    // Só pede confirmação quando há conversa para perder.
+    if (
+      (task.sessionId || task.chatSessionId) &&
+      !window.confirm(
+        `Trocar o agente desta tarefa para ${to}? A conversa com ${from} não será retomada. A branch e os arquivos continuam como estão.`,
+      )
+    )
+      return;
+    void perform(() => request({ action: "setTaskAgent", taskId: task.id, provider }));
+  }
   function act(
     action:
       | "queue"
@@ -307,6 +321,25 @@ export const TaskWorkspace = forwardRef<TaskWorkspaceHandle, Props>(function Tas
                   <div className="detail-title">
                     <h2>{task.title}</h2>
                     <span className={"status-pill " + task.status}>{labels[task.status]}</span>
+                    <select
+                      className="task-agent"
+                      aria-label="Agente da tarefa"
+                      value={task.provider}
+                      disabled={busy || ["running", "waiting", "queued"].includes(task.status)}
+                      title={
+                        ["running", "waiting", "queued"].includes(task.status)
+                          ? "Aguarde a tarefa terminar para trocar o agente"
+                          : "Troca o agente desta tarefa. A branch e os arquivos continuam."
+                      }
+                      onChange={(e) => changeAgent(e.target.value as Provider)}
+                    >
+                      {snapshot.agents.map((agent) => (
+                        <option key={agent.provider} value={agent.provider} disabled={!agent.available}>
+                          {agent.label}
+                          {agent.available ? "" : " (não instalado)"}
+                        </option>
+                      ))}
+                    </select>
                   </div>
                   <p>
                     <GitBranch size={13} />

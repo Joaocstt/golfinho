@@ -513,6 +513,27 @@ export class Service {
         this.changed();
         return null;
       }
+      case "setTaskAgent": {
+        const t = this.store.task(r.taskId);
+        if (["running", "waiting", "queued"].includes(t.status))
+          throw new Error("Aguarde a tarefa terminar antes de trocar o agente.");
+        if (t.provider === r.provider) return null;
+        const settings = this.store.settings();
+        const info = agentInfo(settings);
+        const from = info.find((a) => a.provider === t.provider)?.label ?? t.provider;
+        const to = info.find((a) => a.provider === r.provider);
+        if (!to?.available) throw new Error(`${to?.label ?? r.provider} não está instalado. Configure o caminho em Configurações.`);
+        // O chat em andamento é do agente antigo: encerra antes de a conversa ser descartada.
+        this.requireChat().stop(t.id);
+        this.store.setProvider(
+          t.id,
+          r.provider,
+          `Agente trocado de ${from} para ${to.label}. A conversa anterior não é retomada; a branch e os arquivos continuam.`,
+        );
+        this.requireChat().record(t.id, { type: "agent_changed", from, to: to.label });
+        this.changed();
+        return null;
+      }
       case "chatReset":
         this.requireChat().reset(r.taskId);
         return null;

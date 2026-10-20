@@ -24,6 +24,21 @@ describe("persistent tasks", () => {
     expect(store.task(t.id).chatSessionId).toBe("sessao-1");
     store.close();
   });
+  it("troca o agente e descarta sessões e modelo da CLI anterior", () => {
+    const store = new Store(":memory:");
+    store.addProject({ id: "p", name: "Repo", path: "/repo", remotes: ["origin"] });
+    const t = store.createTask(input);
+    store.update(t.id, { sessionId: "cli-1" }, "Sessão");
+    store.setChatSession(t.id, "chat-1");
+    store.setModel(t.id, "opus");
+    const changed = store.setProvider(t.id, "claude", "Agente trocado.");
+    expect(changed.provider).toBe("claude");
+    expect(changed.sessionId).toBeNull();
+    expect(changed.chatSessionId).toBeNull();
+    expect(changed.model).toBeNull();
+    expect(store.events(t.id).at(-1)?.message).toBe("Agente trocado.");
+    store.close();
+  });
   it("permite voltar uma tarefa concluída para a fila", () => {
     const store = new Store(":memory:");
     store.addProject({ id: "p", name: "Repo", path: "/repo", remotes: ["origin"] });
