@@ -99,10 +99,12 @@ export class GitService {
     };
   }
   async requireCurrent(path: string, branch: string) {
-    if ((await this.current(path)) !== branch)
-      throw new Error(
-        "A branch desta tarefa não está ativa. Inicie a tarefa para selecioná-la com segurança.",
-      );
+    const current = await this.current(path);
+    if (current === branch) return;
+    const where = current ? `"${current}"` : "nenhuma branch (HEAD solto)";
+    throw new Error(
+      `A pasta do projeto está em ${where}, mas esta tarefa usa "${branch}". Troque a pasta do projeto para "${branch}" e tente de novo.`,
+    );
   }
   async prepare(path: string, branch: string, base: string, exists: boolean) {
     // Branch que já existia não tem o prefixo golfinho/, mas o nome continua válido.

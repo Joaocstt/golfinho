@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, clipboard, shell, screen } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, clipboard, nativeImage, shell, screen } from "electron";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { mergePath, readLoginPath } from "./loginPath";
@@ -105,11 +105,18 @@ else {
         read: () => clipboard.readText(),
         write: (text) => clipboard.writeText(text),
         // Imagem da área de transferência: salva em arquivo, para o caminho ser colado no terminal.
-        // readImage usa a API nativa do macOS, que reconhece TIFF/representações internas
-        // do Finder mesmo quando a área da página não anuncia um item image/*.
+        // O Electron 44 não tem mais clipboard.readImage: a imagem vem de clipboard.read() como
+        // blob. nativeImage converte qualquer formato que o sistema entregar (TIFF do macOS, JPEG…)
+        // para PNG.
         image: async () => {
-          const image = clipboard.readImage();
-          return image.isEmpty() ? null : image.toPNG();
+          for (const item of await clipboard.read()) {
+            const type = item.types.find((t) => t.startsWith("image/"));
+            if (!type) continue;
+            const blob = (await item.getType(type)) as unknown as { arrayBuffer(): Promise<ArrayBuffer> };
+            const image = nativeImage.createFromBuffer(Buffer.from(await blob.arrayBuffer()));
+            if (!image.isEmpty()) return image.toPNG();
+          }
+          return null;
         },
         saveImage: async (png) => {
           const dir = join(app.getPath("userData"), "clipboard");

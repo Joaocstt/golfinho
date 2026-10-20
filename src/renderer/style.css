@@ -221,7 +221,7 @@ button.primary:hover {
   position: relative;
   margin-bottom: 9px;
 }
-/* Remover projeto: aparece ao passar o mouse sobre o grupo, por cima do contador. */
+/* Remover projeto: aparece ao passar o mouse sobre o grupo, no lugar do contador. */
 .project-remove {
   position: absolute;
   top: 7px;
@@ -236,6 +236,11 @@ button.primary:hover {
 .project-group:hover .project-remove,
 .project-remove:focus-visible {
   display: inline-flex;
+}
+/* O X de remover ocupa o lugar do contador de tarefas: sem isso, os dois se sobrepõem. */
+.project-group:hover .project-row small,
+.project-group:focus-within .project-row small {
+  visibility: hidden;
 }
 .project-remove:hover:not(:disabled) {
   color: #f87171;
