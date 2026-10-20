@@ -162,3 +162,50 @@ describe("configurações", () => {
     store.close();
   });
 });
+
+describe("pacote de handoff", () => {
+  const withTask = () => {
+    const store = new Store(":memory:");
+    store.addProject({ id: "p", name: "Repo", path: "/repo", remotes: ["origin"] });
+    const t = store.createTask(input);
+    return { store, t };
+  };
+  it("guarda o pacote na troca e lê de volta", () => {
+    const { store, t } = withTask();
+    store.setProvider(t.id, "codex", "Agente trocado.", "CONTEXTO");
+    expect(store.pendingHandoff(t.id)).toBe("CONTEXTO");
+    expect(store.task(t.id).handoff).toBe("CONTEXTO");
+    store.close();
+  });
+  it("troca sem pacote deixa o campo vazio", () => {
+    const { store, t } = withTask();
+    store.setProvider(t.id, "codex", "Agente trocado.");
+    expect(store.pendingHandoff(t.id)).toBeNull();
+    store.close();
+  });
+  it("entrega limpa o pacote e registra o evento; a segunda tentativa não faz nada", () => {
+    const { store, t } = withTask();
+    store.setProvider(t.id, "codex", "Agente trocado.", "CONTEXTO");
+    const before = store.events(t.id).length;
+    store.clearHandoff(t.id, "Entregue.");
+    expect(store.pendingHandoff(t.id)).toBeNull();
+    expect(store.events(t.id).at(-1)?.message).toBe("Entregue.");
+    expect(store.events(t.id).length).toBe(before + 1);
+    store.clearHandoff(t.id, "Entregue de novo.");
+    expect(store.events(t.id).length).toBe(before + 1);
+    store.close();
+  });
+  it("o pacote sobrevive a reabrir o banco", () => {
+    const dir = mkdtempSync(join(tmpdir(), "golfinho-handoff-"));
+    const file = join(dir, "db.sqlite");
+    const first = new Store(file);
+    first.addProject({ id: "p", name: "Repo", path: "/repo", remotes: ["origin"] });
+    const t = first.createTask(input);
+    first.setProvider(t.id, "codex", "Agente trocado.", "CONTEXTO");
+    first.close();
+    const second = new Store(file);
+    expect(second.pendingHandoff(t.id)).toBe("CONTEXTO");
+    second.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+});

@@ -45,6 +45,8 @@ export interface Task {
   setupDone?: boolean;
   /** Branch que já existia quando a tarefa foi criada: o app nunca a apaga. */
   adoptedBranch?: boolean;
+  /** Resumo da conversa e do estado para o agente novo, guardado até a primeira entrega após a troca. */
+  handoff?: string | null;
   /** Onde a pasta do projeto estava antes do teste desta tarefa. Null quando ela não está em teste. */
   testCheckout?: { branch: string; sha: string } | null;
   terminalReady?: boolean;
@@ -300,7 +302,7 @@ export type ChatEvent =
   // Contexto em uso: tokens da última chamada e o tamanho da janela do modelo, quando a CLI informa.
   | { type: "context"; used: number; limit: number | null }
   // Marca no histórico em que a tarefa passou a usar outro agente. A conversa antiga fica visível.
-  | { type: "agent_changed"; from: string; to: string };
+  | { type: "agent_changed"; from: string; to: string; handoff?: string };
 // Evento do chat com a posição dele no histórico da tarefa (usada para não repetir na tela).
 export interface ChatHistoryItem {
   seq: number;

@@ -183,3 +183,15 @@ it("Parar interrompe o turno, nega aprovações abertas e mostra Interrompido", 
   await tick();
   expect(events.at(-1)?.event).toEqual({ type: "status", state: "idle", message: "Interrompido." });
 });
+it("o pacote de handoff vai para o SDK, mas a conversa mostra só a mensagem", async () => {
+  manager.send("t-handoff", CLAUDE, "continue", [], "CONTEXTO DA TROCA");
+  const first = await sdk.calls[0].prompt[Symbol.asyncIterator]().next();
+  expect(first.value.message.content).toBe("CONTEXTO DA TROCA\n\n---\n\ncontinue");
+  expect(events).toContainEqual({ taskId: "t-handoff", event: { type: "user", text: "continue" } });
+  expect(JSON.stringify(events)).not.toContain("CONTEXTO DA TROCA");
+});
+it("sem pacote, a mensagem segue como antes", async () => {
+  manager.send("t-plain", CLAUDE, "olá", [], null);
+  const first = await sdk.calls[0].prompt[Symbol.asyncIterator]().next();
+  expect(first.value.message.content).toBe("olá");
+});

@@ -11,6 +11,7 @@ import type { ChatBlock, ChatEvent, ChatHistoryItem, Provider } from "../shared/
 import type { ChatImage } from "./chatImages";
 import { CodexChatSession } from "./codexChat";
 import { AntigravityChatSession } from "./antigravityChat";
+import { withHandoff } from "./handoff";
 // Resumo curto da ferramenta para o cartão de aprovação. Comando e caminho são o que a pessoa
 // precisa ver para decidir; o resto do input fica de fora.
 export function summarize(toolName: string, input: Record<string, unknown>): string {
@@ -53,7 +54,8 @@ export class ChatSession {
     private readonly emit: (event: ChatEvent) => void,
     private readonly options: ChatOptions = {},
   ) {}
-  send(text: string, images: ChatImage[] = []) {
+  // `wire` é o que a CLI recebe (pode levar o pacote de handoff); `text` é o que aparece na conversa.
+  send(text: string, images: ChatImage[] = [], wire: string = text) {
     // Com imagens, a mensagem vira uma lista de blocos: as imagens em base64 e depois o texto.
     const content = images.length
       ? [
@@ -65,9 +67,9 @@ export class ChatSession {
               data: image.base64,
             },
           })),
-          ...(text ? [{ type: "text" as const, text }] : []),
+          ...(wire ? [{ type: "text" as const, text: wire }] : []),
         ]
-      : text;
+      : wire;
     const message: SDKUserMessage = {
       type: "user",
       message: { role: "user", content },
@@ -211,7 +213,7 @@ export class ChatSession {
 }
 // Conversa de um provedor, vista pelo ChatManager. Claude e Codex implementam a mesma interface.
 export interface ChatBackend {
-  send(text: string, images?: ChatImage[]): void;
+  send(text: string, images?: ChatImage[], wire?: string): void;
   decide(id: string, behavior: "allow" | "deny", always: boolean): void;
   interrupt(): void;
   stop(): void;
@@ -245,7 +247,7 @@ export class ChatManager {
       this.emitFor(taskId, seq, event);
     };
   }
-  send(taskId: string, target: ChatTarget, text: string, images: ChatImage[] = []) {
+  send(taskId: string, target: ChatTarget, text: string, images: ChatImage[] = [], handoff?: string | null) {
     let session = this.sessions.get(taskId);
     if (!session) {
       const emit = this.emitter(taskId);
@@ -262,7 +264,7 @@ export class ChatManager {
             : new ChatSession(target.cwd, emit, options);
       this.sessions.set(taskId, session);
     }
-    session.send(text, images);
+    session.send(text, images, withHandoff(handoff, text));
   }
   // Histórico da tarefa. Sem sessão viva, aprovações que ficaram abertas já não podem ser
   // respondidas: o processo que as esperava acabou. Elas são fechadas como negadas.

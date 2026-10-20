@@ -682,3 +682,18 @@ it("seletor de agente envia a troca e fica desabilitado com a tarefa rodando", a
   const running = screen.getByRole("region", { name: "Tarefa golfinho/edit" });
   expect((within(running).getByRole("combobox", { name: "Agente da tarefa" }) as HTMLSelectElement).disabled).toBe(true);
 });
+it("o separador da troca mostra o contexto passado ao agente, recolhido", async () => {
+  const history: ChatHistoryItem[] = [
+    { seq: 1, event: { type: "user", text: "Corrija o teste" } },
+    { seq: 2, event: { type: "agent_changed", from: "Claude Code", to: "Codex", handoff: "Pedido original:\nCorrija o teste" } },
+  ];
+  setup([editableTask], false, { [editableTask.id]: history });
+  fireEvent.click(await screen.findByRole("button", { name: "Editar arquivo" }));
+  const workspace = screen.getByRole("region", { name: "Tarefa golfinho/edit" });
+  fireEvent.click(within(workspace).getByRole("button", { name: "Chat" }));
+  const summary = await screen.findByText("Contexto passado a Codex");
+  const details = summary.closest("details") as HTMLDetailsElement;
+  expect(details).toBeTruthy();
+  expect(details.open).toBe(false);
+  expect(details.querySelector("pre")?.textContent).toContain("Pedido original:");
+});

@@ -8,6 +8,7 @@ import { findSession } from "./sessions";
 import { checkoutOf, requireCheckout } from "./checkout";
 import { join } from "node:path";
 import type { Provider } from "../shared/contracts";
+import { withHandoff } from "./handoff";
 export interface Handle {
   write(data: string): void;
   resize(cols: number, rows: number): void;
@@ -216,7 +217,9 @@ export class Coordinator {
       const cmd = this.store.settings().executables[t.provider];
       // Um id igual ao do chat veio de uma detecção antiga e errada: começa uma sessão nova.
       const resume = t.sessionId && t.sessionId !== t.chatSessionId ? t.sessionId : null;
-      const args = invocation(t.provider, e.path, t.prompt, resume).args;
+      // O pacote de handoff entra só numa execução nova: retomar a sessão da CLI não usa o prompt.
+      const handoff = resume ? null : this.store.pendingHandoff(id);
+      const args = invocation(t.provider, e.path, withHandoff(handoff, t.prompt), resume).args;
       this.logs.append(
         id,
         `\r\n── ${t.provider} · ${t.branch}${resume ? " · retomando sessão" : ""} ──\r\n`,
@@ -239,6 +242,7 @@ export class Coordinator {
         return;
       }
       e.handle = handle;
+      if (handoff) this.store.clearHandoff(id, `Resumo da troca de agente entregue a ${t.provider}.`);
       // Também redetectamos ao retomar: a CLI pode abrir um rollout novo (o Codex
       // registra `forked_from_id`), e guardar o id velho faria a próxima retomada
       // voltar à conversa anterior, perdendo tudo que foi feito nesta.

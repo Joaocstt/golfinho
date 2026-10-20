@@ -14,6 +14,7 @@ import { realpath } from "node:fs/promises";
 import { remoteList, remoteRead, remoteRoots, remoteStat, remoteWrite, sshArgs, sshEnv } from "./ssh";
 import type { Vault } from "./vault";
 import { readQuota } from "./quota";
+import { buildHandoff } from "./handoff";
 import type {
   Request,
   Response,
@@ -97,6 +98,21 @@ export class Service {
     // Tarefa antiga, no checkout do projeto: só mostra os arquivos se a branch estiver ativa.
     if (!t.worktreePath) await this.git.requireCurrent(checkout, t.branch);
     return { root: checkout, kind: "task" as const };
+  }
+  // Pacote de handoff para o agente novo: prompt, conversa, arquivos alterados e checks.
+  // Sem nada disso, devolve null e o agente novo começa só com o prompt da tarefa.
+  private async handoffFor(t: Task, fromLabel: string): Promise<string | null> {
+    const history = this.chat?.history(t.id) ?? [];
+    let files: string[] = [];
+    if (t.branchCreated) {
+      try {
+        files = (await this.reviewOf(t)).files.map((file) => file.path);
+      } catch {
+        // Sem pasta ou branch legível, o pacote segue só com a conversa e os checks.
+      }
+    }
+    const checks = this.store.checks(t.id).map((check) => ({ command: check.command, status: check.status }));
+    return buildHandoff({ prompt: t.prompt, fromLabel, history, files, checks });
   }
   // Diff da tarefa contra o commit de base, mais sobreposição com as outras tarefas do
   // projeto. Só lê; quem chama decide se precisa do bloqueio.
@@ -496,7 +512,10 @@ export class Service {
         // Cada imagem é conferida aqui (pasta do app, tipo e tamanho) antes de ir para o agente.
         const images = await Promise.all((r.images ?? []).map((path) => this.requireChatImages().verify(path)));
         if (!r.text.trim() && !images.length) throw new Error("Escreva uma mensagem ou anexe uma imagem.");
-        this.requireChat().send(r.taskId, target, r.text, images);
+        // O pacote de handoff vai na primeira mensagem após a troca, e só nela.
+        const handoff = this.store.pendingHandoff(r.taskId);
+        this.requireChat().send(r.taskId, target, r.text, images, handoff);
+        if (handoff) this.store.clearHandoff(r.taskId, "Resumo da troca de agente entregue ao chat.");
         return null;
       }
       case "chatDecide":
@@ -523,14 +542,22 @@ export class Service {
         const from = info.find((a) => a.provider === t.provider)?.label ?? t.provider;
         const to = info.find((a) => a.provider === r.provider);
         if (!to?.available) throw new Error(`${to?.label ?? r.provider} não está instalado. Configure o caminho em Configurações.`);
+        // O pacote é montado antes de a conversa do agente antigo ser encerrada.
+        const handoff = await this.handoffFor(t, from);
         // O chat em andamento é do agente antigo: encerra antes de a conversa ser descartada.
         this.requireChat().stop(t.id);
         this.store.setProvider(
           t.id,
           r.provider,
           `Agente trocado de ${from} para ${to.label}. A conversa anterior não é retomada; a branch e os arquivos continuam.`,
+          handoff,
         );
-        this.requireChat().record(t.id, { type: "agent_changed", from, to: to.label });
+        this.requireChat().record(t.id, {
+          type: "agent_changed",
+          from,
+          to: to.label,
+          ...(handoff ? { handoff } : {}),
+        });
         this.changed();
         return null;
       }

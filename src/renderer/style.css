@@ -2829,6 +2829,27 @@ select {
   border-top: 1px solid currentColor;
   opacity: 0.4;
 }
+.chat-handoff-details {
+  color: #8f8b80;
+  font-size: 12px;
+  margin: 0 0 8px;
+}
+.chat-handoff-details summary {
+  cursor: pointer;
+  width: fit-content;
+}
+.chat-handoff-details pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 240px;
+  overflow: auto;
+  margin: 6px 0 0;
+  padding: 8px;
+  border-radius: 6px;
+  background: #1f1e1c;
+  border: 1px solid #3a3834;
+  font: inherit;
+}
 .chat-note {
   color: #8f8b80;
   font-size: 12px;

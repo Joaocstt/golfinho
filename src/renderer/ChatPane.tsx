@@ -3,6 +3,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Paperclip, X } from "lucide-react";
 import type { ChatBlock, ChatEvent, ChatHistoryItem, Provider, Request } from "../shared/contracts";
+import { currentContext } from "../shared/chatContext";
 export interface ChatPaneProps {
   taskId: string;
   provider: string;
@@ -144,10 +145,8 @@ export function ChatPane({ taskId, provider, model, draft, onDraftChange, onErro
   const [items, setItems] = useState<ChatHistoryItem[]>([]);
   const [attachments, setAttachments] = useState<string[]>([]);
   const [viewer, setViewer] = useState<string | null>(null);
-  // Último uso de contexto informado pela CLI (o chat guarda esses eventos no histórico).
-  const context = [...items].reverse().map((i) => i.event).find((e) => e.type === "context") as
-    | { type: "context"; used: number; limit: number | null }
-    | undefined;
+  // Último uso de contexto do agente atual (o chat guarda esses eventos no histórico).
+  const context = currentContext(items.map((i) => i.event));
   // Nova conversa com resumo: a CLI atual escreve o resumo; quando ela termina, a conversa é
   // reaberta com esse resumo como primeira mensagem. O histórico visível continua.
   const runningNow = [...items].reverse().map((i) => i.event).find((e) => e.type === "status");
@@ -399,10 +398,18 @@ export function ChatPane({ taskId, provider, model, draft, onDraftChange, onErro
             );
           if (event.type === "agent_changed")
             return (
-              <div key={seq} className="chat-divider" role="separator">
-                <span>
-                  Agente trocado de {event.from} para {event.to}. A conversa anterior não é retomada.
-                </span>
+              <div key={seq}>
+                <div className="chat-divider" role="separator">
+                  <span>
+                    Agente trocado de {event.from} para {event.to}. A conversa anterior não é retomada.
+                  </span>
+                </div>
+                {event.handoff && (
+                  <details className="chat-handoff-details">
+                    <summary>Contexto passado a {event.to}</summary>
+                    <pre>{event.handoff}</pre>
+                  </details>
+                )}
               </div>
             );
           if (event.type === "status" && event.state === "error")

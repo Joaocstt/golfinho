@@ -19,7 +19,7 @@ const input = {
 // Executável que existe de verdade, para o agente ficar "instalado" nos testes.
 const installed = process.execPath;
 
-function setup(status: "review" | "running" = "review") {
+function setup(status: "review" | "running" = "review", git: unknown = {}) {
   const store = new Store(":memory:");
   store.addProject({ id: "p", name: "Repo", path: "/repo", remotes: ["origin"] });
   store.saveSettings({
@@ -33,10 +33,10 @@ function setup(status: "review" | "running" = "review") {
   store.transition(task.id, "running", "teste");
   if (status === "review") store.transition(task.id, "review", "teste");
   store.setChatSession(task.id, "chat-1");
-  const chat = { stop: vi.fn(), record: vi.fn() } as unknown as ChatManager;
+  const chat = { stop: vi.fn(), record: vi.fn(), history: vi.fn(() => []), send: vi.fn() } as unknown as ChatManager;
   const service = new Service(
     store,
-    {} as GitService,
+    git as GitService,
     {} as Coordinator,
     {} as never,
     () => {},
@@ -89,3 +89,102 @@ describe("troca de agente pela tarefa", () => {
     store.close();
   });
 });
+
+// Serviço com um git que devolve arquivos alterados e uma branch criada, para o pacote de handoff.
+function setupWithChanges(files: string[], messages: { event: unknown }[] = []) {
+  const git = {
+    review: async () => ({ files: files.map((path) => ({ path })), overlaps: [], branch: "golfinho/teste" }),
+    requireCurrent: async () => {},
+  };
+  const ctx = setup("review", git);
+  ctx.store.update(ctx.task.id, { branchCreated: true }, "criada");
+  (ctx.chat.history as ReturnType<typeof vi.fn>).mockImplementation(() => messages);
+  return ctx;
+}
+
+describe("pacote de handoff na troca de agente", () => {
+  it("monta o pacote com a conversa e os arquivos e registra no chat", async () => {
+    const { store, service, chat, task } = setupWithChanges(["src/login.ts"], [
+      { event: { type: "user", text: "Corrija o login" } },
+      { event: { type: "assistant", blocks: [{ kind: "text", text: "Já ajustei o formulário." }] } },
+    ]);
+    await service.request({ action: "setTaskAgent", taskId: task.id, provider: "codex" });
+    const handoff = store.task(task.id).handoff as string;
+    expect(handoff).toContain("Pedido original:\nAnalise");
+    expect(handoff).toContain("- Corrija o login");
+    expect(handoff).toContain("Já ajustei o formulário.");
+    expect(handoff).toContain("- src/login.ts");
+    expect(chat.record).toHaveBeenCalledWith(task.id, expect.objectContaining({ type: "agent_changed", handoff }));
+    store.close();
+  });
+
+  it("sem conversa, sem arquivos e sem checks, não há pacote", async () => {
+    const { store, service, chat, task } = setup();
+    await service.request({ action: "setTaskAgent", taskId: task.id, provider: "codex" });
+    expect(store.task(task.id).handoff).toBeNull();
+    expect(chat.record).toHaveBeenCalledWith(task.id, { type: "agent_changed", from: "Claude Code", to: "Codex" });
+    store.close();
+  });
+
+  it("sem branch criada, o pacote segue só com a conversa", async () => {
+    const { store, service, chat, task } = setup();
+    (chat.history as ReturnType<typeof vi.fn>).mockImplementation(() => [
+      { event: { type: "user", text: "primeira ideia" } },
+    ]);
+    await service.request({ action: "setTaskAgent", taskId: task.id, provider: "codex" });
+    expect(store.task(task.id).handoff).toContain("- primeira ideia");
+    expect(store.task(task.id).handoff).not.toContain("Arquivos alterados");
+    store.close();
+  });
+
+  it("falha ao ler o diff não impede a troca: o pacote segue sem arquivos", async () => {
+    const git = { review: async () => { throw new Error("sem pasta"); }, requireCurrent: async () => {} };
+    const ctx = setup("review", git);
+    ctx.store.update(ctx.task.id, { branchCreated: true }, "criada");
+    (ctx.chat.history as ReturnType<typeof vi.fn>).mockImplementation(() => [
+      { event: { type: "user", text: "continue daqui" } },
+    ]);
+    await ctx.service.request({ action: "setTaskAgent", taskId: ctx.task.id, provider: "codex" });
+    expect(ctx.store.task(ctx.task.id).provider).toBe("codex");
+    expect(ctx.store.task(ctx.task.id).handoff).toContain("- continue daqui");
+    ctx.store.close();
+  });
+
+  it("o pacote inclui os checks da tarefa", async () => {
+    const { store, service, chat, task } = setup();
+    store.addCheck(task.id, "npm test");
+    (chat.history as ReturnType<typeof vi.fn>).mockImplementation(() => [
+      { event: { type: "user", text: "siga" } },
+    ]);
+    await service.request({ action: "setTaskAgent", taskId: task.id, provider: "codex" });
+    const handoff = store.task(task.id).handoff as string;
+    expect(handoff).toContain("Verificações recentes:\n- npm test: running");
+    store.close();
+  });
+});
+
+describe("entrega do pacote ao chat", () => {
+  it("entrega na primeira mensagem após a troca e só nela", async () => {
+    const { store, service, chat, task } = setupWithChanges(["a.ts"]);
+    await service.request({ action: "setTaskAgent", taskId: task.id, provider: "codex" });
+    const handoff = store.task(task.id).handoff as string;
+    expect(handoff).toBeTruthy();
+
+    await service.request({ action: "chatSend", taskId: task.id, text: "pode seguir" });
+    expect(chat.send).toHaveBeenLastCalledWith(task.id, expect.anything(), "pode seguir", [], handoff);
+    expect(store.task(task.id).handoff).toBeNull();
+    expect(store.events(task.id).at(-1)?.message).toBe("Resumo da troca de agente entregue ao chat.");
+
+    await service.request({ action: "chatSend", taskId: task.id, text: "segunda mensagem" });
+    expect(chat.send).toHaveBeenLastCalledWith(task.id, expect.anything(), "segunda mensagem", [], null);
+    store.close();
+  });
+
+  it("sem pacote pendente, o chat recebe mensagem sem contexto extra", async () => {
+    const { store, service, chat, task } = setup();
+    await service.request({ action: "chatSend", taskId: task.id, text: "olá" });
+    expect(chat.send).toHaveBeenCalledWith(task.id, expect.anything(), "olá", [], null);
+    store.close();
+  });
+});
+

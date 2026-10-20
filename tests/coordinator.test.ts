@@ -460,3 +460,47 @@ it("saída do agente e digitação mantêm a execução viva além do prazo tota
     vi.useRealTimers();
   }
 });
+
+it("entrega o pacote de handoff na primeira execução após a troca, e só nela", async () => {
+  const { store, c, started, create } = setup();
+  const a = create("p", "golfinho/handoff");
+  store.setProvider(a.id, "codex", "Agente trocado.", "CONTEXTO DA TROCA");
+  c.queue(a.id);
+  await tick();
+  expect(started[0].args.join(" ")).toContain("CONTEXTO DA TROCA");
+  expect(started[0].args.join(" ")).toContain("x");
+  expect(store.pendingHandoff(a.id)).toBeNull();
+  expect(store.events(a.id).at(-1)?.message).toBe("Resumo da troca de agente entregue a codex.");
+  started[0].exit(0);
+  await tick();
+  expect(store.task(a.id).status).toBe("review");
+  c.queue(a.id);
+  await tick();
+  expect(started[1].args.join(" ")).not.toContain("CONTEXTO DA TROCA");
+  c.shutdown();
+  store.close();
+});
+
+it("retomar a sessão da CLI não consome o pacote: ele espera a próxima execução nova", async () => {
+  const { store, c, started, create } = setup();
+  const a = create("p", "golfinho/retomada");
+  store.setProvider(a.id, "codex", "Agente trocado.", "CONTEXTO DA TROCA");
+  store.update(a.id, { sessionId: "sessao-antiga" }, "sessão");
+  c.queue(a.id);
+  await tick();
+  expect(started[0].args).toContain("resume");
+  expect(started[0].args.join(" ")).not.toContain("CONTEXTO DA TROCA");
+  expect(store.pendingHandoff(a.id)).toBe("CONTEXTO DA TROCA");
+  c.shutdown();
+  store.close();
+});
+
+it("sem pacote pendente, a execução segue só com o prompt da tarefa", async () => {
+  const { store, c, started, create } = setup();
+  const a = create("p", "golfinho/sem-pacote");
+  c.queue(a.id);
+  await tick();
+  expect(started[0].args.at(-1)).toBe("x");
+  c.shutdown();
+  store.close();
+});

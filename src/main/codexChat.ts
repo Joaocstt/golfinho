@@ -37,9 +37,9 @@ export class CodexChatSession implements ChatBackend {
     private readonly emit: (event: ChatEvent) => void,
     private readonly options: ChatOptions = {},
   ) {}
-  send(text: string, images: ChatImage[] = []) {
+  send(text: string, images: ChatImage[] = [], wire: string = text) {
     this.emit({ type: "user", text, ...(images.length ? { images: images.map((image) => image.path) } : {}) });
-    const entry = { text, images };
+    const entry = { text: wire, images };
     if (this.turnActive) this.queue.push(entry);
     else void this.runTurn(entry);
   }

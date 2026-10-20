@@ -172,3 +172,12 @@ it("Parar manda turn/interrupt com o id do turno e mostra Interrompido", async (
   await tick();
   expect(events.at(-1)).toEqual({ type: "status", state: "idle", message: "Interrompido." });
 });
+it("o pacote de handoff vai no turno, mas a conversa mostra só a mensagem", async () => {
+  session.send("olá", [], "CONTEXTO\n\n---\n\nolá");
+  await tick();
+  await tick();
+  const turn = child().sent.find((m: any) => m.method === "turn/start");
+  expect(turn.params.input).toEqual([{ type: "text", text: "CONTEXTO\n\n---\n\nolá" }]);
+  expect(events).toContainEqual({ type: "user", text: "olá" });
+  expect(JSON.stringify(events)).not.toContain("CONTEXTO");
+});

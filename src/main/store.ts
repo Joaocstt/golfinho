@@ -206,16 +206,31 @@ export class Store {
     this.write(task);
   }
   // Ids de sessão e o modelo pertencem a cada CLI: ao trocar de agente, nada disso é reaproveitado.
-  setProvider(taskId: string, provider: Provider, message: string): Task {
+  setProvider(taskId: string, provider: Provider, message: string, handoff: string | null = null): Task {
     return this.atomic(() => {
       const t = this.task(taskId);
       t.provider = provider;
       t.sessionId = null;
       t.chatSessionId = null;
       t.model = null;
+      t.handoff = handoff;
       this.write(t);
       this.event(taskId, "updated", message);
       return t;
+    });
+  }
+  // Pacote de handoff ainda não entregue ao agente (null quando já foi entregue ou nunca houve).
+  pendingHandoff(taskId: string): string | null {
+    return this.task(taskId).handoff ?? null;
+  }
+  // Marca a entrega do pacote: ele vai uma única vez, pelo chat ou pelo terminal.
+  clearHandoff(taskId: string, message: string) {
+    this.atomic(() => {
+      const t = this.task(taskId);
+      if (!t.handoff) return;
+      t.handoff = null;
+      this.write(t);
+      this.event(taskId, "updated", message);
     });
   }
   setChatSession(taskId: string, sessionId: string) {
