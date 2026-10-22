@@ -208,4 +208,26 @@ describe("pacote de handoff", () => {
     second.close();
     rmSync(dir, { recursive: true, force: true });
   });
+  it("settings ignora chaves legadas e desconhecidas do banco de dados", () => {
+    const dir = mkdtempSync(join(tmpdir(), "golfinho-settings-"));
+    const file = join(dir, "db.sqlite");
+    const store = new Store(file);
+    // Simula banco com chave desconhecida/antiga (ex: mobile) salva no JSON
+    store["db"].prepare("INSERT INTO settings VALUES(1, ?)").run(
+      JSON.stringify({
+        concurrency: 4,
+        executables: { codex: "codex", claude: "claude", antigravity: "agy" },
+        setup: {},
+        ssh: [],
+        mobile: { enabled: true, host: "192.168.1.1" },
+        unknownField: "foo",
+      }),
+    );
+    const s = store.settings();
+    expect(s.concurrency).toBe(4);
+    expect("mobile" in s).toBe(false);
+    expect("unknownField" in s).toBe(false);
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
 });

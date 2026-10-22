@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
-import { Folder, File, ChevronDown, ChevronRight, HardDrive } from "lucide-react";
+import { ChevronDown, ChevronRight, HardDrive } from "lucide-react";
+import { FileTypeIcon } from "./fileIcons";
 import type { Request, SshConnection, SshListing, SshRoots } from "../shared/contracts";
 const request = <T,>(r: Request) => window.golfinho.request(r) as Promise<T>;
 // Árvore do servidor na barra lateral: início, "/" e cada disco. Cada pasta é lida só
@@ -98,7 +99,7 @@ export function RemoteTree({
             onClick={() => (isDirectory ? void toggle(full) : onOpenFile(full))}
           >
             {isDirectory ? (isOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />) : <span className="tree-spacer" />}
-            {isDirectory ? <Folder size={13} /> : <File size={13} />}
+            <FileTypeIcon name={entry.name} kind={isDirectory ? "directory" : "file"} open={isOpen} />
             <span className="tree-name">{entry.name}</span>
           </button>
           {isDirectory && isOpen && rows(full, depth + 1)}
@@ -138,7 +139,11 @@ export function RemoteTree({
               onClick={() => void toggle(path)}
             >
               {isOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-              {path === "/" || roots?.mounts.includes(path) ? <HardDrive size={13} /> : <Folder size={13} />}
+              {path === "/" || roots?.mounts.includes(path) ? (
+                <HardDrive size={13} />
+              ) : (
+                <FileTypeIcon name={path.split("/").pop() || path} kind="directory" root open={isOpen} />
+              )}
               <span className="tree-name">{label}</span>
             </button>
             {isOpen && rows(path, 1)}

@@ -23,6 +23,7 @@ usando suas pastas próprias.
 - [Fluxo de uma tarefa](#fluxo-de-uma-tarefa)
 - [Funcionalidades](#funcionalidades)
 - [Terminal e chat](#terminal-e-chat)
+- [Memória do projeto](#memória-do-projeto)
 - [Agentes suportados](#agentes-suportados)
 - [Segurança e limites](#segurança-e-limites)
 - [Dados locais](#dados-locais)
@@ -238,6 +239,36 @@ Os dois acessam a mesma pasta de trabalho da tarefa. Evite executar os dois
 agentes ao mesmo tempo sobre os mesmos arquivos. O limite da fila controla as
 execuções do coordenador e os checks; o Chat e os shells avulsos têm ciclo próprio.
 
+## Memória do projeto
+
+Cada projeto tem uma memória local: notas de **decisão**, **convenção**, **armadilha**,
+**contexto** e o registro de **tarefas** concluídas. Elas ficam na aba **Memória**, onde
+dá para buscar (a busca ignora acentos), criar, editar, fixar, arquivar e excluir.
+
+- **De onde vêm as notas:** criadas na aba Memória; o botão **Salvar na memória** em
+  cada resposta do chat; o registro automático de cada tarefa (situação, pedido, linha
+  do tempo da conversa com suas mensagens, as respostas e ferramentas de cada agente e as
+  trocas de agente, arquivos alterados e checks, montado sem LLM), atualizado a cada
+  resposta do chat, a cada fim de execução no terminal e ao **Concluir**, sempre na mesma
+  nota; e o próprio agente, pela ferramenta `memoria_salvar`.
+- **Como chegam ao agente:** na primeira mensagem de uma conversa nova (Terminal ou
+  Chat), inclusive depois de trocar de agente, o agente recebe **todas** as notas não
+  arquivadas: primeiro as fixadas, depois as mais relacionadas ao pedido e então as mais
+  recentes. Até cerca de 24 mil caracteres elas vão completas; as que passarem disso vão
+  só pelo título, e Claude e Codex podem abri-las com `memoria_ler`. Ao retomar uma
+  sessão, nada é repetido.
+- **Histórico pesquisável:** todas as conversas do chat (mensagens, respostas, ferramentas
+  e resultados) ficam indexadas. O `memoria_buscar` procura nas notas e nesse histórico,
+  inclusive de outras tarefas e de outros agentes, e o `memoria_conversa` abre o trecho
+  completo.
+- **Ferramentas MCP:** Claude e Codex recebem, só naquela execução, o servidor
+  `golfinho_memoria`, com `memoria_buscar`, `memoria_conversa`, `memoria_ler`,
+  `memoria_recentes` e `memoria_salvar`. O servidor escuta apenas em `127.0.0.1`, exige um token novo a cada
+  abertura do app e só enxerga o projeto da tarefa. A configuração global das CLIs não é
+  alterada. O Antigravity não aceita MCP por execução e recebe só as notas da primeira
+  mensagem.
+- **Desligar:** em Configurações → *Memória do projeto*. As notas continuam guardadas.
+
 ## Agentes suportados
 
 | Agente | Executável | Integração | Permissões |
@@ -265,7 +296,10 @@ seguem as aprovações de cada CLI. Os caminhos dos executáveis podem ser ajust
 ## Dados locais
 
 - **Banco:** SQLite (`node:sqlite`) com projetos, tarefas, eventos, configurações e
-  resultados de checks, além do histórico e dos IDs de sessão do chat.
+  resultados de checks, além do histórico e dos IDs de sessão do chat e das notas da
+  memória dos projetos (com índice FTS5 para a busca).
+- **Configuração MCP do Claude:** um arquivo por tarefa em `mcp/` na pasta de dados,
+  legível só pelo usuário. A pasta é apagada ao abrir e ao fechar o app.
 - **Logs de terminal:** limitados a uma cauda de cerca de 2 MiB em disco. A interface
   recebe até 512 mil caracteres.
 - **Pasta de dados:**
@@ -295,6 +329,8 @@ src/
 │   ├── checkout.ts      pasta ativa de cada tarefa
 │   ├── agents.ts        executáveis e argumentos de cada agente
 │   ├── chat.ts          chat do Claude, aprovações e gestão das conversas
+│   ├── memory.ts        memória do projeto: consulta, registro da tarefa e pacote enviado
+│   ├── memoryMcp.ts     servidor MCP local da memória
 │   ├── codexChat.ts     integração com codex app-server
 │   ├── chatImages.ts    importação e validação de imagens do chat
 │   ├── pty.ts           pseudoterminais (node-pty)
@@ -400,3 +436,8 @@ O ícone do Codex usa azul na interface.
 ## Licença
 
 Licença ainda não definida.
+
+**Componentes de terceiros:** os ícones de arquivo e pasta vêm do
+[Material Icon Theme](https://github.com/material-extensions/vscode-material-icon-theme)
+(pacote npm `material-icon-theme`), sob licença MIT. O aviso de licença está em
+`src/renderer/assets/LICENSE.material-icon-theme`.

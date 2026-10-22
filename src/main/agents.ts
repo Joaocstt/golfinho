@@ -1,6 +1,17 @@
 import { accessSync, constants } from "node:fs";
 import { delimiter, extname, isAbsolute, join } from "node:path";
 import type { Provider, Settings, AgentInfo } from "../shared/contracts";
+import { MEMORY_SERVER, MEMORY_TOKEN_ENV, type McpLaunch } from "./memory";
+// Opções -c do Codex que ligam o servidor da memória (CLI e app-server aceitam as mesmas).
+export function codexMcpArgs(mcp: { url: string } | null | undefined): string[] {
+  if (!mcp) return [];
+  return [
+    "-c",
+    `mcp_servers.${MEMORY_SERVER}.url=${JSON.stringify(mcp.url)}`,
+    "-c",
+    `mcp_servers.${MEMORY_SERVER}.bearer_token_env_var=${JSON.stringify(MEMORY_TOKEN_ENV)}`,
+  ];
+}
 // Retomar reabre a conversa existente e por isso não reenvia o prompt: mandá-lo de
 // novo faria o agente refazer a tarefa desde o início.
 export function invocation(
@@ -8,6 +19,7 @@ export function invocation(
   path: string,
   prompt: string,
   resume?: string | null,
+  mcp?: McpLaunch | null,
 ) {
   switch (provider) {
     case "codex": {
@@ -23,14 +35,18 @@ export function invocation(
       ];
       // Sem instruções a CLI abre vazia, em vez de receber uma mensagem em branco.
       const first = prompt ? ["--", prompt] : [];
-      return { args: resume ? ["resume", resume, ...flags] : [...flags, ...first] };
+      const extra = codexMcpArgs(mcp);
+      return { args: resume ? ["resume", resume, ...extra, ...flags] : [...extra, ...flags, ...first] };
     }
-    case "claude":
+    case "claude": {
+      // --mcp-config aceita vários valores: vem antes de outra opção ou do "--", que o encerram.
+      const config = mcp ? ["--mcp-config", mcp.claudeConfig] : [];
       return {
         args: resume
-          ? ["--permission-mode", "manual", "--resume", resume]
-          : ["--permission-mode", "manual", ...(prompt ? ["--", prompt] : [])],
+          ? ["--permission-mode", "manual", ...config, "--resume", resume]
+          : ["--permission-mode", "manual", ...config, ...(prompt ? ["--", prompt] : [])],
       };
+    }
     case "antigravity":
       return {
         args: resume

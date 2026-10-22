@@ -33,7 +33,13 @@ function setup(status: "review" | "running" = "review", git: unknown = {}) {
   store.transition(task.id, "running", "teste");
   if (status === "review") store.transition(task.id, "review", "teste");
   store.setChatSession(task.id, "chat-1");
-  const chat = { stop: vi.fn(), record: vi.fn(), history: vi.fn(() => []), send: vi.fn() } as unknown as ChatManager;
+  const chat = {
+    stop: vi.fn(),
+    record: vi.fn(),
+    history: vi.fn(() => []),
+    send: vi.fn(),
+    isFresh: vi.fn(() => true),
+  } as unknown as ChatManager;
   const service = new Service(
     store,
     git as GitService,

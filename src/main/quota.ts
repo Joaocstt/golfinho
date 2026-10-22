@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { executablePath } from "./agents";
 import { launchTarget } from "./shellCommand";
@@ -151,20 +151,45 @@ async function codex(command: string): Promise<Omit<ProviderQuota, "provider">> 
     error: windows.length ? "" : "A CLI não informou janelas de 5 h ou semanal.",
   };
 }
+// O /usage não diz de quem é a cota; "auth status" diz. Trocar de conta no app ou no
+// navegador não muda o login da CLI, então mostrar o e-mail evita confundir as duas.
+// Falhar aqui não derruba a leitura dos percentuais.
+function claudeAccount(command: string): Promise<{ email: string; plan: string }> {
+  const empty = { email: "", plan: "" };
+  const path = executablePath(command);
+  if (!path) return Promise.resolve(empty);
+  const target = launchTarget(path, ["auth", "status"]);
+  return new Promise((resolve) => {
+    execFile(target.file, target.args, { timeout: TIMEOUT }, (_error, stdout) => {
+      try {
+        const status = JSON.parse(String(stdout));
+        const plan = typeof status?.subscriptionType === "string" ? status.subscriptionType : "";
+        resolve({
+          email: typeof status?.email === "string" ? status.email : "",
+          plan: plan && plan[0].toUpperCase() + plan.slice(1),
+        });
+      } catch {
+        resolve(empty);
+      }
+    });
+  });
+}
 // Claude só expõe isso como texto no /usage. Percentuais saem por leitura tolerante;
 // se o formato mudar, vira erro em vez de número inventado.
 async function claude(command: string): Promise<Omit<ProviderQuota, "provider">> {
-  const payload = (await run(
-    command,
-    ["-p", "/usage", "--output-format", "json"],
-    (_send, line, done) => done(parse(line, command)),
-  )) as Record<string, any>;
+  const [payload, account] = (await Promise.all([
+    run(command, ["-p", "/usage", "--output-format", "json"], (_send, line, done) =>
+      done(parse(line, command)),
+    ),
+    claudeAccount(command),
+  ])) as [Record<string, any>, { email: string; plan: string }];
   const text = String(payload?.result ?? "");
   // num_turns > 0 significa que /usage virou conversa com o modelo: não insistir.
   if (Number(payload?.num_turns ?? 0) > 0)
     return {
       available: false,
-      plan: "",
+      plan: account.plan,
+      account: account.email,
       groups: [],
       error: "A CLI tratou /usage como pergunta em vez de comando.",
     };
@@ -184,7 +209,8 @@ async function claude(command: string): Promise<Omit<ProviderQuota, "provider">>
   if (week) windows.push({ ...week, window: "weekly" });
   return {
     available: windows.length > 0,
-    plan: /subscription/i.test(text) ? "assinatura" : "",
+    plan: account.plan || (/subscription/i.test(text) ? "assinatura" : ""),
+    account: account.email,
     groups: windows.length ? [{ name: "", windows }] : [],
     error: windows.length ? "" : "Não foi possível ler os percentuais na resposta da CLI.",
   };

@@ -12,6 +12,7 @@ import type { ChatImage } from "./chatImages";
 import { CodexChatSession } from "./codexChat";
 import { AntigravityChatSession } from "./antigravityChat";
 import { withHandoff } from "./handoff";
+import { MEMORY_SERVER, type McpEndpoint } from "./memory";
 // Resumo curto da ferramenta para o cartão de aprovação. Comando e caminho são o que a pessoa
 // precisa ver para decidir; o resto do input fica de fora.
 export function summarize(toolName: string, input: Record<string, unknown>): string {
@@ -38,6 +39,8 @@ export interface ChatOptions {
   resume?: string | null;
   model?: string | null;
   onSession?: (id: string) => void;
+  // Servidor MCP da memória do projeto; null quando a memória está desligada ou indisponível.
+  mcp?: McpEndpoint | null;
 }
 // Uma conversa do Claude por tarefa. As mensagens entram por uma fila, então o SDK mantém a
 // sessão aberta entre um turno e o seguinte.
@@ -129,6 +132,17 @@ export class ChatSession {
         cwd: this.cwd,
         resume: this.options.resume ?? undefined,
         model: this.options.model ?? undefined,
+        ...(this.options.mcp
+          ? {
+              mcpServers: {
+                [MEMORY_SERVER]: {
+                  type: "http" as const,
+                  url: this.options.mcp.url,
+                  headers: { Authorization: `Bearer ${this.options.mcp.token}` },
+                },
+              },
+            }
+          : {}),
         permissionMode: "default",
         canUseTool: (toolName, input, options) => this.approve(toolName, input, options),
       },
@@ -225,6 +239,7 @@ export interface ChatTarget {
   cwd: string;
   executable: string;
   model?: string | null;
+  mcp?: McpEndpoint | null;
 }
 // Onde a conversa fica guardada. O ChatManager não sabe de banco: recebe estas funções.
 export interface ChatStorage {
@@ -254,6 +269,7 @@ export class ChatManager {
       const options: ChatOptions = {
         resume: this.storage.sessionId(taskId) || null,
         model: target.model,
+        mcp: target.mcp ?? null,
         onSession: (id) => this.storage.saveSessionId(taskId, id),
       };
       session =
@@ -265,6 +281,11 @@ export class ChatManager {
       this.sessions.set(taskId, session);
     }
     session.send(text, images, withHandoff(handoff, text));
+  }
+  // Conversa nova: sem processo aberto e sem sessão guardada para retomar. É quando a memória
+  // do projeto vai junto da primeira mensagem.
+  isFresh(taskId: string): boolean {
+    return !this.sessions.has(taskId) && !this.storage.sessionId(taskId);
   }
   // Histórico da tarefa. Sem sessão viva, aprovações que ficaram abertas já não podem ser
   // respondidas: o processo que as esperava acabou. Elas são fechadas como negadas.

@@ -44,6 +44,7 @@ function setup() {
     record: (taskId: string, event: ChatEvent) => store.chatAppend(taskId, event),
     history: vi.fn(() => []),
     send: vi.fn(),
+    isFresh: vi.fn(() => true),
   } as unknown as ChatManager;
   const service = new Service(
     store,

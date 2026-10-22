@@ -14,7 +14,8 @@ import { realpath } from "node:fs/promises";
 import { remoteList, remoteRead, remoteRoots, remoteStat, remoteWrite, sshArgs, sshEnv } from "./ssh";
 import type { Vault } from "./vault";
 import { readQuota } from "./quota";
-import { buildHandoff } from "./handoff";
+import { buildHandoff, clip, withHandoff } from "./handoff";
+import { prepareMemory, taskDigest, titleFrom, type MemoryLink } from "./memory";
 import type {
   Request,
   Response,
@@ -23,6 +24,16 @@ import type {
   Provider,
   Task,
 } from "../shared/contracts";
+const STATUS_LABELS: Partial<Record<Task["status"], string>> = {
+  running: "em andamento",
+  waiting: "em andamento",
+  queued: "na fila",
+  review: "em revisão",
+  completed: "concluída",
+  failed: "com falha",
+  interrupted: "interrompida",
+  cancelled: "cancelada",
+};
 export class Service {
   constructor(
     private store: Store,
@@ -47,6 +58,71 @@ export class Service {
       dataUrl(path: string): Promise<string>;
     },
   ) {}
+  private memoryLink: MemoryLink | null = null;
+  // Servidor MCP da memória (o mesmo que o coordenador usa para o terminal).
+  useMemory(link: MemoryLink | null) {
+    this.memoryLink = link;
+  }
+  private memoryOn() {
+    return this.store.settings().memory?.enabled !== false;
+  }
+  private remembering = new Map<string, ReturnType<typeof setTimeout>>();
+  // Atualiza o registro da tarefa na memória: chamado a cada resposta do chat e a cada fim de
+  // execução no terminal. Rajadas de eventos viram uma única gravação.
+  remember(taskId: string) {
+    clearTimeout(this.remembering.get(taskId));
+    this.remembering.set(
+      taskId,
+      setTimeout(() => {
+        this.remembering.delete(taskId);
+        let t: Task;
+        try {
+          t = this.store.task(taskId);
+        } catch {
+          return; // tarefa excluída nesse meio-tempo
+        }
+        void this.rememberTask(t).then(() => this.changed(), () => undefined);
+      }, 1500),
+    );
+  }
+  // Registro automático da tarefa: uma nota por tarefa, sempre atualizada. Uma falha aqui não
+  // atrapalha o chat, o terminal nem a conclusão.
+  private async rememberTask(t: Task) {
+    try {
+      // Dentro do try: um registro atrasado pode chegar com o app já fechando o banco.
+      if (!this.memoryOn()) return;
+      const history = this.chat?.history(t.id) ?? [];
+      let files: string[] = [];
+      try {
+        files = (await this.reviewOf(t)).files.map((file) => file.path);
+      } catch {
+        // Sem diff legível, o registro segue com a conversa e os checks.
+      }
+      const checks = this.store.checks(t.id).map((check) => ({ command: check.command, status: check.status }));
+      // Sem conversa e sem arquivos alterados, ainda não há nada a lembrar além do pedido.
+      if (!history.some(({ event }) => event.type === "assistant") && !files.length) return;
+      const status = STATUS_LABELS[t.status] ?? t.status;
+      const first = this.store.saveTaskMemory(
+        t,
+        taskDigest({
+          status,
+          agent: agentInfo(this.store.settings()).find((a) => a.provider === t.provider)?.label ?? t.provider,
+          title: t.title,
+          prompt: t.prompt,
+          history,
+          files,
+          checks,
+        }),
+      ).created;
+      if (first) this.store.note(t.id, "Tarefa registrada na memória do projeto; o registro é atualizado a cada etapa.");
+    } catch (error) {
+      try {
+        this.store.note(t.id, `Não foi possível registrar a tarefa na memória: ${(error as Error).message}`);
+      } catch {
+        // Banco já fechado: não há onde avisar.
+      }
+    }
+  }
   private requireChatImages() {
     if (!this.chatImages) throw new Error("Imagens indisponíveis neste ambiente.");
     return this.chatImages;
@@ -416,6 +492,33 @@ export class Service {
         this.store.update(r.taskId, { reviewSummary: r.summary }, "Resumo da revisão atualizado.");
         this.changed();
         return null;
+      case "memoryList":
+        return this.store.memories(r.projectId, { query: r.query, kind: r.kind, archived: r.archived });
+      case "memorySave": {
+        const m = this.store.saveMemory(r.memory);
+        this.changed();
+        return m;
+      }
+      case "memoryDelete":
+        this.store.deleteMemory(r.id);
+        this.changed();
+        return null;
+      case "memoryFromChat": {
+        const t = this.store.task(r.taskId);
+        const m = this.store.saveMemory(
+          {
+            projectId: t.projectId,
+            kind: "contexto",
+            title: titleFrom(r.text),
+            content: clip(r.text.trim(), 8000),
+            pinned: false,
+            archived: false,
+          },
+          { origin: "usuario", source: { taskId: t.id, title: t.title } },
+        );
+        this.changed();
+        return m;
+      }
       case "settings": {
         // Perfil removido leva a senha guardada junto.
         const kept = new Set(r.settings.ssh.map((c) => c.id));
@@ -488,6 +591,15 @@ export class Service {
         // Terminal geral: não pertence a tarefa. Abre no projeto escolhido, ou na sua pasta pessoal.
         const shells = this.requireShells();
         const dir = r.projectId ? this.store.project(r.projectId).path : homedir();
+        // Login da CLI do Claude: o fluxo pede navegador e às vezes colar um código,
+        // então roda num terminal de verdade em vez de por baixo dos panos.
+        if (r.login) {
+          if (r.provider !== "claude") throw new Error("Trocar de conta só está disponível para o Claude.");
+          const settings = this.store.settings();
+          if (!agentInfo(settings).find((a) => a.provider === "claude")?.available)
+            throw new Error("Claude Code não está instalado. Configure o caminho em Configurações.");
+          return shells.open("", homedir(), settings.executables.claude, ["auth", "login"]);
+        }
         return this.openSession(shells, "", dir, r.provider);
       }
       case "shellInput":
@@ -503,19 +615,32 @@ export class Service {
         const task = this.store.task(r.taskId);
         // A pasta é a mesma da aba de arquivos: a worktree da tarefa, ou o projeto antes dela.
         const { root } = await this.treeRoot(r.taskId);
+        const memoryOn = this.memoryOn();
         const target = {
           provider: task.provider,
           cwd: root,
           executable: this.store.settings().executables[task.provider],
           model: task.model ?? null,
+          // O Antigravity não aceita MCP por execução: recebe só as notas na primeira mensagem.
+          mcp: memoryOn && task.provider !== "antigravity" ? (this.memoryLink?.endpoint(task.id) ?? null) : null,
         };
         // Cada imagem é conferida aqui (pasta do app, tipo e tamanho) antes de ir para o agente.
         const images = await Promise.all((r.images ?? []).map((path) => this.requireChatImages().verify(path)));
         if (!r.text.trim() && !images.length) throw new Error("Escreva uma mensagem ou anexe uma imagem.");
         // O pacote de handoff vai na primeira mensagem após a troca, e só nela.
         const handoff = this.store.pendingHandoff(r.taskId);
-        this.requireChat().send(r.taskId, target, r.text, images, handoff);
+        // A memória do projeto vai só na primeira mensagem de uma conversa nova.
+        const memory =
+          memoryOn && this.requireChat().isFresh(r.taskId)
+            ? prepareMemory(this.store, task.projectId, `${task.title}\n${task.prompt}\n${r.text}`, target.mcp !== null)
+            : { text: null, ids: [] };
+        const preamble = handoff && memory.text ? withHandoff(handoff, memory.text) : (handoff ?? memory.text);
+        this.requireChat().send(r.taskId, target, r.text, images, preamble);
         if (handoff) this.store.clearHandoff(r.taskId, "Resumo da troca de agente entregue ao chat.");
+        if (memory.ids.length) {
+          this.store.touchMemories(memory.ids);
+          this.store.note(r.taskId, `${memory.ids.length} nota(s) da memória do projeto enviada(s) ao chat.`);
+        }
         return null;
       }
       case "chatDecide":
@@ -648,6 +773,7 @@ export class Service {
           await this.git.requireCurrent(path, t.branch);
           const revision = await this.git.fingerprint(path);
           const result = this.store.complete(t.id, revision);
+          await this.rememberTask(result);
           this.changed();
           return result;
         });

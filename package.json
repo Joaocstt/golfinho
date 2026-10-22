@@ -1,6 +1,6 @@
 {
   "name": "golfinho",
-  "version": "0.1.30",
+  "version": "0.1.31",
   "private": true,
   "description": "Ambiente desktop para tarefas com agentes e branches Git",
   "type": "module",
@@ -21,6 +21,7 @@
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "0.3.299",
     "@fontsource-variable/geist": "5.3.0",
+    "@modelcontextprotocol/sdk": "1.32.1",
     "@xterm/addon-fit": "0.11.0",
     "@xterm/addon-search": "0.16.0",
     "@xterm/addon-unicode11": "0.9.0",
@@ -28,6 +29,7 @@
     "@xterm/xterm": "6.0.0",
     "electron-updater": "6.8.10",
     "lucide-react": "1.57.0",
+    "material-icon-theme": "5.39.0",
     "monaco-editor": "0.57.0",
     "node-pty": "1.1.0",
     "react": "19.3.1",

@@ -1,5 +1,6 @@
 import React from "react";
 import {
+  Brain,
   CircleCheck,
   CloudUpload,
   FolderPlus,
@@ -75,6 +76,38 @@ const TOPICS: Topic[] = [
         <li>
           <b>Encerrar se parado</b>: se o agente ficar esse tempo sem mostrar nada e sem você digitar,
           a execução é encerrada e a vaga é liberada. Conversas ativas nunca são cortadas; 0 desativa.
+        </li>
+      </ul>
+    ),
+  },
+  {
+    title: "Memória do projeto",
+    icon: Brain,
+    body: (
+      <ul>
+        <li>
+          A aba <b>Memória</b> guarda notas de cada projeto: decisões, convenções, armadilhas, contexto e o
+          registro das tarefas concluídas. Tudo fica só neste computador.
+        </li>
+        <li>
+          Cada tarefa ganha uma nota automática, atualizada a cada resposta do chat, a cada fim de
+          execução no terminal e ao concluir. Você também pode usar <b>Salvar na memória</b> numa resposta
+          do chat ou criar notas na aba Memória, e o agente pode usar <code>memoria_salvar</code>.
+        </li>
+        <li>
+          Numa conversa nova, inclusive ao trocar de agente, o agente recebe <b>todas</b> as notas: primeiro as
+          <b>fixadas</b>, depois as mais relacionadas ao pedido e as mais recentes. Se forem muitas, as últimas
+          vão só pelo título. Ao retomar uma sessão, nada é repetido. <b>Arquivar</b> tira a nota do envio sem
+          apagá-la.
+        </li>
+        <li>
+          A nota automática traz a linha do tempo da conversa: suas mensagens, as respostas e ferramentas
+          de cada agente e as trocas de agente. Claude e Codex também ganham ferramentas MCP para buscar
+          nas notas e no histórico completo das conversas, e para gravar notas. O Antigravity recebe só
+          as notas da primeira mensagem.
+        </li>
+        <li>
+          Para desligar, use <b>Configurações → Memória do projeto</b>.
         </li>
       </ul>
     ),

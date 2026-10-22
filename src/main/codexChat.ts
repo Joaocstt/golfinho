@@ -1,7 +1,8 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import type { ChatEvent } from "../shared/contracts";
-import { executablePath } from "./agents";
+import { codexMcpArgs, executablePath } from "./agents";
+import { MEMORY_TOKEN_ENV } from "./memory";
 import { launchTarget } from "./shellCommand";
 import type { ChatBackend, ChatOptions } from "./chat";
 import type { ChatImage } from "./chatImages";
@@ -110,8 +111,15 @@ export class CodexChatSession implements ChatBackend {
   private async launch() {
     const path = executablePath(this.executable);
     if (!path) throw new Error(`Executável não encontrado: ${this.executable}. Configure seu caminho em Configurações.`);
-    const target = launchTarget(path, ["app-server"]);
-    const child = spawn(target.file, target.args, { cwd: this.cwd, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+    // A memória do projeto entra como servidor MCP só desta conversa; o token vai pelo ambiente.
+    const mcp = this.options.mcp;
+    const target = launchTarget(path, ["app-server", ...codexMcpArgs(mcp)]);
+    const child = spawn(target.file, target.args, {
+      cwd: this.cwd,
+      stdio: ["pipe", "pipe", "pipe"],
+      windowsHide: true,
+      ...(mcp ? { env: { ...process.env, [MEMORY_TOKEN_ENV]: mcp.token } } : {}),
+    });
     this.child = child;
     child.stdout.setEncoding("utf8");
     child.stdout.on("data", (chunk: string) => this.read(chunk));

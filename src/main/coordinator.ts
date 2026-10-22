@@ -9,6 +9,7 @@ import { checkoutOf, requireCheckout } from "./checkout";
 import { join } from "node:path";
 import type { Provider } from "../shared/contracts";
 import { withHandoff } from "./handoff";
+import { MEMORY_TOKEN_ENV, prepareMemory, withMemory, type MemoryLink } from "./memory";
 export interface Handle {
   write(data: string): void;
   resize(cols: number, rows: number): void;
@@ -50,6 +51,8 @@ interface Execution {
 }
 export class Coordinator {
   private active = new Map<string, Execution>();
+  private memory: MemoryLink | null = null;
+  private runEnded: (taskId: string) => void = () => undefined;
   private owners = new Map<string, string>();
   private stopping = false;
   private pending = new Set<Promise<void>>();
@@ -82,6 +85,14 @@ export class Coordinator {
       findSession(provider, cwd, since, undefined, exclude),
   ) {}
   // Tenta iniciar as tarefas da fila agora, sem esperar a próxima liberação de vaga.
+  // Servidor MCP da memória, quando o app conseguiu subir um. Sem ele, só as notas no prompt.
+  useMemory(memory: MemoryLink | null) {
+    this.memory = memory;
+  }
+  // Chamado quando uma execução do terminal termina, para atualizar o registro na memória.
+  afterRun(fn: (taskId: string) => void) {
+    this.runEnded = fn;
+  }
   kick() {
     this.pump();
   }
@@ -214,12 +225,23 @@ export class Coordinator {
         if (code !== 0) throw new Error(`Setup falhou com código ${code}. A CLI não foi iniciada.`);
         this.store.update(id, { setupDone: true }, "Setup da pasta concluído.");
       }
-      const cmd = this.store.settings().executables[t.provider];
+      const settings = this.store.settings();
+      const cmd = settings.executables[t.provider];
       // Um id igual ao do chat veio de uma detecção antiga e errada: começa uma sessão nova.
       const resume = t.sessionId && t.sessionId !== t.chatSessionId ? t.sessionId : null;
       // O pacote de handoff entra só numa execução nova: retomar a sessão da CLI não usa o prompt.
       const handoff = resume ? null : this.store.pendingHandoff(id);
-      const args = invocation(t.provider, e.path, withHandoff(handoff, t.prompt), resume).args;
+      // Memória do projeto: as ferramentas MCP valem também ao retomar; as notas entram só numa
+      // execução nova, como o handoff. O Antigravity não tem MCP por execução.
+      const memoryOn = settings.memory?.enabled !== false;
+      const mcp = memoryOn && t.provider !== "antigravity" ? (this.memory?.launch(id) ?? null) : null;
+      const memory =
+        // Sem instruções a CLI abre vazia: só as notas fariam o agente agir sem pedido.
+        memoryOn && !resume && t.prompt.trim()
+          ? prepareMemory(this.store, t.projectId, `${t.title}\n${t.prompt}`, mcp !== null)
+          : { text: null, ids: [] };
+      const prompt = withHandoff(handoff, withMemory(memory.text, t.prompt));
+      const args = invocation(t.provider, e.path, prompt, resume, mcp).args;
       this.logs.append(
         id,
         `\r\n── ${t.provider} · ${t.branch}${resume ? " · retomando sessão" : ""} ──\r\n`,
@@ -235,6 +257,7 @@ export class Coordinator {
           }
         },
         (code) => this.ended(id, e, code),
+        mcp && this.memory ? { [MEMORY_TOKEN_ENV]: this.memory.token } : undefined,
       );
       if (e.cancelled || this.stopping || this.active.get(id) !== e) {
         handle.stop();
@@ -243,6 +266,10 @@ export class Coordinator {
       }
       e.handle = handle;
       if (handoff) this.store.clearHandoff(id, `Resumo da troca de agente entregue a ${t.provider}.`);
+      if (memory.ids.length) {
+        this.store.touchMemories(memory.ids);
+        this.store.note(id, `${memory.ids.length} nota(s) da memória do projeto enviada(s) a ${t.provider}.`);
+      }
       // Também redetectamos ao retomar: a CLI pode abrir um rollout novo (o Codex
       // registra `forked_from_id`), e guardar o id velho faria a próxima retomada
       // voltar à conversa anterior, perdendo tudo que foi feito nesta.
@@ -319,6 +346,7 @@ export class Coordinator {
           : `CLI encerrou com código ${code}.`,
       );
     this.release(id, e);
+    this.runEnded(id);
   }
   private release(id: string, e: Execution, pumpNow = true) {
     if (this.active.get(id) !== e) return;

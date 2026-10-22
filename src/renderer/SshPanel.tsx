@@ -1,13 +1,15 @@
 import React, { useState } from "react";
-import { Folder, File, Plus, RefreshCw, Terminal, Trash2, KeyRound, ChevronDown, ChevronRight, X } from "lucide-react";
-import type { Request, SshConnection, SshListing } from "../shared/contracts";
-const request = <T,>(r: Request) => window.golfinho.request(r) as Promise<T>;
+import { FolderTree, KeyRound, Lock, Plus, Server, Terminal, Trash2 } from "lucide-react";
+import type { SshConnection } from "../shared/contracts";
+import { Badge, Button, Field, TextInput, useConfirm } from "./ui";
 const emptyForm = { name: "", host: "", user: "", port: "22", identityFile: "" };
-// Perfis de acesso SSH e a árvore de arquivos do servidor. Somente leitura: o app não
-// grava nada na VPS. Nenhuma senha aparece aqui; a guardada fica no cofre do sistema.
+
+// Perfis de acesso SSH. Os arquivos do servidor aparecem na barra lateral; o app não grava
+// nada na VPS por conta própria. Nenhuma senha aparece aqui: a guardada fica no cofre do sistema.
 export function SshPanel({
   connections,
   passwords,
+  expanded = {},
   onSave,
   onSavePassword,
   onForgetPassword,
@@ -17,6 +19,8 @@ export function SshPanel({
 }: {
   connections: SshConnection[];
   passwords: string[];
+  /** Perfis com a árvore de arquivos aberta na barra lateral. */
+  expanded?: Record<string, boolean>;
   onSave: (next: SshConnection[]) => Promise<void>;
   onSavePassword: (connectionId: string, password: string) => Promise<void>;
   onForgetPassword: (connectionId: string) => Promise<void>;
@@ -24,16 +28,19 @@ export function SshPanel({
   onExpand: (connection: SshConnection) => void;
   onError: (e: unknown) => void;
 }) {
+  const confirm = useConfirm();
   const [keyFor, setKeyFor] = useState<string | null>(null);
   const [secret, setSecret] = useState("");
   const [secretError, setSecretError] = useState("");
+  const [creating, setCreating] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [formError, setFormError] = useState("");
+
   async function add(event: React.FormEvent) {
     event.preventDefault();
     const connection: SshConnection = {
       id: crypto.randomUUID(),
-      name: form.name.trim() || `${form.user}@${form.host}`,
+      name: form.name.trim() || `${form.user.trim()}@${form.host.trim()}`,
       host: form.host.trim(),
       user: form.user.trim(),
       port: Number(form.port) || 22,
@@ -43,61 +50,204 @@ export function SshPanel({
       await onSave([...connections, connection]);
       setForm(emptyForm);
       setFormError("");
+      setCreating(false);
     } catch (e) {
       setFormError((e as Error).message);
     }
   }
+  const auth = (c: SshConnection) =>
+    c.identityFile ? (
+      <Badge tone="brand">
+        <KeyRound size={11} /> Chave
+      </Badge>
+    ) : passwords.includes(c.id) ? (
+      <Badge tone="success">
+        <Lock size={11} /> Senha guardada
+      </Badge>
+    ) : (
+      <Badge>Senha no terminal</Badge>
+    );
+
   return (
     <section className="ssh-panel">
-      <div className="overview-head">
-        <h1>SSH</h1>
-        <span>Os arquivos do servidor aparecem na barra lateral</span>
-      </div>
-      <div className="ssh-layout">
-        <div className="ssh-list">
-          {connections.length === 0 && <p className="notice">Nenhuma conexão salva ainda.</p>}
-          {connections.map((c) => (
-            <div key={c.id} className={"ssh-card " + ""}>
-              <button className="ssh-card-main" title="Mostrar os arquivos na barra lateral" onClick={() => onExpand(c)}>
-                <strong>{c.name}</strong>
-                <small>
-                  {c.user}@{c.host}:{c.port}
-                  {c.identityFile ? " · chave" : passwords.includes(c.id) ? " · senha guardada" : " · senha no terminal"}
-                </small>
-              </button>
-              <button
-                title="Conectar: abre o terminal SSH e mostra os arquivos do servidor na direita"
-                aria-label={`Conectar ${c.name}`}
-                onClick={() => onTerminal(c)}
+      <div className="ssh-inner">
+        <div className="ssh-head">
+          <div>
+            <h1>SSH</h1>
+            <p>Conecte em servidores pelo terminal do Golfinho. Os arquivos do servidor aparecem na barra lateral.</p>
+          </div>
+          {!creating && (
+            <Button variant="primary" icon={<Plus size={14} />} onClick={() => setCreating(true)}>
+              Nova conexão
+            </Button>
+          )}
+        </div>
+
+        {creating && (
+          <form className="ui-card ssh-new" onSubmit={add} onKeyDown={(e) => e.key === "Escape" && setCreating(false)}>
+            <div className="ssh-new-head">
+              <Server size={16} />
+              <strong>Nova conexão</strong>
+            </div>
+            <div className="ssh-new-grid">
+              <Field label="Nome" htmlFor="ssh-name" hint="Opcional. Sem nome, vira usuário@servidor.">
+                <TextInput
+                  id="ssh-name"
+                  autoFocus
+                  placeholder="Ex.: Produção"
+                  value={form.name}
+                  onChange={(e) => setForm({ ...form, name: e.target.value })}
+                />
+              </Field>
+              <Field label="Servidor" htmlFor="ssh-host">
+                <TextInput
+                  id="ssh-host"
+                  required
+                  spellCheck={false}
+                  placeholder="Host ou IP"
+                  value={form.host}
+                  onChange={(e) => setForm({ ...form, host: e.target.value })}
+                />
+              </Field>
+              <Field label="Usuário" htmlFor="ssh-user">
+                <TextInput
+                  id="ssh-user"
+                  required
+                  spellCheck={false}
+                  placeholder="Ex.: suporte"
+                  value={form.user}
+                  onChange={(e) => setForm({ ...form, user: e.target.value })}
+                />
+              </Field>
+              <Field label="Porta" htmlFor="ssh-port">
+                <TextInput
+                  id="ssh-port"
+                  type="number"
+                  min={1}
+                  max={65535}
+                  value={form.port}
+                  onChange={(e) => setForm({ ...form, port: e.target.value })}
+                />
+              </Field>
+              <Field
+                label="Chave privada"
+                htmlFor="ssh-key"
+                className="ssh-wide"
+                hint="Opcional. Caminho absoluto da chave. Sem chave, a senha é pedida no terminal ou vem do cofre."
               >
-                <Terminal size={13} /> Conectar
-              </button>
-              {!c.identityFile && (
-                <button
-                  title={passwords.includes(c.id) ? "Trocar ou esquecer a senha guardada" : "Guardar a senha no cofre do sistema"}
-                  aria-label={`Senha de ${c.name}`}
-                  onClick={() => {
-                    setSecret("");
-                    setSecretError("");
-                    setKeyFor(keyFor === c.id ? null : c.id);
-                  }}
-                >
-                  <KeyRound size={13} />
-                </button>
-              )}
-              <button
-                title="Remover perfil"
-                aria-label={`Remover ${c.name}`}
+                <TextInput
+                  id="ssh-key"
+                  spellCheck={false}
+                  placeholder="/home/você/.ssh/id_ed25519"
+                  value={form.identityFile}
+                  onChange={(e) => setForm({ ...form, identityFile: e.target.value })}
+                />
+              </Field>
+            </div>
+            {formError && <p className="ssh-error">{formError}</p>}
+            <div className="ssh-new-actions">
+              <Button
                 onClick={() => {
-                  if (window.confirm(`Remover o perfil "${c.name}"? Nada no servidor é alterado.`))
-                    void onSave(connections.filter((x) => x.id !== c.id)).catch(onError);
+                  setCreating(false);
+                  setFormError("");
                 }}
               >
-                <Trash2 size={13} />
-              </button>
+                Cancelar
+              </Button>
+              <Button type="submit" variant="primary">
+                Salvar conexão
+              </Button>
+            </div>
+          </form>
+        )}
+
+        {connections.length === 0 && !creating && (
+          <div className="ssh-empty">
+            <Server size={28} />
+            <strong>Nenhuma conexão salva</strong>
+            <p>Cadastre um servidor para abrir o terminal SSH e navegar pelos arquivos dele.</p>
+            <Button variant="primary" icon={<Plus size={14} />} onClick={() => setCreating(true)}>
+              Nova conexão
+            </Button>
+          </div>
+        )}
+
+        <div className="ssh-grid">
+          {connections.map((c) => (
+            <article key={c.id} className={"ui-card ssh-conn" + (expanded[c.id] ? " open" : "")}>
+              <div className="ssh-conn-head">
+                <span className="ssh-conn-icon">
+                  <Server size={16} />
+                </span>
+                <div className="ssh-conn-title">
+                  <strong title={c.name}>{c.name}</strong>
+                  <code title={`${c.user}@${c.host}:${c.port}`}>
+                    {c.user}@{c.host}
+                    {c.port !== 22 && `:${c.port}`}
+                  </code>
+                </div>
+                {auth(c)}
+              </div>
+              <div className="ssh-conn-actions">
+                <Button
+                  size="sm"
+                  variant="primary"
+                  icon={<Terminal size={13} />}
+                  title="Abre o terminal SSH e mostra os arquivos do servidor na barra lateral"
+                  aria-label={`Conectar ${c.name}`}
+                  onClick={() => onTerminal(c)}
+                >
+                  Conectar
+                </Button>
+                <Button
+                  size="sm"
+                  icon={<FolderTree size={13} />}
+                  aria-pressed={Boolean(expanded[c.id])}
+                  title="Mostrar ou esconder os arquivos do servidor na barra lateral"
+                  onClick={() => onExpand(c)}
+                >
+                  {expanded[c.id] ? "Esconder arquivos" : "Arquivos"}
+                </Button>
+                {!c.identityFile && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    icon={<KeyRound size={13} />}
+                    aria-label={`Senha de ${c.name}`}
+                    aria-expanded={keyFor === c.id}
+                    title={passwords.includes(c.id) ? "Trocar ou esquecer a senha guardada" : "Guardar a senha no cofre do sistema"}
+                    onClick={() => {
+                      setSecret("");
+                      setSecretError("");
+                      setKeyFor(keyFor === c.id ? null : c.id);
+                    }}
+                  >
+                    Senha
+                  </Button>
+                )}
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="ssh-remove"
+                  icon={<Trash2 size={13} />}
+                  aria-label={`Remover ${c.name}`}
+                  title="Remover perfil"
+                  onClick={async () => {
+                    if (
+                      await confirm({
+                        title: `Remover o perfil "${c.name}"?`,
+                        message: "O perfil sai do Golfinho, junto com a senha guardada. Nada no servidor é alterado.",
+                        confirmLabel: "Remover perfil",
+                        tone: "danger",
+                      })
+                    )
+                      void onSave(connections.filter((x) => x.id !== c.id)).catch(onError);
+                  }}
+                />
+              </div>
               {keyFor === c.id && (
                 <form
-                  className="ssh-secret"
+                  className="ssh-secret-form"
                   onSubmit={async (event) => {
                     event.preventDefault();
                     try {
@@ -109,46 +259,53 @@ export function SshPanel({
                     }
                   }}
                 >
-                  <input
-                    type="password"
-                    autoComplete="new-password"
-                    placeholder="Senha do servidor"
-                    value={secret}
-                    onChange={(e) => setSecret(e.target.value)}
-                  />
-                  {secretError && <p className="error">{secretError}</p>}
-                  <div>
-                    <button className="primary" disabled={!secret}>
-                      Guardar no cofre
-                    </button>
+                  <Field
+                    label={passwords.includes(c.id) ? "Nova senha" : "Senha do servidor"}
+                    htmlFor={`ssh-secret-${c.id}`}
+                    error={secretError || undefined}
+                    hint="Fica no cofre do sistema (GNOME Keyring ou Keychain), nunca no banco do Golfinho."
+                  >
+                    <TextInput
+                      id={`ssh-secret-${c.id}`}
+                      type="password"
+                      autoFocus
+                      autoComplete="new-password"
+                      value={secret}
+                      onChange={(e) => setSecret(e.target.value)}
+                    />
+                  </Field>
+                  <div className="ssh-secret-actions">
                     {passwords.includes(c.id) && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (window.confirm(`Esquecer a senha guardada de "${c.name}"?`))
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="ssh-remove"
+                        onClick={async () => {
+                          if (
+                            await confirm({
+                              title: `Esquecer a senha de "${c.name}"?`,
+                              message: "A senha sai do cofre do sistema. Na próxima conexão, ela será pedida no terminal.",
+                              confirmLabel: "Esquecer senha",
+                              tone: "danger",
+                            })
+                          )
                             void onForgetPassword(c.id).then(() => setKeyFor(null), onError);
                         }}
                       >
                         Esquecer senha
-                      </button>
+                      </Button>
                     )}
+                    <Button size="sm" onClick={() => setKeyFor(null)}>
+                      Cancelar
+                    </Button>
+                    <Button size="sm" type="submit" variant="primary" disabled={!secret}>
+                      Guardar no cofre
+                    </Button>
                   </div>
                 </form>
               )}
-            </div>
+            </article>
           ))}
-          <form className="ssh-form" onSubmit={add}>
-            <strong>Nova conexão</strong>
-            <input placeholder="Nome (opcional)" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
-            <input required placeholder="Servidor (host ou IP)" value={form.host} onChange={(e) => setForm({ ...form, host: e.target.value })} />
-            <input required placeholder="Usuário" value={form.user} onChange={(e) => setForm({ ...form, user: e.target.value })} />
-            <input type="number" min={1} max={65535} placeholder="Porta" value={form.port} onChange={(e) => setForm({ ...form, port: e.target.value })} />
-            <input placeholder="Chave privada (ex.: /home/você/.ssh/id_ed25519), opcional" value={form.identityFile} onChange={(e) => setForm({ ...form, identityFile: e.target.value })} />
-            {formError && <p className="error">{formError}</p>}
-            <button className="primary">
-              <Plus size={12} /> Salvar conexão
-            </button>
-          </form>
         </div>
       </div>
     </section>

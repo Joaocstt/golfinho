@@ -1,7 +1,7 @@
 import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Paperclip, X } from "lucide-react";
+import { Brain, Lock, Paperclip, Play, X } from "lucide-react";
 import type { ChatBlock, ChatEvent, ChatHistoryItem, Provider, Request } from "../shared/contracts";
 import { currentContext } from "../shared/chatContext";
 export interface ChatPaneProps {
@@ -12,6 +12,8 @@ export interface ChatPaneProps {
   onDraftChange: (draft: string) => void;
   onError: (e: unknown) => void;
   approvalTarget?: { id: string; version: number };
+  /** Chat bloqueado enquanto a sessão da tarefa não é retomada: aviso e ação no lugar do campo. */
+  locked?: { message: string; actionLabel: string; onAction: () => void; busy?: boolean } | null;
 }
 // Cada provedor tem a sua cor de destaque, para não parecer a conversa de outro.
 const LABELS: Record<string, string> = { claude: "Claude", codex: "Codex", antigravity: "Antigravity" };
@@ -120,6 +122,28 @@ function CodeBlock({ children, ...props }: React.HTMLAttributes<HTMLPreElement> 
     </div>
   );
 }
+// Guarda a resposta como nota da memória do projeto, com a tarefa como origem.
+function SaveToMemory({ taskId, blocks, onError }: { taskId: string; blocks: ChatBlock[]; onError: (e: unknown) => void }) {
+  const [saved, setSaved] = useState(false);
+  const text = blocks
+    .flatMap((block) => (block.kind === "text" ? [block.text.trim()] : []))
+    .filter(Boolean)
+    .join("\n\n");
+  if (!text) return null;
+  return (
+    <button
+      type="button"
+      className="chat-remember"
+      title="Salvar esta resposta na memória do projeto"
+      disabled={saved}
+      onClick={() =>
+        void request({ action: "memoryFromChat", taskId, text }).then(() => setSaved(true), onError)
+      }
+    >
+      <Brain size={12} /> {saved ? "Salvo na memória" : "Salvar na memória"}
+    </button>
+  );
+}
 const Blocks = memo(function Blocks({ blocks }: { blocks: ChatBlock[] }) {
   return (
     <>
@@ -141,7 +165,7 @@ const Blocks = memo(function Blocks({ blocks }: { blocks: ChatBlock[] }) {
     </>
   );
 });
-export function ChatPane({ taskId, provider, model, draft, onDraftChange, onError, approvalTarget }: ChatPaneProps) {
+export function ChatPane({ taskId, provider, model, draft, onDraftChange, onError, approvalTarget, locked }: ChatPaneProps) {
   const [items, setItems] = useState<ChatHistoryItem[]>([]);
   const [attachments, setAttachments] = useState<string[]>([]);
   const [viewer, setViewer] = useState<string | null>(null);
@@ -350,6 +374,7 @@ export function ChatPane({ taskId, provider, model, draft, onDraftChange, onErro
                 data-agent={shownItems[i - 1]?.event.type === "user" ? (LABELS[provider] ?? provider) : undefined}
               >
                 <Blocks blocks={event.blocks} />
+                <SaveToMemory taskId={taskId} blocks={event.blocks} onError={onError} />
               </div>
             );
           if (event.type === "tool_result") {
@@ -446,6 +471,15 @@ export function ChatPane({ taskId, provider, model, draft, onDraftChange, onErro
           ↓
         </button>
       )}
+      {locked ? (
+        <div className="chat-locked" role="status">
+          <Lock size={15} aria-hidden="true" />
+          <p>{locked.message}</p>
+          <button type="button" className="primary" disabled={locked.busy} onClick={locked.onAction}>
+            <Play size={13} /> {locked.actionLabel}
+          </button>
+        </div>
+      ) : (
       <form
         className="chat-input"
         onSubmit={(e) => {
@@ -560,6 +594,7 @@ export function ChatPane({ taskId, provider, model, draft, onDraftChange, onErro
           )}
         </div>
       </form>
+      )}
       {viewer && (
         <div className="chat-viewer" role="dialog" aria-label="Imagem ampliada" onClick={() => setViewer(null)}>
           <img src={viewer} alt="Imagem ampliada" />

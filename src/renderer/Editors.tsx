@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, ChevronRight, ChevronUp, Eye, EyeOff, File, Folder, RefreshCw } from "lucide-react";
+import { ChevronDown, ChevronRight, ChevronUp, Eye, EyeOff, RefreshCw } from "lucide-react";
+import { FileTypeIcon } from "./fileIcons";
 import * as monaco from "monaco-editor";
 import EditorWorker from "monaco-editor/editor/editor.worker.js?worker";
 import type { Changes, FileChange, Request, TreeEntry, TreeListing } from "../shared/contracts";
@@ -240,7 +241,8 @@ export function FileEditor({
   return (
     <>
       <div className="file-toolbar">
-        <span>
+        <span className="file-toolbar-path">
+          <FileTypeIcon name={path.split("/").pop() ?? path} size={15} />
           {path}
           {readOnly ? " • somente leitura" : dirty ? " • alterações não salvas" : ""}
         </span>
@@ -399,7 +401,7 @@ export function FileTree({
             ) : (
               <span className="tree-spacer" />
             )}
-            {isDirectory ? <Folder size={13} /> : <File size={13} />}
+            <FileTypeIcon name={entry.name} kind={isDirectory ? "directory" : "file"} open={isOpen} />
             <span className="tree-name">{entry.name}</span>
           </button>
           {isDirectory && isOpen && rows(entry.path, depth + 1)}

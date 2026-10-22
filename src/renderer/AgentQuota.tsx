@@ -30,6 +30,7 @@ export function AgentQuotaTip({ label, quota, loading }: { label: string; quota?
           </div>
         ))}
       {quota?.available && quota.plan && <p className="agent-tip-muted">Plano: {quota.plan}</p>}
+      {quota?.account && <p className="agent-tip-muted">Conta: {quota.account}</p>}
     </div>
   );
 }

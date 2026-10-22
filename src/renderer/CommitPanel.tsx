@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { ChevronDown, ChevronRight, Folder } from "lucide-react";
+import { ChevronDown, ChevronRight } from "lucide-react";
+import { FileTypeIcon } from "./fileIcons";
 import type { Changes, FileChange, Request } from "../shared/contracts";
 import { DiffPane } from "./Editors";
 const KIND: Record<string, { label: string; tone: string }> = {
@@ -149,7 +150,14 @@ export function CommitPanel({
                     }}
                     onChange={(e) => setMany(files, e.target.checked)}
                   />
-                  <Folder size={13} className="commit-folder-icon" />
+                  <FileTypeIcon
+                    name={dir === "." ? "" : dir.split("/").pop() ?? dir}
+                    kind="directory"
+                    open={isOpen}
+                    root={dir === "."}
+                    size={15}
+                    className="commit-folder-icon"
+                  />
                   <span className="commit-folder-name">{dir === "." ? "raiz" : dir}</span>
                   <span className="commit-folder-count">{files.length}</span>
                 </div>
@@ -168,6 +176,7 @@ export function CommitPanel({
                         onChange={(e) => setMany([path], e.target.checked)}
                       />
                       <span className={"commit-dot " + KIND[changes[path]]?.tone}></span>
+                      <FileTypeIcon name={nameOf(path)} size={15} />
                       <span className="commit-name">{nameOf(path)}</span>
                       <em className={"commit-kind " + KIND[changes[path]]?.tone}>
                         {KIND[changes[path]]?.label ?? changes[path]}

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Pencil, X, Save } from "lucide-react";
 import type { Request, SshWriteResult } from "../shared/contracts";
+import { useConfirm } from "./ui";
 const request = <T,>(r: Request) => window.golfinho.request(r) as Promise<T>;
 // Visualizador e editor de um arquivo do servidor. Começa somente leitura; editar é uma
 // escolha explícita, e salvar sempre passa por confirmação.
@@ -17,6 +18,7 @@ export function RemoteViewer({
   onClose: () => void;
   onError: (e: unknown) => void;
 }) {
+  const confirm = useConfirm();
   const [content, setContent] = useState<string | null>(null);
   const [mtime, setMtime] = useState<number | null>(null);
   const [draft, setDraft] = useState("");
@@ -52,8 +54,17 @@ export function RemoteViewer({
     setEditing(true);
     setNotice("");
   }
-  function stopEditing() {
-    if (dirty && !window.confirm("Descartar as alterações não salvas deste arquivo?")) return;
+  async function stopEditing() {
+    if (
+      dirty &&
+      !(await confirm({
+        title: "Descartar as alterações?",
+        message: "As alterações neste arquivo ainda não foram salvas no servidor.",
+        confirmLabel: "Descartar",
+        tone: "danger",
+      }))
+    )
+      return;
     setEditing(false);
   }
   async function save() {

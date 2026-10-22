@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from "react";
 import { Search } from "lucide-react";
+import { FileTypeIcon } from "./fileIcons";
 import type { FileChange } from "../shared/contracts";
 const COLOR: Record<string, string> = { added: "#98c379", modified: "#e5c07b", deleted: "#e06c75" };
 const LETTER: Record<string, string> = { added: "N", modified: "M", deleted: "A" };
@@ -87,7 +88,8 @@ export function ReviewFiles({
         {groups.map(({ dir, files: list }) => (
           <div key={dir} className="review-group">
             <div className="review-dir" title={dir || "raiz do projeto"}>
-              {dir || "raiz do projeto"}
+              <FileTypeIcon name={dir ? dir.split("/").pop() ?? dir : ""} kind="directory" open root={!dir} size={14} />
+              <span>{dir || "raiz do projeto"}</span>
             </div>
             {list.map((f) => (
               <button
@@ -101,6 +103,7 @@ export function ReviewFiles({
                 <span className="review-badge" style={{ color: COLOR[f.status] }}>
                   {LETTER[f.status] ?? "?"}
                 </span>
+                <FileTypeIcon name={nameOf(f.path)} size={15} />
                 <span className="review-name">{nameOf(f.path)}</span>
               </button>
             ))}

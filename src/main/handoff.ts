@@ -54,7 +54,7 @@ export function buildHandoff(input: HandoffInput): string | null {
 }
 
 // Última resposta de texto do agente. Chamadas de ferramenta não entram no resumo.
-function lastReply(events: ChatEvent[]): string {
+export function lastReply(events: ChatEvent[]): string {
   for (let i = events.length - 1; i >= 0; i--) {
     const event = events[i];
     if (event.type !== "assistant") continue;
@@ -67,7 +67,7 @@ function lastReply(events: ChatEvent[]): string {
   return "";
 }
 
-function clip(text: string, max: number): string {
+export function clip(text: string, max: number): string {
   if (text.length <= max) return text;
   return `${text.slice(0, max - 1).trimEnd()}…`;
 }

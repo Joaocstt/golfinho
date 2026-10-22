@@ -1,6 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
-  FolderGit2,
   Plus,
   Settings as SettingsIcon,
   GitBranch,
@@ -14,23 +13,23 @@ import {
   Trash2,
   TriangleAlert,
   RefreshCw,
+  LogIn,
   Gauge,
   Server,
   ChevronDown,
   CircleHelp,
+  Brain,
   Columns2,
   Maximize2,
   ShieldQuestion,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from "lucide-react";
 import type {
   Snapshot,
   Task,
   Request,
-  CreateTask,
-  Settings,
-  Project,
   Provider,
-  ProjectRefs,
   DeleteInfo,
   ProviderQuota,
 } from "../shared/contracts";
@@ -43,9 +42,13 @@ import { AgentIcon } from "./agentIcons";
 import { AgentQuotaTip } from "./AgentQuota";
 import { SshPanel } from "./SshPanel";
 import { HelpPane } from "./HelpPane";
+import { MemoryPane } from "./MemoryPane";
+import { SettingsPanel } from "./SettingsPanel";
+import { TaskForm } from "./TaskForm";
+import { ConfirmProvider, useConfirm } from "./ui";
+import { FileTypeIcon } from "./fileIcons";
 import { RemoteTree } from "./RemoteTree";
 import { RemoteViewer } from "./RemoteViewer";
-import { UI_SCALES, applyUiScale, readUiScale } from "./uiScale";
 import { UpdateBanner } from "./UpdateBanner";
 import golfinhoLogo from "../../build/icon.png";
 
@@ -72,7 +75,16 @@ const labels: Record<string, string> = {
 const AGENT_NAMES: Record<string, string> = { codex: "Codex", claude: "Claude", antigravity: "Antigravity" };
 const OPEN_KEY = "golfinho.workspaces";
 const clampTaskRatio = (value: number) => Math.max(0.2, Math.min(0.8, value));
+// O provedor de confirmação envolve o app inteiro: qualquer tela pede confirmação com useConfirm.
 export default function App() {
+  return (
+    <ConfirmProvider>
+      <Workspace />
+    </ConfirmProvider>
+  );
+}
+function Workspace() {
+  const confirm = useConfirm();
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null),
     [project, setProject] = useState(""),
     [selected, setSelected] = useState(""),
@@ -85,7 +97,23 @@ export default function App() {
   const [permissionTarget, setPermissionTarget] = useState<PermissionRequest | null>(null);
   const [query, setQuery] = useState(""),
     [sidebarWidth, setSidebarWidth] = useState(260),
-    [inspector, setInspector] = useState(() => window.innerWidth >= 880);
+    [inspector, setInspector] = useState(() => window.innerWidth >= 880),
+    // Navegação recolhida: preferência de tela, guardada neste computador.
+    [sidebarHidden, setSidebarHidden] = useState(() => {
+      try {
+        return localStorage.getItem("golfinho.ui.sidebarHidden") === "1";
+      } catch {
+        return false;
+      }
+    });
+  function toggleSidebar(hidden: boolean) {
+    setSidebarHidden(hidden);
+    try {
+      localStorage.setItem("golfinho.ui.sidebarHidden", hidden ? "1" : "0");
+    } catch {
+      // Sem armazenamento, a escolha vale só nesta sessão.
+    }
+  }
   // As abas do topo listavam toda tarefa existente, o que não dá para fechar.
   // Agora são um conjunto aberto, lembrado entre sessões.
   const [open, setOpen] = useState<string[]>(() => {
@@ -112,6 +140,30 @@ export default function App() {
   const [dashboard, setDashboard] = useState(false);
   const [sshView, setSshView] = useState(false);
   const [helpView, setHelpView] = useState(false);
+  const [memoryView, setMemoryView] = useState(false);
+  // Projetos recolhidos na lateral. Preferência de tela: fica neste computador.
+  const [collapsed, setCollapsed] = useState<string[]>(() => {
+    try {
+      return JSON.parse(localStorage.getItem("golfinho.ui.collapsedProjects") ?? "[]");
+    } catch {
+      return [];
+    }
+  });
+  // Na busca, tudo aparece aberto: o resultado não pode ficar escondido num projeto recolhido.
+  function closedProject(id: string) {
+    return !query && collapsed.includes(id);
+  }
+  function toggleProject(id: string) {
+    setCollapsed((list) => {
+      const next = list.includes(id) ? list.filter((x) => x !== id) : [...list, id];
+      try {
+        localStorage.setItem("golfinho.ui.collapsedProjects", JSON.stringify(next));
+      } catch {
+        /* sem armazenamento: vale só nesta sessão */
+      }
+      return next;
+    });
+  }
   // Servidores expandidos na barra lateral, e o arquivo remoto aberto na área principal.
   const [sshOpen, setSshOpen] = useState<Record<string, boolean>>({});
   const [remoteFile, setRemoteFile] = useState<{ connectionId: string; path: string } | null>(null);
@@ -130,7 +182,7 @@ export default function App() {
   }, []);
   // Terminais gerais: fora de qualquer tarefa, na barra superior.
   const [general, setGeneral] = useState<
-    { key: string; label: string; provider?: Provider; projectId?: string; connectionId?: string }[]
+    { key: string; label: string; provider?: Provider; projectId?: string; connectionId?: string; login?: boolean }[]
   >([]);
   const [activeGeneral, setActiveGeneral] = useState("");
   // Posição fixa: a barra superior tem rolagem e cortaria um menu absoluto.
@@ -148,6 +200,14 @@ export default function App() {
   useEffect(() => {
     if (dashboard || activeGeneral || selected || sshView) setHelpView(false);
   }, [dashboard, activeGeneral, selected, sshView]);
+  // A aba da tarefa aberta fica sempre à vista, mesmo com a barra cheia.
+  useEffect(() => {
+    document.querySelector(".workspace-tab.active")?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [selected]);
+  // E também a Memória.
+  useEffect(() => {
+    if (dashboard || activeGeneral || selected || sshView || helpView) setMemoryView(false);
+  }, [dashboard, activeGeneral, selected, sshView, helpView]);
   const resizeCleanup = useRef<() => void>(() => {});
   useEffect(() => () => resizeCleanup.current(), []);
   const snapshotEpoch = useRef(0);
@@ -266,7 +326,7 @@ export default function App() {
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", end);
   }
-  function addGeneral(label: string, provider?: Provider, connectionId?: string) {
+  function addGeneral(label: string, provider?: Provider, connectionId?: string, login?: boolean) {
     const key = crypto.randomUUID();
     const projectName = snapshot?.projects.find((p) => p.id === project)?.name;
     setGeneral((all) => [
@@ -277,6 +337,7 @@ export default function App() {
         provider,
         projectId: connectionId ? undefined : project || undefined,
         connectionId,
+        login,
       },
     ]);
     setActiveGeneral(key);
@@ -304,7 +365,15 @@ export default function App() {
   }
   // Fechar é só tirar da barra: não toca na tarefa nem no repositório.
   function closeTask(id: string) {
-    if (panels.current[id]?.canLeave() === false) return;
+    // Sem alteração no editor, fecha na hora; com alteração, só depois da confirmação.
+    const leave = panels.current[id]?.canLeave() ?? true;
+    if (leave instanceof Promise) {
+      void leave.then((ok) => ok && closeTaskNow(id));
+      return;
+    }
+    if (leave) closeTaskNow(id);
+  }
+  function closeTaskNow(id: string) {
     const drop = () => {
       const position = open.indexOf(id);
       const rest = open.filter((x) => x !== id);
@@ -332,7 +401,10 @@ export default function App() {
     window.addEventListener("pointerup", end);
   }
   return (
-    <div className="app" style={{ "--sidebar-width": `${sidebarWidth}px` } as React.CSSProperties}>
+    <div
+      className={"app" + (sidebarHidden ? " sidebar-hidden" : "")}
+      style={{ "--sidebar-width": `${sidebarWidth}px` } as React.CSSProperties}
+    >
       <UpdateBanner />
       <aside className="sidebar" aria-label="Projetos e tarefas">
         <div className="brand">
@@ -340,6 +412,13 @@ export default function App() {
             <img src={golfinhoLogo} alt="" width={23} height={23} />
           </span>
           <strong>golfinho</strong>
+          <button
+            aria-label="Recolher navegação"
+            title="Recolher navegação"
+            onClick={() => toggleSidebar(true)}
+          >
+            <PanelLeftClose size={14} />
+          </button>
           <button
             aria-label="Ajuda"
             title="Ajuda: como o Golfinho funciona"
@@ -401,14 +480,23 @@ export default function App() {
                 snapshot.tasks.some((t) => t.projectId === p.id && matches(t)),
             )
             .map((p) => (
-              <div className="project-group" key={p.id}>
+              <div className={"project-group" + (closedProject(p.id) ? " collapsed" : "")} key={p.id}>
+                <button
+                  className="project-toggle"
+                  aria-label={closedProject(p.id) ? `Expandir ${p.name}` : `Recolher ${p.name}`}
+                  aria-expanded={!closedProject(p.id)}
+                  title={closedProject(p.id) ? "Expandir tarefas" : "Recolher tarefas"}
+                  onClick={() => toggleProject(p.id)}
+                >
+                  <ChevronRight size={12} />
+                </button>
                 <button
                   className={"project-row " + (project === p.id ? "active" : "")}
                   title={p.path}
                   onClick={() => setProject(p.id)}
+                  onDoubleClick={() => toggleProject(p.id)}
                 >
-                  <ChevronRight size={11} />
-                  <FolderGit2 size={13} />
+                  <FileTypeIcon name={p.name} kind="directory" open={!closedProject(p.id)} size={15} />
                   <span>{p.name}</span>
                   {snapshot.activeBranches?.[p.id] && (
                     <span className="project-branch" title="Branch ativa na pasta do projeto">
@@ -427,11 +515,14 @@ export default function App() {
                       : "Remover do Golfinho (a pasta não é apagada)"
                   }
                   disabled={busy || snapshot.tasks.some((t) => t.projectId === p.id)}
-                  onClick={() => {
+                  onClick={async () => {
                     if (
-                      !window.confirm(
-                        `Remover "${p.name}" do Golfinho? A pasta e o repositório Git não são alterados.`,
-                      )
+                      !(await confirm({
+                        title: `Remover "${p.name}" do Golfinho?`,
+                        message: "Só o registro sai do Golfinho. A pasta e o repositório Git não são alterados.",
+                        confirmLabel: "Remover projeto",
+                        tone: "danger",
+                      }))
                     )
                       return;
                     perform(async () => {
@@ -442,7 +533,7 @@ export default function App() {
                 >
                   <X size={12} />
                 </button>
-                <div className="branch-tree">
+                {!closedProject(p.id) && <div className="branch-tree">
                   {snapshot.tasks
                     .filter((t) => t.projectId === p.id && matches(t))
                     .map((t) => (
@@ -494,7 +585,7 @@ export default function App() {
                         </button>
                       </div>
                     ))}
-                </div>
+                </div>}
               </div>
             ))}
           {snapshot?.projects.length === 0 && (
@@ -531,9 +622,23 @@ export default function App() {
       />
       <div className="workspace">
         <header className="topbar">
+          {sidebarHidden && (
+            <button
+              className="sidebar-show"
+              aria-label="Mostrar navegação"
+              title="Mostrar navegação"
+              onClick={() => toggleSidebar(false)}
+            >
+              <PanelLeftOpen size={14} />
+            </button>
+          )}
           {/* Com abas de tarefa ou terminal abertas, as abas fixas mostram só o ícone. */}
           <div
             className={"workspace-tabs" + (open.length || general.length ? " compact" : "")}
+            // A barra não mostra rolagem: com muitas abas, a roda do mouse leva às que ficaram fora.
+            onWheel={(e) => {
+              if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) e.currentTarget.scrollLeft += e.deltaY;
+            }}
             role="tablist"
             aria-label="Workspaces"
           >
@@ -541,9 +646,9 @@ export default function App() {
               role="tab"
               aria-label="Visão geral das tarefas"
               title="Tarefas"
-              aria-selected={!selected && !dashboard && !sshView && !helpView && !activeGeneral}
-              className={!selected && !dashboard && !sshView && !helpView && !activeGeneral ? "active" : ""}
-              onClick={() => navigate(() => (setDashboard(false), setSshView(false), setHelpView(false), setActiveGeneral(""), setSelected("")))}
+              aria-selected={!selected && !dashboard && !sshView && !helpView && !memoryView && !activeGeneral}
+              className={!selected && !dashboard && !sshView && !helpView && !memoryView && !activeGeneral ? "active" : ""}
+              onClick={() => navigate(() => (setDashboard(false), setSshView(false), setHelpView(false), setMemoryView(false), setActiveGeneral(""), setSelected("")))}
             >
               <List size={12} />
               <span className="nav-label">Tarefas</span>
@@ -569,6 +674,19 @@ export default function App() {
             >
               <Server size={12} />
               <span className="nav-label">SSH</span>
+            </button>
+            <button
+              role="tab"
+              aria-label="Memória dos projetos"
+              title="Memória"
+              aria-selected={memoryView}
+              className={memoryView ? "active" : ""}
+              onClick={() =>
+                navigate(() => (setDashboard(false), setSshView(false), setHelpView(false), setActiveGeneral(""), setSelected(""), setMemoryView(true)))
+              }
+            >
+              <Brain size={12} />
+              <span className="nav-label">Memória</span>
             </button>
             {open
               .map((id) => snapshot?.tasks.find((t) => t.id === id))
@@ -712,11 +830,23 @@ export default function App() {
               </button>
             </div>
           )}
-          {dashboard && <UsageDashboard />}
+          {dashboard && (
+            <UsageDashboard onLogin={() => navigate(() => addGeneral("Login · Claude", "claude", undefined, true))} />
+          )}
           {helpView && <HelpPane />}
+          {memoryView && snapshot && (
+            <MemoryPane
+              projects={snapshot.projects}
+              tasks={snapshot.tasks}
+              initialProject={project}
+              enabled={snapshot.settings.memory?.enabled !== false}
+              onOpenTask={openTask}
+            />
+          )}
           {sshView && snapshot && (
             <SshPanel
               connections={snapshot.settings.ssh}
+              expanded={sshOpen}
               passwords={snapshot.sshPasswords}
               onError={report}
               onSavePassword={async (connectionId, password) => {
@@ -744,13 +874,14 @@ export default function App() {
                         action: "shellOpenGeneral",
                         projectId: g.projectId,
                         provider: g.provider,
+                        login: g.login,
                       })
                 }
                 onError={report}
               />
             </section>
           ))}
-          {!task && !dashboard && !sshView && !helpView && !activeGeneral && (
+          {!task && !dashboard && !sshView && !helpView && !memoryView && !activeGeneral && (
             <section className="overview">
               <div className="overview-head">
                 <h1>{snapshot?.projects.find((p) => p.id === project)?.name ?? "Tarefas"}</h1>
@@ -809,7 +940,7 @@ export default function App() {
           )}
           {snapshot && open.length > 0 && (
             <div className={"task-workspaces" + (splitTasks.length === 2 ? " divided" : "")}
-              hidden={!task || dashboard || Boolean(activeGeneral) || sshView || helpView}
+              hidden={!task || dashboard || Boolean(activeGeneral) || sshView || helpView || memoryView}
               style={splitTasks.length === 2 ? { gridTemplateColumns: `minmax(0, ${taskRatio}fr) 6px minmax(0, ${1 - taskRatio}fr)` } : undefined}
               ref={taskArea}>
               {open.map((id) => {
@@ -932,16 +1063,40 @@ export default function App() {
           ) : null}
         </aside>
       )}
-      {modal && snapshot && (
+      {modal === "settings" && snapshot && (
         <div className="modal-backdrop">
-          <div
-            className="modal"
-            role="dialog"
-            aria-modal="true"
-            aria-label={modal === "task" ? "Nova tarefa" : "Configurações"}
-          >
+          <div className="modal settings-modal" role="dialog" aria-modal="true" aria-label="Configurações">
+            <SettingsPanel
+              settings={snapshot.settings}
+              projects={snapshot.projects}
+              agents={snapshot.agents}
+              busy={busy}
+              error={
+                error ? (
+                  <div className="error" role="alert">
+                    {error}
+                  </div>
+                ) : null
+              }
+              onClose={() => {
+                setModal(null);
+                setError("");
+              }}
+              onSubmit={(settings) =>
+                perform(async () => {
+                  await request({ action: "settings", settings });
+                  setModal(null);
+                })
+              }
+            />
+          </div>
+        </div>
+      )}
+      {modal === "task" && snapshot && (
+        <div className="modal-backdrop">
+          <div className="modal task-modal" role="dialog" aria-modal="true" aria-label="Nova tarefa">
             <div className="modal-title">
-              <h2>{modal === "task" ? "Nova tarefa" : "Configurações"}</h2>
+              <h2>Nova tarefa</h2>
               <button
                 aria-label="Fechar janela"
                 disabled={busy}
@@ -958,31 +1113,17 @@ export default function App() {
                 {error}
               </div>
             )}
-            {modal === "task" ? (
-              <TaskForm
-                snapshot={snapshot}
-                projectId={project}
-                busy={busy}
-                onSubmit={(input) =>
-                  perform(async () => {
-                    await request({ action: "createTask", input });
-                    setModal(null);
-                  })
-                }
-              />
-            ) : (
-              <SettingsForm
-                settings={snapshot.settings}
-                projects={snapshot.projects}
-                busy={busy}
-                onSubmit={(settings) =>
-                  perform(async () => {
-                    await request({ action: "settings", settings });
-                    setModal(null);
-                  })
-                }
-              />
-            )}
+            <TaskForm
+              snapshot={snapshot}
+              projectId={project}
+              busy={busy}
+              onSubmit={(input) =>
+                perform(async () => {
+                  await request({ action: "createTask", input });
+                  setModal(null);
+                })
+              }
+            />
           </div>
         </div>
       )}
@@ -1028,220 +1169,6 @@ export default function App() {
     </div>
   );
 }
-function TaskForm({
-  snapshot,
-  projectId,
-  busy,
-  onSubmit,
-}: {
-  snapshot: Snapshot;
-  projectId: string;
-  busy: boolean;
-  onSubmit: (input: CreateTask) => void;
-}) {
-  const [p, setP] = useState(projectId || snapshot.projects[0]?.id || "");
-  const project = snapshot.projects.find((x) => x.id === p);
-  const [refs, setRefs] = useState<ProjectRefs | null>(null);
-  const [refsFailed, setRefsFailed] = useState(false);
-  // Trabalhar numa branch que já existe, em vez de criar uma golfinho/... nova.
-  const [adopt, setAdopt] = useState(false);
-  const [provider, setProvider] = useState<Provider>("codex");
-  useEffect(() => {
-    if (!p) return;
-    let alive = true;
-    setRefs(null);
-    setRefsFailed(false);
-    request<ProjectRefs>({ action: "branches", projectId: p })
-      .then((result) => alive && setRefs(result))
-      .catch(() => alive && setRefsFailed(true));
-    return () => {
-      alive = false;
-    };
-  }, [p]);
-  // Sem lista utilizável o campo volta a aceitar texto, em vez de travar a criação.
-  const typedBase = refsFailed || refs?.branches.length === 0;
-  const loadingRefs = !refs && !refsFailed;
-  return (
-    <form
-      className="task-form"
-      onSubmit={(e) => {
-        e.preventDefault();
-        const data = new FormData(e.currentTarget);
-        const existing = String(data.get("existing"));
-        onSubmit({
-          projectId: p,
-          // Sem título e instruções no formulário: o título vira o nome da branch e a CLI abre vazia,
-          // pronta para a conversa no Terminal ou no Chat.
-          title: "",
-          prompt: "",
-          provider,
-          branch: adopt ? existing : String(data.get("branch")),
-          base: adopt ? existing : String(data.get("base")),
-          remote: String(data.get("remote")),
-          timeoutMinutes: Number(data.get("timeout")),
-          ...(adopt ? { adopt: true } : {}),
-        });
-      }}
-    >
-      <p className="form-intro">
-        A tarefa é criada como rascunho. Depois, converse com o agente pelo Terminal ou pelo Chat.
-      </p>
-      <div className="form-grid">
-        <label>
-          Projeto
-          <select value={p} onChange={(e) => setP(e.target.value)}>
-            {snapshot.projects.map((p) => (
-              <option value={p.id} key={p.id}>
-                {p.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        {/* Botões em vez de <select>: a lista nativa não mostra ícones. */}
-        <div className="agent-field">
-          <span className="agent-field-label" id="agent-label">
-            Agente
-          </span>
-          <div
-            className="agent-picker"
-            role="radiogroup"
-            aria-labelledby="agent-label"
-            onKeyDown={(e) => {
-              if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
-              e.preventDefault();
-              const all: Provider[] = ["codex", "claude", "antigravity"];
-              const next = all[(all.indexOf(provider) + (e.key === "ArrowRight" ? 1 : all.length - 1)) % all.length];
-              setProvider(next);
-              e.currentTarget.querySelector<HTMLButtonElement>(`[data-provider="${next}"]`)?.focus();
-            }}
-          >
-            {(["codex", "claude", "antigravity"] as const).map((option) => {
-              const info = snapshot.agents.find((a) => a.provider === option);
-              const missing = info ? !info.available : false;
-              return (
-                <button
-                  key={option}
-                  type="button"
-                  role="radio"
-                  data-provider={option}
-                  aria-checked={provider === option}
-                  tabIndex={provider === option ? 0 : -1}
-                  className={"agent-option" + (provider === option ? " active" : "") + (missing ? " missing" : "")}
-                  title={missing ? "CLI não encontrada. Configure o caminho em Configurações." : info?.label}
-                  onClick={() => setProvider(option)}
-                >
-                  <AgentIcon provider={option} size={16} />
-                  <span>{info?.label ?? option}</span>
-                </button>
-              );
-            })}
-          </div>
-          {snapshot.agents.find((a) => a.provider === provider)?.available === false && (
-            <small className="agent-hint">CLI não encontrada. Configure o caminho em Configurações.</small>
-          )}
-        </div>
-      </div>
-      <div className="notice notice-warn task-folder-notice" role="note">
-        <strong>As tarefas deste projeto compartilham a mesma pasta.</strong>
-        <p>
-          Ao iniciar uma tarefa, o app pode trocar a branch dessa pasta. Antes de iniciar outra,
-          encerre ou interrompa os agentes que estiverem trabalhando no mesmo projeto pelo Terminal,
-          Chat ou sessões avulsas, para evitar misturar alterações entre tarefas.
-        </p>
-      </div>
-      <label className="check-row">
-        <input type="checkbox" checked={adopt} onChange={(e) => setAdopt(e.target.checked)} />
-        Trabalhar em uma branch que já existe
-      </label>
-      <div className="form-grid">
-        {adopt ? (
-          <label>
-            Branch existente
-            <select key={`existing:${p}`} name="existing" required defaultValue={refs?.current || ""}>
-              {(refs?.branches ?? []).map((b) => (
-                <option key={b} value={b}>
-                  {b}
-                  {b === refs?.current ? " · atual" : ""}
-                </option>
-              ))}
-            </select>
-            <small className="form-hint-block">
-              A tarefa entra nesta branch e trabalha diretamente nela. Ela não pode estar aberta em
-              outra pasta. Excluir a tarefa nunca apaga essa branch.
-            </small>
-          </label>
-        ) : (
-          <label>
-            Branch da tarefa
-            <input name="branch" required placeholder="golfinho/minha-tarefa" />
-          </label>
-        )}
-        {!adopt && (
-        <label>
-          Branch base
-          {typedBase ? (
-            <input name="base" defaultValue="main" required />
-          ) : (
-            <select
-              key={`${p}:${refs ? "pronto" : "carregando"}`}
-              name="base"
-              required
-              defaultValue={refs?.current || refs?.branches[0] || ""}
-            >
-              {refs ? (
-                refs.branches.map((b) => (
-                  <option key={b} value={b}>
-                    {b}
-                    {b === refs.current ? " · atual" : ""}
-                  </option>
-                ))
-              ) : (
-                <option value="">Lendo branches…</option>
-              )}
-            </select>
-          )}
-        </label>
-        )}
-        <label>
-          Remoto
-          <select key={p} name="remote" required>
-            {(project?.remotes ?? []).map((remote) => (
-              <option key={remote}>{remote}</option>
-            ))}
-          </select>
-        </label>
-        <label className="wide">
-          Encerrar se parado (minutos)
-          <input
-            name="timeout"
-            type="number"
-            min={0}
-            max={1440}
-            defaultValue={60}
-            required
-            aria-describedby="timeout-hint"
-          />
-        </label>
-        <small id="timeout-hint" className="form-hint-block wide">
-          Se o agente ficar esse tempo sem mostrar nada e sem você digitar, a execução é encerrada.
-          Conversas ativas nunca são cortadas. Use 0 para desativar.
-        </small>
-      </div>
-      <p className="form-footnote">
-        A branch é criada localmente na execução. Publicar exige sua ação explícita.
-      </p>
-      {!project?.remotes.length && (
-        <p className="notice">
-          Este projeto não tem um remoto Git configurado. Configure um remoto no repositório antes
-          de criar a tarefa.
-        </p>
-      )}
-      <button className="primary full" disabled={busy || !project?.remotes.length || loadingRefs}>
-        {busy ? "Criando…" : "Criar tarefa"}
-      </button>
-    </form>
-  );
-}
 const LABELS: Record<string, string> = { "5h": "Janela de 5 h", weekly: "Semanal" };
 const quando = new Intl.DateTimeFormat("pt-BR", {
   day: "2-digit",
@@ -1264,7 +1191,7 @@ const PROVIDER_LABEL: Record<Provider, string> = {
   antigravity: "Antigravity",
 };
 type UsageState = { quota: ProviderQuota | null; busy: boolean; failed: boolean; at: Date | null };
-function UsageDashboard() {
+function UsageDashboard({ onLogin }: { onLogin: () => void }) {
   const [usage, setUsage] = useState<Record<Provider, UsageState>>(() => ({
     codex: { quota: null, busy: false, failed: false, at: null },
     claude: { quota: null, busy: false, failed: false, at: null },
@@ -1310,7 +1237,14 @@ function UsageDashboard() {
                 <strong>{PROVIDER_LABEL[provider]}</strong>
                 {u.quota?.plan && <span>{u.quota.plan}</span>}
               </header>
+              {u.quota?.account && <small className="usage-account">{u.quota.account}</small>}
               <QuotaPanel quota={u.quota} busy={u.busy} failed={u.failed} />
+              {provider === "claude" && (
+                <button className="usage-login" onClick={onLogin}>
+                  <LogIn size={12} />
+                  Trocar conta
+                </button>
+              )}
               {u.at && (
                 <small className="usage-stamp">
                   Atualizado às {u.at.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}
@@ -1479,101 +1413,5 @@ function DeleteDialog({
         </button>
       </div>
     </div>
-  );
-}
-function SettingsForm({
-  settings,
-  projects,
-  busy,
-  onSubmit,
-}: {
-  settings: Settings;
-  projects: Project[];
-  busy: boolean;
-  onSubmit: (s: Settings) => void;
-}) {
-  // A escala é preferência de tela: aplica na hora e não passa pelo "Salvar".
-  const [uiScale, setUiScale] = useState(readUiScale);
-  return (
-    <form
-      onSubmit={(e) => {
-        e.preventDefault();
-        const d = new FormData(e.currentTarget);
-        onSubmit({
-          concurrency: Number(d.get("concurrency")),
-          executables: {
-            codex: String(d.get("codex")),
-            claude: String(d.get("claude")),
-            antigravity: String(d.get("antigravity")),
-          },
-          ssh: settings.ssh,
-          setup: Object.fromEntries(
-            projects
-              .map((p) => [p.id, String(d.get(`setup:${p.id}`) ?? "").trim()] as const)
-              .filter(([, command]) => command),
-          ),
-        });
-      }}
-    >
-      <h4>Aparência</h4>
-      <label>
-        Tamanho da fonte da interface
-        <select
-          value={uiScale}
-          onChange={(e) => {
-            const scale = Number(e.target.value);
-            applyUiScale(scale);
-            setUiScale(scale);
-          }}
-        >
-          {UI_SCALES.map((s) => (
-            <option key={s.value} value={s.value}>
-              {s.label}
-            </option>
-          ))}
-        </select>
-      </label>
-      <p className="notice">Vale na hora e fica salvo neste computador.</p>
-      <label>
-        Execuções simultâneas
-        <input
-          name="concurrency"
-          type="number"
-          min={1}
-          max={8}
-          defaultValue={settings.concurrency}
-          required
-        />
-      </label>
-      <p className="notice">
-        Cada tarefa tem sua própria pasta de trabalho. O limite acima vale para o total de
-        execuções e checks.
-      </p>
-      {(["codex", "claude", "antigravity"] as const).map((p) => (
-        <label key={p}>
-          Executável {p}
-          <input name={p} defaultValue={settings.executables[p]} required />
-        </label>
-      ))}
-      <h4>Setup das pastas de trabalho</h4>
-      <p className="notice">
-        Comando executado dentro da pasta nova de cada tarefa, antes de a CLI iniciar. Por
-        exemplo, <code>npm ci</code>. Vazio significa que não há nada a fazer.
-      </p>
-      {projects.map((p) => (
-        <label key={p.id}>
-          {p.name}
-          <input
-            name={`setup:${p.id}`}
-            defaultValue={settings.setup[p.id] ?? ""}
-            placeholder="Ex.: npm ci"
-            maxLength={2000}
-          />
-        </label>
-      ))}
-      <button className="primary full" disabled={busy}>
-        Salvar configurações
-      </button>
-    </form>
   );
 }

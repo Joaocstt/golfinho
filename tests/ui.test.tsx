@@ -70,6 +70,14 @@ function setup(tasks: Task[] = [], rejectCreate = false, chatHistory: Record<str
   return request;
 }
 afterEach(cleanup);
+// Responde à janela de confirmação do app (no lugar do window.confirm): true confirma, false cancela.
+async function answer(ok: boolean) {
+  const dialog = await screen.findByRole("alertdialog");
+  const [cancel, confirm] = within(dialog).getAllByRole("button");
+  fireEvent.click(ok ? confirm : cancel);
+  await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+}
+const noDialog = () => expect(screen.queryByRole("alertdialog")).toBeNull();
 // O select de base é remontado quando as branches chegam; esperar a opção "atual"
 // evita guardar referência ao nó antigo.
 const baseCarregada = async () => {
@@ -135,6 +143,29 @@ describe("interface de tarefas", () => {
       expect(request).toHaveBeenCalledWith({
         action: "createTask",
         input: expect.objectContaining({ base: "main" }),
+      }),
+    );
+  });
+  it("valida o nome da branch e cria a tarefa numa branch que já existe", async () => {
+    const request = setup();
+    await screen.findByText("Projeto real");
+    fireEvent.click(screen.getByRole("button", { name: "Nova tarefa" }));
+    await baseCarregada();
+    const create = screen.getByRole("button", { name: "Criar tarefa" }) as HTMLButtonElement;
+    fireEvent.change(screen.getByLabelText("Branch da tarefa"), { target: { value: "minha tarefa" } });
+    expect(screen.getByText("Sem espaços no nome da branch.")).toBeTruthy();
+    expect(create.disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText("Branch da tarefa"), { target: { value: "main" } });
+    expect(screen.getByText(/Essa branch já existe/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("radio", { name: /Branch que já existe/ }));
+    expect((screen.getByLabelText("Branch existente") as HTMLSelectElement).value).toBe("develop");
+    fireEvent.change(screen.getByLabelText("Branch existente"), { target: { value: "main" } });
+    expect(screen.getByText("main", { selector: "code" })).toBeTruthy();
+    fireEvent.click(create);
+    await waitFor(() =>
+      expect(request).toHaveBeenCalledWith({
+        action: "createTask",
+        input: expect.objectContaining({ branch: "main", base: "main", adopt: true }),
       }),
     );
   });
@@ -319,15 +350,12 @@ it("abrir pedido visível na divisão interna mantém a proteção do editor nã
   fireEvent.click(await screen.findByRole("button", { name: "src" }));
   fireEvent.click(await screen.findByRole("button", { name: "a.ts" }));
   fireEvent.click(await screen.findByRole("button", { name: "Editar conteúdo" }));
-  const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
   act(() => signal?.({ kind: "terminal", taskId: "edit", offset: 0, data: "Do you want to proceed?\n1. Yes\n2. No" }));
   fireEvent.click(screen.getByRole("button", { name: "Abrir pedido de golfinho/edit no Terminal" }));
-  expect(confirm).not.toHaveBeenCalled();
-  confirm.mockReturnValue(false);
+  noDialog();
   fireEvent.click(screen.getByRole("button", { name: "Fechar aba golfinho/edit" }));
-  expect(confirm).toHaveBeenCalled();
+  await answer(false);
   expect(screen.getByRole("button", { name: "Editar conteúdo" })).toBeTruthy();
-  confirm.mockRestore();
 });
 it("divide duas tarefas com abas e ações independentes", async () => {
   const request = setup([editableTask, { ...editableTask, id: "other", title: "Outra tarefa", branch: "main" }]);
@@ -354,21 +382,19 @@ it("mantém aba, arquivo e edição ao alternar tarefas e ao voltar da divisão"
   fireEvent.click(await screen.findByRole("button", { name: "src" }));
   fireEvent.click(await screen.findByRole("button", { name: "a.ts" }));
   fireEvent.click(await screen.findByRole("button", { name: "Editar conteúdo" }));
-  const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
   fireEvent.click(screen.getByRole("button", { name: "Outra tarefa" }));
   expect(screen.getByRole("region", { name: "Tarefa main" })).toBeTruthy();
   fireEvent.click(screen.getByRole("tab", { name: "Workspace golfinho/edit" }));
   expect(screen.getByRole("button", { name: "Editar conteúdo" })).toBeTruthy();
   expect(screen.getByRole("button", { name: "Arquivos" }).className).toContain("active");
-  expect(confirm).not.toHaveBeenCalled();
+  noDialog();
   fireEvent.click(screen.getByRole("button", { name: "Abrir main ao lado" }));
   fireEvent.click(screen.getByRole("button", { name: "Exibir apenas esta tarefa" }));
   fireEvent.click(screen.getByRole("tab", { name: "Workspace golfinho/edit" }));
   expect(screen.getByRole("button", { name: "Editar conteúdo" })).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Fechar aba golfinho/edit" }));
-  expect(confirm).toHaveBeenCalled();
+  await answer(false);
   expect(screen.getByRole("button", { name: "Editar conteúdo" })).toBeTruthy();
-  confirm.mockRestore();
 });
 it("ajusta a divisória e volta à tarefa em foco sem fechar a outra aba", async () => {
   setup([editableTask, { ...editableTask, id: "other", title: "Outra tarefa", branch: "main" }]);
@@ -394,16 +420,14 @@ it("fechar uma tarefa da divisão mantém a outra e protege o editor não salvo"
   fireEvent.click(await within(right).findByRole("button", { name: "src" }));
   fireEvent.click(await within(right).findByRole("button", { name: "a.ts" }));
   fireEvent.click(await within(right).findByRole("button", { name: "Editar conteúdo" }));
-  const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
   fireEvent.click(screen.getByRole("button", { name: "Fechar aba golfinho/edit" }));
-  expect(confirm).toHaveBeenCalled();
+  await answer(false);
   expect(within(right).getByRole("button", { name: "Editar conteúdo" })).toBeTruthy();
-  confirm.mockReturnValue(true);
   fireEvent.click(screen.getByRole("button", { name: "Fechar aba golfinho/edit" }));
+  await answer(true);
   expect(screen.queryByRole("region", { name: "Tarefa golfinho/edit" })).toBeNull();
   expect(screen.getByRole("region", { name: "Tarefa main" })).toBeTruthy();
   expect(request).not.toHaveBeenCalledWith(expect.objectContaining({ action: "cancel" }));
-  confirm.mockRestore();
 });
 it("respeita limites do backend nos formulários", async () => {
   setup();
@@ -417,6 +441,37 @@ it("respeita limites do backend nos formulários", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Configurações" }));
   expect(screen.getByLabelText("Execuções simultâneas").getAttribute("max")).toBe("8");
 });
+it("configurações em abas: edita, mostra o rascunho e salva tudo junto", async () => {
+  const request = setup();
+  await screen.findByText("Projeto real");
+  fireEvent.click(screen.getByRole("button", { name: "Configurações" }));
+  const dialog = screen.getByRole("dialog", { name: "Configurações" });
+  const save = within(dialog).getByRole("button", { name: "Salvar configurações" }) as HTMLButtonElement;
+  expect(save.disabled).toBe(true);
+  fireEvent.click(within(dialog).getByRole("button", { name: "Aumentar execuções simultâneas" }));
+  fireEvent.click(within(dialog).getByRole("button", { name: /Agentes/ }));
+  expect(within(dialog).getByText("Instalado")).toBeTruthy();
+  expect(within(dialog).getAllByText("Não encontrado")).toHaveLength(2);
+  fireEvent.change(within(dialog).getByLabelText("Executável claude"), { target: { value: " /opt/claude " } });
+  fireEvent.click(within(dialog).getByRole("button", { name: /Memória/ }));
+  fireEvent.click(within(dialog).getByRole("switch", { name: "Usar a memória do projeto nas tarefas" }));
+  fireEvent.click(within(dialog).getByRole("button", { name: /Projetos/ }));
+  fireEvent.change(within(dialog).getByLabelText("Setup de Projeto real"), { target: { value: "npm ci" } });
+  expect(within(dialog).getByText("Alterações não salvas")).toBeTruthy();
+  fireEvent.click(save);
+  await waitFor(() =>
+    expect(request).toHaveBeenCalledWith({
+      action: "settings",
+      settings: {
+        concurrency: 3,
+        executables: { codex: "codex", claude: "/opt/claude", antigravity: "antigravity" },
+        setup: { p: "npm ci" },
+        ssh: [],
+        memory: { enabled: false },
+      },
+    }),
+  );
+});
 it("protege alterações não salvas ao fechar janela ou abrir revisão", async () => {
   const request = setup([editableTask]);
   fireEvent.click(await screen.findByRole("button", { name: /Editar arquivo/ }));
@@ -427,14 +482,12 @@ it("protege alterações não salvas ao fechar janela ou abrir revisão", async 
   const unload = new Event("beforeunload", { cancelable: true });
   window.dispatchEvent(unload);
   expect(unload.defaultPrevented).toBe(true);
-  const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
   fireEvent.click(screen.getByRole("button", { name: "Diff" }));
-  expect(confirm).toHaveBeenCalled();
+  await answer(false);
   expect(request).not.toHaveBeenCalledWith({ action: "review", taskId: "edit" });
   expect(screen.getByRole("button", { name: "Editar conteúdo" })).toBeTruthy();
   act(() => signal?.({ kind: "changed" }));
   expect(screen.getByRole("button", { name: "Editar conteúdo" })).toBeTruthy();
-  confirm.mockRestore();
 });
 it("permite tentar novamente quando o workspace não carrega", async () => {
   const request = vi
@@ -555,16 +608,14 @@ it.each([
   fireEvent.click(await screen.findByRole("button", { name: "src" }));
   fireEvent.click(await screen.findByRole("button", { name: "a.ts" }));
   fireEvent.click(await screen.findByRole("button", { name: "Editar conteúdo" }));
-  const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
   fireEvent.click(screen.getByRole("button", { name: label }));
-  expect(confirm).toHaveBeenCalled();
+  await answer(false);
   expect(request).not.toHaveBeenCalledWith({ action, taskId: "edit" });
   expect(screen.getByRole("button", { name: "Editar conteúdo" })).toBeTruthy();
-  confirm.mockReturnValue(true);
   fireEvent.click(screen.getByRole("button", { name: label }));
+  await answer(true);
   await waitFor(() => expect(request).toHaveBeenCalledWith({ action, taskId: "edit" }));
   expect(screen.queryByRole("button", { name: "Editar conteúdo" })).toBeNull();
-  confirm.mockRestore();
 });
 it("filtra tarefas e navega pelas abas do workspace", async () => {
   setup([
@@ -664,12 +715,11 @@ it("seletor de agente envia a troca e fica desabilitado com a tarefa rodando", a
     const request = setup([editableTask]);
     fireEvent.click(await screen.findByRole("button", { name: "Editar arquivo" }));
     const workspace = screen.getByRole("region", { name: "Tarefa golfinho/edit" });
-    const select = within(workspace).getByRole("combobox", { name: "Agente da tarefa" }) as HTMLSelectElement;
-    expect(select.value).toBe("codex");
-    expect(select.disabled).toBe(false);
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
-    fireEvent.change(select, { target: { value: "claude" } });
-    confirm.mockRestore();
+    const picker = within(workspace).getByRole("button", { name: "Agente da tarefa" }) as HTMLButtonElement;
+    expect(picker.textContent).toContain("Codex");
+    expect(picker.disabled).toBe(false);
+    fireEvent.click(picker);
+    fireEvent.click(within(workspace).getByRole("option", { name: /Claude Code/ }));
     await waitFor(() =>
       expect(request).toHaveBeenCalledWith({ action: "setTaskAgent", taskId: editableTask.id, provider: "claude" }),
     );
@@ -680,7 +730,7 @@ it("seletor de agente envia a troca e fica desabilitado com a tarefa rodando", a
   setup([{ ...editableTask, status: "running" }]);
   fireEvent.click(await screen.findByRole("button", { name: "Editar arquivo" }));
   const running = screen.getByRole("region", { name: "Tarefa golfinho/edit" });
-  expect((within(running).getByRole("combobox", { name: "Agente da tarefa" }) as HTMLSelectElement).disabled).toBe(true);
+  expect((within(running).getByRole("button", { name: "Agente da tarefa" }) as HTMLButtonElement).disabled).toBe(true);
 });
 it("o separador da troca mostra o contexto passado ao agente, recolhido", async () => {
   const history: ChatHistoryItem[] = [

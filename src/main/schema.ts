@@ -31,8 +31,10 @@ const settings = z
       )
       .max(100)
       .default([]),
+    memory: z.object({ enabled: z.boolean() }).strict().optional(),
   })
   .strict();
+const memoryKind = z.enum(["decisao", "convencao", "armadilha", "contexto", "tarefa"]);
 export const requestSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("readClipboard") }).strict(),
   z.object({ action: z.literal("pasteImage") }).strict(),
@@ -181,7 +183,12 @@ export const requestSchema = z.discriminatedUnion("action", [
     .strict(),
   z.object({ action: z.literal("sshRead"), connectionId: id, path: z.string().min(1).max(4096) }).strict(),
   z
-    .object({ action: z.literal("shellOpenGeneral"), projectId: id.optional(), provider: provider.optional() })
+    .object({
+      action: z.literal("shellOpenGeneral"),
+      projectId: id.optional(),
+      provider: provider.optional(),
+      login: z.boolean().optional(),
+    })
     .strict(),
   z
     .object({
@@ -200,4 +207,33 @@ export const requestSchema = z.discriminatedUnion("action", [
     .strict(),
   z.object({ action: z.literal("summary"), taskId: id, summary: z.string().max(16000) }).strict(),
   z.object({ action: z.literal("settings"), settings }).strict(),
+  z
+    .object({
+      action: z.literal("memoryList"),
+      projectId: id,
+      query: z.string().max(500).optional(),
+      kind: memoryKind.optional(),
+      archived: z.boolean().optional(),
+    })
+    .strict(),
+  z
+    .object({
+      action: z.literal("memorySave"),
+      memory: z
+        .object({
+          id: id.optional(),
+          projectId: id,
+          kind: memoryKind,
+          title: z.string().trim().min(1, "Dê um título à nota.").max(200),
+          content: z.string().trim().min(1, "Escreva o conteúdo da nota.").max(8000),
+          pinned: z.boolean(),
+          archived: z.boolean(),
+        })
+        .strict(),
+    })
+    .strict(),
+  z.object({ action: z.literal("memoryDelete"), id }).strict(),
+  z
+    .object({ action: z.literal("memoryFromChat"), taskId: id, text: z.string().trim().min(1).max(200_000) })
+    .strict(),
 ]);

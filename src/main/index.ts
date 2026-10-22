@@ -15,6 +15,7 @@ import { requestSchema } from "./schema";
 import type { Signal } from "../shared/contracts";
 import { Shells } from "./shells";
 import { ChatManager } from "./chat";
+import { MemoryMcp } from "./memoryMcp";
 import { ChatImages, IMAGE_EXTENSIONS } from "./chatImages";
 import { vaultFrom } from "./vault";
 import { configureAskpass, askpassFile } from "./ssh";
@@ -32,6 +33,7 @@ let store: Store | undefined;
 let logs: TerminalLogs | undefined;
 let shells: Shells | undefined;
 let chat: ChatManager | undefined;
+let memoryMcp: MemoryMcp | null = null;
 let closing = false;
 let shutdownDone = false;
 const requests = new Set<Promise<unknown>>();
@@ -67,12 +69,25 @@ else {
       logs = new TerminalLogs(directory, signal);
       coordinator = new Coordinator(store, git, ptyDriver, logs, changed, join(home, "worktrees"));
       shells = new Shells(ptyDriver, signal);
-      chat = new ChatManager((taskId, seq, event) => signal({ kind: "chat", taskId, seq, event }), {
+      chat = new ChatManager((taskId, seq, event) => {
+        signal({ kind: "chat", taskId, seq, event });
+        // Fim de cada resposta do agente: o registro da tarefa na memória é atualizado.
+        if (event.type === "status" && event.state === "idle") service.remember(taskId);
+      }, {
         append: (taskId, event) => store!.chatAppend(taskId, event),
         list: (taskId) => store!.chatEvents(taskId),
         sessionId: (taskId) => store!.task(taskId).chatSessionId ?? null,
         saveSessionId: (taskId, sessionId) => store!.setChatSession(taskId, sessionId),
       });
+      // Servidor MCP da memória do projeto. Se não subir, as notas continuam indo no prompt.
+      memoryMcp = new MemoryMcp(store, join(home, "mcp"), changed);
+      try {
+        await memoryMcp.start();
+      } catch (error) {
+        console.error("Memória: servidor MCP não iniciou.", error);
+        memoryMcp = null;
+      }
+      coordinator.useMemory(memoryMcp);
       // O askpass não contém segredo: lê a senha da variável que o app passa só a esse processo.
       const script = askpassFile();
       const askpass = join(home, script.name);
@@ -126,6 +141,8 @@ else {
           return file;
         },
       }, shells, vaultFrom(safeStorage), chat, chatImages);
+      service.useMemory(memoryMcp);
+      coordinator.afterRun((taskId) => service.remember(taskId));
       window = new BrowserWindow({
         // Limitada à área útil do monitor: com escala do Windows acima de 100%, 950 px lógicos
         // passam da tela e escondem a parte de baixo, onde fica o campo de digitação.
@@ -240,6 +257,7 @@ else {
       shells?.closeAll();
       chat?.stopAll();
       await coordinator?.shutdown();
+      await memoryMcp?.stop();
       await Promise.allSettled([...requests]);
       logs?.flush();
       store?.close();

@@ -11,7 +11,12 @@ import type {
   Check,
   ChatEvent,
   ChatHistoryItem,
+  Memory,
+  MemoryInput,
+  MemoryKind,
+  MemoryOrigin,
 } from "../shared/contracts";
+import { ftsQuery, searchableText } from "./memory";
 
 const allowed: Record<Status, Status[]> = {
   draft: ["queued", "cancelled"],
@@ -43,7 +48,13 @@ export class Store {
       CREATE TABLE IF NOT EXISTS checks(id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES tasks(id), body TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS settings(id INTEGER PRIMARY KEY CHECK(id=1), body TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS secrets(id TEXT PRIMARY KEY, body TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS chat_events(id INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT NOT NULL, body TEXT NOT NULL);`);
+      CREATE TABLE IF NOT EXISTS chat_events(id INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT NOT NULL, body TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS memories(id TEXT PRIMARY KEY, project_id TEXT NOT NULL, body TEXT NOT NULL);
+      CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(id UNINDEXED, title, content, tokenize="unicode61 remove_diacritics 2");
+      CREATE VIRTUAL TABLE IF NOT EXISTS chat_fts USING fts5(seq UNINDEXED, task_id UNINDEXED, project_id UNINDEXED, who UNINDEXED, text, tokenize="unicode61 remove_diacritics 2");`);
+    // Conversas gravadas antes do índice existir: entram uma vez, na primeira abertura.
+    const indexed = Number(this.db.prepare("SELECT COUNT(*) AS n FROM chat_fts").get()?.n ?? 0);
+    if (!indexed) this.reindexChat();
   }
   private atomic<T>(fn: () => T): T {
     this.db.exec("BEGIN IMMEDIATE");
@@ -184,14 +195,67 @@ export class Store {
       this.db.prepare("DELETE FROM events WHERE task_id=?").run(id);
       this.db.prepare("DELETE FROM checks WHERE task_id=?").run(id);
       this.db.prepare("DELETE FROM chat_events WHERE task_id=?").run(id);
+      this.db.prepare("DELETE FROM chat_fts WHERE task_id=?").run(id);
       this.db.prepare("DELETE FROM tasks WHERE id=?").run(id);
     });
   }
   // Conversa do chat: cada evento é uma linha; o id da linha é a posição dele no histórico.
   chatAppend(taskId: string, event: ChatEvent): number {
-    return Number(
+    const seq = Number(
       this.db.prepare("INSERT INTO chat_events(task_id,body) VALUES(?,?)").run(taskId, JSON.stringify(event)).lastInsertRowid,
     );
+    this.indexChat(seq, taskId, event);
+    return seq;
+  }
+  // Histórico pesquisável das conversas (memoria_buscar). O texto completo fica em chat_events.
+  private indexChat(seq: number, taskId: string, event: ChatEvent, projectId?: string) {
+    const found = searchableText(event);
+    if (!found) return;
+    const project =
+      projectId ??
+      (this.db.prepare("SELECT project_id FROM tasks WHERE id=?").get(taskId)?.project_id as string | undefined);
+    if (!project) return;
+    this.db
+      .prepare("INSERT INTO chat_fts(seq,task_id,project_id,who,text) VALUES(?,?,?,?,?)")
+      .run(seq, taskId, project, found.who, found.text);
+  }
+  private reindexChat() {
+    const rows = this.db
+      .prepare("SELECT c.id, c.task_id, c.body, t.project_id FROM chat_events c JOIN tasks t ON t.id = c.task_id")
+      .all();
+    if (!rows.length) return;
+    this.atomic(() => {
+      for (const r of rows)
+        this.indexChat(Number(r.id), String(r.task_id), JSON.parse(String(r.body)), String(r.project_id));
+    });
+  }
+  // Busca nas conversas de todas as tarefas do projeto. Devolve a posição para abrir o trecho.
+  searchHistory(projectId: string, query: string, limit = 8) {
+    const match = ftsQuery(query);
+    if (!match) return [];
+    return this.db
+      .prepare(
+        `SELECT seq, task_id, who, snippet(chat_fts, 4, '«', '»', '…', 24) AS excerpt FROM chat_fts
+         WHERE chat_fts MATCH ? AND project_id = ? ORDER BY bm25(chat_fts) LIMIT ?`,
+      )
+      .all(match, projectId, limit)
+      .map((r) => ({ seq: Number(r.seq), taskId: String(r.task_id), who: String(r.who), excerpt: String(r.excerpt) }));
+  }
+  // Trecho da conversa de uma tarefa em volta de uma posição, só se a tarefa for do projeto.
+  historyAround(projectId: string, taskId: string, seq: number, radius = 4): ChatHistoryItem[] {
+    const task = this.db.prepare("SELECT project_id FROM tasks WHERE id=?").get(taskId);
+    if (!task || String(task.project_id) !== projectId) return [];
+    const parse = (r: Record<string, unknown>) => ({ seq: Number(r.id), event: JSON.parse(String(r.body)) as ChatEvent });
+    const before = this.db
+      .prepare("SELECT id, body FROM chat_events WHERE task_id=? AND id<=? ORDER BY id DESC LIMIT ?")
+      .all(taskId, seq, radius + 1)
+      .map(parse)
+      .reverse();
+    const after = this.db
+      .prepare("SELECT id, body FROM chat_events WHERE task_id=? AND id>? ORDER BY id LIMIT ?")
+      .all(taskId, seq, radius)
+      .map(parse);
+    return [...before, ...after];
   }
   chatEvents(taskId: string, limit = 2000): ChatHistoryItem[] {
     return this.db
@@ -256,10 +320,15 @@ export class Store {
   }
   settings(): Settings {
     const row = this.db.prepare("SELECT body FROM settings WHERE id=1").get();
-    // Mescla com os padrões: configurações salvas antes de um campo existir não o trazem.
-    return row
-      ? { ...structuredClone(defaults), ...JSON.parse(String(row.body)) }
-      : structuredClone(defaults);
+    if (!row) return structuredClone(defaults);
+    const parsed = JSON.parse(String(row.body)) as Partial<Settings>;
+    return {
+      concurrency: typeof parsed.concurrency === "number" ? parsed.concurrency : defaults.concurrency,
+      executables: { ...defaults.executables, ...(parsed.executables ?? {}) },
+      setup: parsed.setup && typeof parsed.setup === "object" ? parsed.setup : {},
+      ssh: Array.isArray(parsed.ssh) ? parsed.ssh : [],
+      ...(parsed.memory ? { memory: parsed.memory } : {}),
+    };
   }
   saveSettings(s: Settings) {
     this.db
@@ -339,6 +408,132 @@ export class Store {
           "Aplicativo reiniciado. Processo anterior não foi retomado automaticamente.",
         );
     }
+  }
+  // Memória do projeto. A nota fica em JSON, como as tarefas; o índice FTS5 guarda só título e
+  // conteúdo para a busca (sem acento: "migracao" encontra "migração").
+  memories(
+    projectId: string,
+    filter: { query?: string; kind?: MemoryKind; archived?: boolean; limit?: number } = {},
+  ): Memory[] {
+    const limit = filter.limit ?? 500;
+    const match = filter.query ? ftsQuery(filter.query) : null;
+    if (filter.query && !match) return [];
+    const rows = match
+      ? this.db
+          .prepare(
+            `SELECT m.body FROM memories_fts f JOIN memories m ON m.id = f.id
+             WHERE memories_fts MATCH ? AND m.project_id = ? ORDER BY bm25(memories_fts, 0.0, 4.0, 1.0)`,
+          )
+          .all(match, projectId)
+      : this.db.prepare("SELECT body FROM memories WHERE project_id=?").all(projectId);
+    let list: Memory[] = rows.map((r) => JSON.parse(String(r.body)));
+    list = list.filter(
+      (m) => (filter.kind ? m.kind === filter.kind : true) && m.archived === (filter.archived ?? false),
+    );
+    // Sem busca, as fixadas vêm primeiro e depois as mais recentes. Com busca, vale a relevância.
+    if (!match)
+      list.sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.updatedAt.localeCompare(a.updatedAt));
+    return list.slice(0, limit);
+  }
+  memory(id: string): Memory {
+    const row = this.db.prepare("SELECT body FROM memories WHERE id=?").get(id);
+    if (!row) throw new Error("Nota da memória não encontrada.");
+    return JSON.parse(String(row.body));
+  }
+  saveMemory(
+    input: MemoryInput,
+    extra: { origin?: MemoryOrigin; source?: Memory["source"] } = {},
+  ): Memory {
+    this.project(input.projectId);
+    return this.atomic(() => {
+      const old = input.id ? this.memory(input.id) : null;
+      if (old && old.projectId !== input.projectId) throw new Error("A nota pertence a outro projeto.");
+      const m: Memory = {
+        id: old?.id ?? randomUUID(),
+        projectId: input.projectId,
+        kind: input.kind,
+        title: input.title.trim(),
+        content: input.content.trim(),
+        source: extra.source !== undefined ? extra.source : (old?.source ?? null),
+        origin: extra.origin ?? old?.origin ?? "usuario",
+        pinned: input.pinned,
+        archived: input.archived,
+        createdAt: old?.createdAt ?? now(),
+        updatedAt: now(),
+        lastUsedAt: old?.lastUsedAt ?? null,
+        uses: old?.uses ?? 0,
+      };
+      this.writeMemory(m);
+      return m;
+    });
+  }
+  private writeMemory(m: Memory) {
+    this.db
+      .prepare("INSERT INTO memories VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body")
+      .run(m.id, m.projectId, JSON.stringify(m));
+    this.db.prepare("DELETE FROM memories_fts WHERE id=?").run(m.id);
+    this.db.prepare("INSERT INTO memories_fts(id,title,content) VALUES(?,?,?)").run(m.id, m.title, m.content);
+  }
+  deleteMemory(id: string) {
+    this.memory(id);
+    this.atomic(() => {
+      this.db.prepare("DELETE FROM memories WHERE id=?").run(id);
+      this.db.prepare("DELETE FROM memories_fts WHERE id=?").run(id);
+    });
+  }
+  // Registro automático de uma tarefa: uma nota por tarefa, atualizada a cada conclusão.
+  saveTaskMemory(task: Task, content: string): Memory & { created: boolean } {
+    const old = this.memories(task.projectId, { kind: "tarefa" })
+      .concat(this.memories(task.projectId, { kind: "tarefa", archived: true }))
+      .find((m) => m.source?.taskId === task.id && m.origin === "automatica");
+    const saved = this.saveMemory(
+      {
+        id: old?.id,
+        projectId: task.projectId,
+        kind: "tarefa",
+        title: task.title,
+        content,
+        pinned: old?.pinned ?? false,
+        archived: old?.archived ?? false,
+      },
+      { origin: "automatica", source: { taskId: task.id, title: task.title } },
+    );
+    return { ...saved, created: !old };
+  }
+  // Notas que vão para uma conversa nova: as fixadas e depois as mais relevantes para o texto.
+  // Entre as relevantes, as que já foram úteis há pouco tempo sobem um pouco.
+  relevantMemories(projectId: string, text: string, limit: number): Memory[] {
+    const pinned = this.memories(projectId).filter((m) => m.pinned);
+    const found = this.memories(projectId, { query: text, limit: 40 }).filter((m) => !m.pinned);
+    const month = Date.now() - 30 * 24 * 3600_000;
+    const ranked = found
+      .map((m, index) => ({
+        m,
+        score: index - (m.lastUsedAt && Date.parse(m.lastUsedAt) > month ? Math.min(m.uses, 5) * 0.5 : 0),
+      }))
+      .sort((a, b) => a.score - b.score)
+      .map(({ m }) => m);
+    return [...pinned, ...ranked].slice(0, limit);
+  }
+  // Todas as notas ativas do projeto, na ordem em que vão para o agente: fixadas, as mais
+  // relacionadas ao texto e depois as mais recentes.
+  orderedMemories(projectId: string, text: string): Memory[] {
+    const first = this.relevantMemories(projectId, text, 40);
+    const seen = new Set(first.map((m) => m.id));
+    return [...first, ...this.memories(projectId).filter((m) => !seen.has(m.id))];
+  }
+  touchMemories(ids: string[]) {
+    if (!ids.length) return;
+    this.atomic(() => {
+      for (const id of ids) {
+        const row = this.db.prepare("SELECT body FROM memories WHERE id=?").get(id);
+        if (!row) continue;
+        const m: Memory = JSON.parse(String(row.body));
+        m.lastUsedAt = now();
+        m.uses += 1;
+        this.db.prepare("UPDATE memories SET body=? WHERE id=?").run(JSON.stringify(m), id);
+      }
+    });
   }
   close() {
     this.db.close();

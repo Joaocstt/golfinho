@@ -73,6 +73,20 @@ posixIt("extrai sessão e semana do texto do Claude", async () => {
   expect(quota.groups[0].windows[1].resetsAt).toMatch(/^\d{4}-10-19T16:59:00\.000Z$/);
 });
 
+posixIt("mostra e-mail e plano da conta logada na CLI do Claude", async () => {
+  const resultado = "Current session: 5% used\\nCurrent week (all models): 1% used\\n";
+  const caminho = fake(
+    "claude",
+    `if [ "$1" = auth ]; then
+       printf '{\\n  "loggedIn": true,\\n  "email": "nova@exemplo.com",\\n  "subscriptionType": "max"\\n}\\n'
+     else
+       echo '{"num_turns":0,"result":"${resultado}"}'
+     fi`,
+  );
+  const quota = await readQuota("claude", settings("claude", caminho));
+  expect(quota).toMatchObject({ available: true, account: "nova@exemplo.com", plan: "Max" });
+});
+
 posixIt("não inventa número quando o texto do Claude muda de formato", async () => {
   const caminho = fake("claude", `echo '{"num_turns":0,"result":"formato totalmente diferente"}'`);
   const quota = await readQuota("claude", settings("claude", caminho));

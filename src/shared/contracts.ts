@@ -102,6 +102,38 @@ export interface Settings {
   executables: Record<Provider, string>;
   /** Comando de setup por projeto (id do projeto → comando). Roda na pasta nova, antes da CLI. */
   setup: Record<string, string>;
+  /** Memória do projeto. Sem o campo, vale como ligada. */
+  memory?: { enabled: boolean };
+}
+export type MemoryKind = "decisao" | "convencao" | "armadilha" | "contexto" | "tarefa";
+export type MemoryOrigin = "usuario" | "agente" | "automatica";
+// Nota da memória de um projeto. Fica só no banco local; vai para o agente na primeira
+// mensagem de uma conversa nova e pelas ferramentas MCP do Golfinho.
+export interface Memory {
+  id: string;
+  projectId: string;
+  kind: MemoryKind;
+  title: string;
+  content: string;
+  /** Tarefa de onde a nota veio; null quando foi criada à mão na tela Memória. */
+  source: { taskId: string; title: string } | null;
+  origin: MemoryOrigin;
+  pinned: boolean;
+  archived: boolean;
+  createdAt: string;
+  updatedAt: string;
+  lastUsedAt: string | null;
+  uses: number;
+}
+export interface MemoryInput {
+  /** Sem id, cria uma nota nova. */
+  id?: string;
+  projectId: string;
+  kind: MemoryKind;
+  title: string;
+  content: string;
+  pinned: boolean;
+  archived: boolean;
 }
 export interface AgentInfo {
   provider: Provider;
@@ -151,6 +183,8 @@ export interface ProviderQuota {
   provider: Provider;
   available: boolean;
   plan: string;
+  /** Conta logada na CLI, quando ela informa (hoje só o Claude). */
+  account?: string;
   groups: QuotaGroup[];
   error: string;
 }
@@ -214,7 +248,7 @@ export type Request =
   | { action: "commitFiles"; taskId: string; paths: string[]; message: string; push: boolean }
   | { action: "shellOpen"; taskId: string; provider?: Provider; prompt?: string }
   | { action: "uncommitted"; taskId: string }
-  | { action: "shellOpenGeneral"; projectId?: string; provider?: Provider }
+  | { action: "shellOpenGeneral"; projectId?: string; provider?: Provider; login?: boolean }
   | { action: "endSession"; taskId: string }
   | { action: "testActivate"; taskId: string }
   | { action: "testRestore"; taskId: string }
@@ -245,6 +279,10 @@ export type Request =
   | { action: "runCheck"; taskId: string; command: string }
   | { action: "summary"; taskId: string; summary: string }
   | { action: "settings"; settings: Settings }
+  | { action: "memoryList"; projectId: string; query?: string; kind?: MemoryKind; archived?: boolean }
+  | { action: "memorySave"; memory: MemoryInput }
+  | { action: "memoryDelete"; id: string }
+  | { action: "memoryFromChat"; taskId: string; text: string }
   | { action: "readClipboard" }
   | { action: "pasteImage" }
   | { action: "writeClipboard"; text: string };
@@ -278,6 +316,8 @@ export type Response =
   | SshWriteResult
   | Project
   | Task
+  | Memory
+  | Memory[]
   | Review
   | TaskEvent[]
   | Check[]

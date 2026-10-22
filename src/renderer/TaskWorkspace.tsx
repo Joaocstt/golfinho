@@ -6,6 +6,8 @@ import { TerminalPane, DiffPane, FileEditor, FileTree } from "./Editors";
 import { ChatPane } from "./ChatPane";
 import { ShellPane } from "./ShellPane";
 import { AgentIcon } from "./agentIcons";
+import { AgentPicker } from "./AgentPicker";
+import { useConfirm } from "./ui";
 import { CommitPanel } from "./CommitPanel";
 import { ReviewFiles } from "./ReviewFiles";
 
@@ -52,8 +54,9 @@ function savedTab(taskId: string) {
   } catch { return "Terminal"; }
 }
 export interface TaskWorkspaceHandle {
-  canLeave(): boolean;
-  openPermission(source: "Terminal" | "Chat", approvalId?: string): boolean;
+  /** true na hora quando não há alteração; com alteração, a resposta da confirmação. */
+  canLeave(): boolean | Promise<boolean>;
+  openPermission(source: "Terminal" | "Chat", approvalId?: string): void;
 }
 interface Props {
   task: Task;
@@ -75,6 +78,7 @@ export const TaskWorkspace = forwardRef<TaskWorkspaceHandle, Props>(function Tas
   const selected = task.id;
   const selectedRef = useRef(selected);
   selectedRef.current = selected;
+  const confirm = useConfirm();
   const [busy, setBusy] = useState(false);
   const [fileQuery, setFileQuery] = useState("");
   const [fileWritable, setFileWritable] = useState(true);
@@ -146,27 +150,43 @@ export const TaskWorkspace = forwardRef<TaskWorkspaceHandle, Props>(function Tas
     window.addEventListener("beforeunload", guard);
     return () => window.removeEventListener("beforeunload", guard);
   }, [dirty]);
-  function canLeave() {
-    if (dirty && !window.confirm("Descartar alterações não salvas do arquivo?")) return false;
-    return true;
+  // Sair com o arquivo alterado pede confirmação; sem alteração, libera na hora.
+  function canLeave(): boolean | Promise<boolean> {
+    if (!dirty) return true;
+    return confirm({
+        title: "Descartar as alterações do arquivo?",
+        message: "O arquivo aberto no editor tem alterações que ainda não foram salvas.",
+        confirmLabel: "Descartar",
+        cancelLabel: "Continuar editando",
+        tone: "danger",
+      });
+  }
+  // Roda a ação já, ou depois da confirmação, quando há alterações não salvas.
+  function whenLeaving(action: () => void) {
+    const leave = canLeave();
+    if (leave === true) action();
+    else if (leave !== false) void leave.then((ok) => ok && action());
   }
   useImperativeHandle(ref, () => ({
     canLeave,
     openPermission(source, approvalId) {
+      const open = () => {
+        selectTab(source);
+        setPermissionFocus((value) => value + 1);
+        if (approvalId) setApprovalTarget((current) => ({ id: approvalId, version: (current?.version ?? 0) + 1 }));
+      };
       // Se a aba de destino já está visível, as abas apenas trocam de lado:
       // o editor continua montado e deve manter sua proteção contra descarte.
-      if (tab === "Arquivos" && !shown(source)) {
-        if (!canLeave()) return false;
-        setDirty(false);
-      }
-      selectTab(source);
-      setPermissionFocus((value) => value + 1);
-      if (approvalId) setApprovalTarget((current) => ({ id: approvalId, version: (current?.version ?? 0) + 1 }));
-      return true;
+      if (tab === "Arquivos" && !shown(source))
+        whenLeaving(() => {
+          setDirty(false);
+          open();
+        });
+      else open();
     },
   }));
   function navigate(action: () => void) {
-    if (canLeave()) { setDirty(false); setApprovalTarget(undefined); action(); }
+    whenLeaving(() => { setDirty(false); setApprovalTarget(undefined); action(); });
   }
   async function perform(operation: () => Promise<unknown>) {
     setBusy(true);
@@ -258,7 +278,13 @@ export const TaskWorkspace = forwardRef<TaskWorkspaceHandle, Props>(function Tas
   }
   async function openReview() {
     if (!task) return;
-    if (dirty && !window.confirm("Descartar alterações não salvas do arquivo?")) return;
+    if (dirty && !(await confirm({
+        title: "Descartar as alterações do arquivo?",
+        message: "O arquivo aberto no editor tem alterações que ainda não foram salvas.",
+        confirmLabel: "Descartar",
+        cancelLabel: "Continuar editando",
+        tone: "danger",
+      }))) return;
     setDirty(false);
     await perform(async () => {
       const id = task.id;
@@ -270,21 +296,23 @@ export const TaskWorkspace = forwardRef<TaskWorkspaceHandle, Props>(function Tas
       }
     });
   }
-  function changeAgent(provider: Provider) {
+  async function changeAgent(provider: Provider) {
     if (provider === task.provider) return;
     const from = snapshot.agents.find((a) => a.provider === task.provider)?.label ?? task.provider;
     const to = snapshot.agents.find((a) => a.provider === provider)?.label ?? provider;
     // Só pede confirmação quando há conversa para perder.
     if (
       (task.sessionId || task.chatSessionId) &&
-      !window.confirm(
-        `Trocar o agente desta tarefa para ${to}? A conversa com ${from} não será retomada. A branch e os arquivos continuam como estão.`,
-      )
+      !(await confirm({
+        title: `Trocar o agente para ${to}?`,
+        message: `A conversa com ${from} não será retomada: ${to} começa uma conversa nova, com o resumo da tarefa e a memória do projeto. A branch e os arquivos continuam como estão.`,
+        confirmLabel: `Trocar para ${to}`,
+      }))
     )
       return;
     void perform(() => request({ action: "setTaskAgent", taskId: task.id, provider }));
   }
-  function act(
+  async function act(
     action:
       | "queue"
       | "cancel"
@@ -297,12 +325,13 @@ export const TaskWorkspace = forwardRef<TaskWorkspaceHandle, Props>(function Tas
   ) {
     if (!task) return;
     if (action === "queue" || action === "finish") {
-      if (
-        dirty &&
-        !window.confirm(
-          "Salve o arquivo antes de continuar ou confirme para descartar as alterações não salvas.",
-        )
-      )
+      if (dirty && !(await confirm({
+        title: "Descartar as alterações do arquivo?",
+        message: "O arquivo aberto no editor tem alterações que ainda não foram salvas.",
+        confirmLabel: "Descartar",
+        cancelLabel: "Continuar editando",
+        tone: "danger",
+      })))
         return;
       setDirty(false);
       setFile("");
@@ -321,25 +350,17 @@ export const TaskWorkspace = forwardRef<TaskWorkspaceHandle, Props>(function Tas
                   <div className="detail-title">
                     <h2>{task.title}</h2>
                     <span className={"status-pill " + task.status}>{labels[task.status]}</span>
-                    <select
-                      className="task-agent"
-                      aria-label="Agente da tarefa"
+                    <AgentPicker
                       value={task.provider}
+                      agents={snapshot.agents}
                       disabled={busy || ["running", "waiting", "queued"].includes(task.status)}
                       title={
                         ["running", "waiting", "queued"].includes(task.status)
                           ? "Aguarde a tarefa terminar para trocar o agente"
                           : "Troca o agente desta tarefa. A branch e os arquivos continuam."
                       }
-                      onChange={(e) => changeAgent(e.target.value as Provider)}
-                    >
-                      {snapshot.agents.map((agent) => (
-                        <option key={agent.provider} value={agent.provider} disabled={!agent.available}>
-                          {agent.label}
-                          {agent.available ? "" : " (não instalado)"}
-                        </option>
-                      ))}
-                    </select>
+                      onChange={changeAgent}
+                    />
                   </div>
                   <p>
                     <GitBranch size={13} />
@@ -494,11 +515,13 @@ export const TaskWorkspace = forwardRef<TaskWorkspaceHandle, Props>(function Tas
                       <button
                         disabled={busy}
                         title="Coloca a pasta do projeto no código desta tarefa, para você testar. Sua branch original é guardada e volta com o botão ao lado."
-                        onClick={() => {
+                        onClick={async () => {
                           if (
-                            window.confirm(
-                              `Colocar a pasta do projeto no código de "${task.branch}" para teste? A branch atual da sua pasta muda temporariamente. Alterações não commitadas impedem a troca.`,
-                            )
+                            await confirm({
+                              title: "Testar esta tarefa na pasta do projeto?",
+                              message: `A pasta do projeto passa para o código de "${task.branch}". A branch atual dela é guardada e volta com o botão "Voltar". Alterações não commitadas na pasta impedem a troca.`,
+                              confirmLabel: "Testar no projeto",
+                            })
                           )
                             void act("testActivate");
                         }}
@@ -523,11 +546,18 @@ export const TaskWorkspace = forwardRef<TaskWorkspaceHandle, Props>(function Tas
                       </button>
                       <button
                         disabled={busy}
-                        onClick={() => {
+                        onClick={async () => {
                           if (
-                            window.confirm(
-                              "Guardar as alterações da pasta do projeto com git stash? Para recuperar depois: git stash pop.",
-                            )
+                            await confirm({
+                              title: "Guardar as alterações com git stash?",
+                              message: (
+                                <p>
+                                  As alterações não commitadas da pasta do projeto são guardadas e a pasta fica limpa
+                                  para a tarefa começar. Para recuperar depois: <code>git stash pop</code>.
+                                </p>
+                              ),
+                              confirmLabel: "Guardar (stash)",
+                            })
                           )
                             perform(() => request({ action: "stashPending", taskId: task.id }));
                         }}
@@ -548,7 +578,19 @@ export const TaskWorkspace = forwardRef<TaskWorkspaceHandle, Props>(function Tas
                 {shown("Chat") && (
                   <div className="tab-slot bare" style={place("Chat")}>
                     <ChatPane taskId={task.id} provider={task.provider} model={task.model ?? null} draft={chatDraft} onDraftChange={setChatDraft} onError={report}
-                      approvalTarget={approvalTarget} />
+                      approvalTarget={approvalTarget}
+                      locked={
+                        // Sessão parada (interrompida, cancelada ou com falha) esperando ser retomada:
+                        // o chat só libera depois que ela volta.
+                        task.sessionId && task.branchCreated && ["interrupted", "cancelled", "failed"].includes(task.status)
+                          ? {
+                              message: "A sessão desta tarefa está parada. Retome a sessão para voltar a usar o chat.",
+                              actionLabel: "Retomar sessão",
+                              onAction: () => void act("queue"),
+                              busy,
+                            }
+                          : null
+                      } />
                   </div>
                 )}
                 {shown("Terminal") && (
