@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=Golfinho
+Exec=golfinho %U
+Terminal=false
+Type=Application
+Icon=${SNAP}/meta/gui/icon.png
+StartupWMClass=golfinho
+Comment=Ambiente desktop para tarefas com agentes e branches Git
+Categories=Development;

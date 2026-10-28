@@ -1,0 +1,40 @@
+# Empacota o app já gerado pelo electron-builder em release/linux-unpacked
+# (npx electron-builder --linux dir). O workflow de release faz os dois passos.
+name: golfinho
+title: Golfinho
+summary: Tarefas com agentes de IA e branches Git
+description: |
+  Ambiente desktop para tarefas com agentes de IA (Claude, Codex e outros),
+  cada uma na sua branch Git, com terminal, chat, diff e checks integrados.
+
+  Precisa do git e do CLI do agente instalados e com login feito.
+base: core24
+grade: stable
+# classic: o Golfinho abre terminais, roda git e os CLIs dos agentes e edita as
+# pastas dos projetos, o que o confinamento strict não permite.
+confinement: classic
+adopt-info: golfinho
+icon: build/icons/512x512.png
+platforms:
+  amd64:
+
+apps:
+  golfinho:
+    # Snaps não aceitam o chrome-sandbox com setuid, então o sandbox do Chromium fica desligado.
+    command: golfinho/golfinho --no-sandbox
+
+parts:
+  golfinho:
+    plugin: dump
+    source: release/linux-unpacked
+    organize:
+      "*": golfinho/
+    # Sem patchelf: como no .deb, o binário usa as bibliotecas do sistema.
+    override-pull: |
+      craftctl default
+      craftctl set version="$(sed -n 's/^  "version": "\(.*\)",$/\1/p' "$CRAFT_PROJECT_DIR/package.json")"
+
+lint:
+  ignore:
+    - classic
+    - library

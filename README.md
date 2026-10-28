@@ -36,7 +36,16 @@ usando suas pastas próprias.
 
 ## Instalação para usuários
 
-Baixe os arquivos na página de [Releases](https://github.com/Joaocstt/golfinho/releases).
+**Ubuntu e outras distribuições com snap:**
+
+```bash
+sudo snap install golfinho --classic
+```
+
+O snap se atualiza sozinho. O `--classic` é necessário porque o Golfinho abre terminais,
+roda o `git` e os CLIs dos agentes e edita as pastas dos seus projetos.
+
+Para os outros sistemas, baixe os arquivos na página de [Releases](https://github.com/Joaocstt/golfinho/releases).
 
 | Sistema | Arquivo | Como instalar |
 | --- | --- | --- |
@@ -396,6 +405,22 @@ para Windows e macOS, use o GitHub Actions (abaixo) ou uma máquina com o sistem
    instaladores de Linux, Windows e macOS e cria uma release com todos os arquivos.
 4. Também é possível disparar o workflow manualmente, pela aba *Actions*, sem criar a tag.
    Nesse caso, os instaladores ficam apenas como artefatos da execução.
+5. O mesmo workflow gera o snap a partir de [`snap/snapcraft.yaml`](snap/snapcraft.yaml)
+   e, numa tag, publica no canal `stable` da Snap Store. A publicação só roda se o
+   secret `SNAPCRAFT_STORE_CREDENTIALS` existir; sem ele, o `.snap` fica só como artefato.
+
+**Configurar a Snap Store (uma vez):**
+
+1. Crie uma conta em [snapcraft.io](https://snapcraft.io) e instale o `snapcraft`
+   (`sudo snap install snapcraft --classic`).
+2. Reserve o nome: `snapcraft login` e depois `snapcraft register golfinho`.
+3. Gere o token do CI e salve como secret `SNAPCRAFT_STORE_CREDENTIALS` no repositório:
+   ```bash
+   snapcraft export-login --snaps=golfinho --acls package_access,package_push,package_update,package_release -
+   ```
+4. Peça o confinamento `classic` no fórum, na categoria
+   [store-requests](https://forum.snapcraft.io/c/store-requests/19). Até a aprovação,
+   a loja segura os uploads para revisão manual.
 
 Um push comum na `main` não dispara esse workflow de release. Os comandos locais
 de distribuição usam `--publish never`: geram os arquivos sem publicá-los.
