@@ -24,6 +24,7 @@ import { safeStorage } from "electron";
 import { exercise } from "./smoke";
 import { writeFile } from "node:fs/promises";
 import { startUpdater, type Updater } from "./updater";
+import { YouTube } from "./youtube";
 const here = dirname(fileURLToPath(import.meta.url));
 let window: BrowserWindow | null = null;
 let updater: Updater | undefined;
@@ -208,6 +209,23 @@ else {
         // Fecha pela mesma rota do usuário: o before-quit encerra as execuções antes de instalar.
         installPending = true;
         window?.close();
+      });
+      const youtube = new YouTube(window, (state) => {
+        if (window && !window.isDestroyed()) window.webContents.send("golfinho:youtube", state);
+      });
+      const number = (value: unknown) => (typeof value === "number" && Number.isFinite(value) ? value : 0);
+      ipcMain.handle("golfinho:youtube:show", (event, bounds: unknown) => {
+        if (!trusted(event) || !bounds || typeof bounds !== "object") return;
+        const b = bounds as Record<string, unknown>;
+        youtube.show({ x: number(b.x), y: number(b.y), width: number(b.width), height: number(b.height) });
+      });
+      ipcMain.handle("golfinho:youtube:hide", (event) => {
+        if (trusted(event)) youtube.hide();
+      });
+      ipcMain.handle("golfinho:youtube:command", (event, command: unknown) => {
+        if (!trusted(event)) return;
+        if (command === "back" || command === "forward" || command === "reload" || command === "home" || command === "close")
+          youtube.command(command);
       });
       window.once("ready-to-show", () => window?.show());
       window.on("closed", () => {

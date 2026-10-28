@@ -101,9 +101,10 @@ export class GitService {
   async requireCurrent(path: string, branch: string) {
     const current = await this.current(path);
     if (current === branch) return;
-    const where = current ? `"${current}"` : "nenhuma branch (HEAD solto)";
+    // Sem worktree, as tarefas do projeto dividem uma pasta só, que fica numa branch por vez.
+    const where = current ? `na branch "${current}"` : "sem branch (HEAD solto)";
     throw new Error(
-      `A pasta do projeto está em ${where}, mas esta tarefa usa "${branch}". Troque a pasta do projeto para "${branch}" e tente de novo.`,
+      `As tarefas deste projeto dividem a mesma pasta, e ela está ${where}. Esta tarefa usa "${branch}": clique em "Trocar a pasta para ${branch}" no topo da tarefa.`,
     );
   }
   async prepare(path: string, branch: string, base: string, exists: boolean) {

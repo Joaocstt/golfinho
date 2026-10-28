@@ -14,6 +14,7 @@ import {
   TriangleAlert,
   RefreshCw,
   LogIn,
+  TvMinimalPlay,
   Gauge,
   Server,
   ChevronDown,
@@ -39,7 +40,8 @@ import { usePermissionRequests } from "./usePermissionRequests";
 import type { PermissionRequest } from "./permissionRequests";
 import { ShellPane } from "./ShellPane";
 import { AgentIcon } from "./agentIcons";
-import { AgentQuotaTip } from "./AgentQuota";
+import { AgentQuotaTip, QuotaPanel } from "./AgentQuota";
+import { YouTubeMini, YouTubePane, type YouTubeLayout } from "./YouTubePane";
 import { SshPanel } from "./SshPanel";
 import { HelpPane } from "./HelpPane";
 import { MemoryPane } from "./MemoryPane";
@@ -141,6 +143,21 @@ function Workspace() {
   const [sshView, setSshView] = useState(false);
   const [helpView, setHelpView] = useState(false);
   const [memoryView, setMemoryView] = useState(false);
+  const [youtubeView, setYoutubeView] = useState(false);
+  // Onde o YouTube aparece: na própria aba, ao lado da visão atual ou num mini player.
+  const [youtubeLayout, setYoutubeLayout] = useState<YouTubeLayout>("tab");
+  const [youtubeRatio, setYoutubeRatio] = useState(() => {
+    try {
+      const v = Number(localStorage.getItem("golfinho.youtube.split"));
+      return v >= 0.2 && v <= 0.8 ? v : 0.4;
+    } catch {
+      return 0.4;
+    }
+  });
+  const [youtubeResizing, setYoutubeResizing] = useState(false);
+  const mainRow = useRef<HTMLDivElement>(null);
+  // Tarefa que estava aberta antes de ir para a aba YouTube: volta ao dividir ou minimizar.
+  const beforeYoutube = useRef("");
   // Projetos recolhidos na lateral. Preferência de tela: fica neste computador.
   const [collapsed, setCollapsed] = useState<string[]>(() => {
     try {
@@ -208,6 +225,10 @@ function Workspace() {
   useEffect(() => {
     if (dashboard || activeGeneral || selected || sshView || helpView) setMemoryView(false);
   }, [dashboard, activeGeneral, selected, sshView, helpView]);
+  // O YouTube também sai quando outra visão entra.
+  useEffect(() => {
+    if (dashboard || activeGeneral || selected || sshView || helpView || memoryView) setYoutubeView(false);
+  }, [dashboard, activeGeneral, selected, sshView, helpView, memoryView]);
   const resizeCleanup = useRef<() => void>(() => {});
   useEffect(() => () => resizeCleanup.current(), []);
   const snapshotEpoch = useRef(0);
@@ -323,6 +344,48 @@ function Workspace() {
       window.removeEventListener("pointerup", end);
     };
     resizeCleanup.current = end;
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", end);
+  }
+  function changeYoutubeLayout(layout: YouTubeLayout) {
+    setYoutubeLayout(layout);
+    if (layout === "tab") {
+      if (selected) beforeYoutube.current = selected;
+      setDashboard(false), setSshView(false), setHelpView(false), setMemoryView(false), setActiveGeneral(""), setSelected("");
+      setYoutubeView(true);
+      return;
+    }
+    // Saindo da aba YouTube, a tela principal volta para a tarefa de antes.
+    if (youtubeView) {
+      setYoutubeView(false);
+      if (beforeYoutube.current && open.includes(beforeYoutube.current)) setSelected(beforeYoutube.current);
+    }
+  }
+  function closeYoutube() {
+    void window.golfinho.youtube.command("close");
+    setYoutubeLayout("tab");
+  }
+  function resizeYoutube(event: React.PointerEvent<HTMLDivElement>) {
+    event.preventDefault();
+    setYoutubeResizing(true);
+    const move = (e: PointerEvent) => {
+      const box = mainRow.current?.getBoundingClientRect();
+      if (!box?.width) return;
+      setYoutubeRatio(Math.min(0.8, Math.max(0.2, (box.right - e.clientX) / box.width)));
+    };
+    const end = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", end);
+      setYoutubeResizing(false);
+      setYoutubeRatio((ratio) => {
+        try {
+          localStorage.setItem("golfinho.youtube.split", String(ratio));
+        } catch {
+          /* sem armazenamento: a largura só não fica lembrada */
+        }
+        return ratio;
+      });
+    };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", end);
   }
@@ -646,9 +709,9 @@ function Workspace() {
               role="tab"
               aria-label="Visão geral das tarefas"
               title="Tarefas"
-              aria-selected={!selected && !dashboard && !sshView && !helpView && !memoryView && !activeGeneral}
-              className={!selected && !dashboard && !sshView && !helpView && !memoryView && !activeGeneral ? "active" : ""}
-              onClick={() => navigate(() => (setDashboard(false), setSshView(false), setHelpView(false), setMemoryView(false), setActiveGeneral(""), setSelected("")))}
+              aria-selected={!selected && !dashboard && !sshView && !helpView && !memoryView && !youtubeView && !activeGeneral}
+              className={!selected && !dashboard && !sshView && !helpView && !memoryView && !youtubeView && !activeGeneral ? "active" : ""}
+              onClick={() => navigate(() => (setDashboard(false), setSshView(false), setHelpView(false), setMemoryView(false), setYoutubeView(false), setActiveGeneral(""), setSelected("")))}
             >
               <List size={12} />
               <span className="nav-label">Tarefas</span>
@@ -687,6 +750,24 @@ function Workspace() {
             >
               <Brain size={12} />
               <span className="nav-label">Memória</span>
+            </button>
+            <button
+              role="tab"
+              aria-label="YouTube"
+              title="YouTube"
+              aria-selected={youtubeView}
+              className={youtubeView ? "active" : ""}
+              onClick={() =>
+                navigate(() => {
+                  if (selected) beforeYoutube.current = selected;
+                  setDashboard(false), setSshView(false), setHelpView(false), setMemoryView(false), setActiveGeneral(""), setSelected("");
+                  setYoutubeLayout("tab");
+                  setYoutubeView(true);
+                })
+              }
+            >
+              <TvMinimalPlay size={12} />
+              <span className="nav-label">YouTube</span>
             </button>
             {open
               .map((id) => snapshot?.tasks.find((t) => t.id === id))
@@ -816,6 +897,7 @@ function Workspace() {
             <PanelRight size={14} />
           </button>
         </header>
+        <div className="main-row" ref={mainRow}>
         <main className="main-area">
           <PermissionNotices pending={permissionRequests} tasks={snapshot?.tasks ?? []} onOpen={(request) => {
             openTask(request.taskId);
@@ -834,6 +916,9 @@ function Workspace() {
             <UsageDashboard onLogin={() => navigate(() => addGeneral("Login · Claude", "claude", undefined, true))} />
           )}
           {helpView && <HelpPane />}
+          {youtubeView && youtubeLayout === "tab" && (
+            <YouTubePane layout="tab" onLayout={changeYoutubeLayout} onClose={closeYoutube} />
+          )}
           {memoryView && snapshot && (
             <MemoryPane
               projects={snapshot.projects}
@@ -881,7 +966,7 @@ function Workspace() {
               />
             </section>
           ))}
-          {!task && !dashboard && !sshView && !helpView && !memoryView && !activeGeneral && (
+          {!task && !dashboard && !sshView && !helpView && !memoryView && !youtubeView && !activeGeneral && (
             <section className="overview">
               <div className="overview-head">
                 <h1>{snapshot?.projects.find((p) => p.id === project)?.name ?? "Tarefas"}</h1>
@@ -940,7 +1025,7 @@ function Workspace() {
           )}
           {snapshot && open.length > 0 && (
             <div className={"task-workspaces" + (splitTasks.length === 2 ? " divided" : "")}
-              hidden={!task || dashboard || Boolean(activeGeneral) || sshView || helpView || memoryView}
+              hidden={!task || dashboard || Boolean(activeGeneral) || sshView || helpView || memoryView || youtubeView}
               style={splitTasks.length === 2 ? { gridTemplateColumns: `minmax(0, ${taskRatio}fr) 6px minmax(0, ${1 - taskRatio}fr)` } : undefined}
               ref={taskArea}>
               {open.map((id) => {
@@ -980,6 +1065,22 @@ function Workspace() {
             </div>
           )}
         </main>
+        {youtubeLayout === "split" && (
+          <>
+            <div
+              className="youtube-divider"
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="Redimensionar o YouTube"
+              onPointerDown={resizeYoutube}
+            />
+            <div className="youtube-side" style={{ width: `${youtubeRatio * 100}%` }}>
+              <YouTubePane layout="split" paused={youtubeResizing} onLayout={changeYoutubeLayout} onClose={closeYoutube} />
+            </div>
+          </>
+        )}
+        </div>
+        {youtubeLayout === "mini" && <YouTubeMini onLayout={changeYoutubeLayout} onClose={closeYoutube} />}
         <footer className="statusbar">
           <span>
             <GitBranch size={11} />
@@ -1053,7 +1154,7 @@ function Workspace() {
               </div>
             ))}
           </div>
-          {!activeGeneral && !sshView && task ? (
+          {youtubeView ? null : !activeGeneral && !sshView && task ? (
             <div ref={setInspectorHost} className="task-inspector-host" />
           ) : !sshView && !activeGeneral ? (
             <div className="empty inspector-empty">
@@ -1169,19 +1270,6 @@ function Workspace() {
     </div>
   );
 }
-const LABELS: Record<string, string> = { "5h": "Janela de 5 h", weekly: "Semanal" };
-const quando = new Intl.DateTimeFormat("pt-BR", {
-  day: "2-digit",
-  month: "2-digit",
-  year: "numeric",
-  hour: "2-digit",
-  minute: "2-digit",
-});
-function reset(value: string) {
-  if (!value) return "";
-  const parsed = Date.parse(value);
-  return isFinite(parsed) ? quando.format(parsed) : value;
-}
 // As CLIs não avisam quando o consumo muda, então o painel pergunta a cada minuto.
 // Só existe enquanto está aberto: sair da aba para a consulta.
 const USAGE_INTERVAL_MS = 60_000;
@@ -1255,55 +1343,6 @@ function UsageDashboard({ onLogin }: { onLogin: () => void }) {
         })}
       </div>
     </section>
-  );
-}
-function QuotaPanel({
-  quota,
-  busy,
-  failed,
-}: {
-  quota: ProviderQuota | null;
-  busy: boolean;
-  failed: boolean;
-}) {
-  if (!quota)
-    return (
-      <p className="usage-note">
-        {busy ? "Consultando a CLI…" : failed ? "Não foi possível consultar a CLI." : "—"}
-      </p>
-    );
-  if (!quota.available || !quota.groups.length)
-    return <p className="usage-note">{quota.error || "A CLI não informou limites."}</p>;
-  return (
-    <>
-      {quota.groups.map((group, index) => (
-        <div className="quota-group" key={group.name || index}>
-          {group.name && <h5>{group.name}</h5>}
-          {group.windows.map((w) => (
-            <div className="quota-row" key={w.window}>
-              <div className="quota-head">
-                <span>{LABELS[w.window] ?? w.window}</span>
-                <strong>{w.usedPercent}%</strong>
-              </div>
-              <div
-                className="quota-bar"
-                role="meter"
-                aria-label={`${LABELS[w.window] ?? w.window}: ${w.usedPercent}% usado`}
-                aria-valuenow={w.usedPercent}
-                aria-valuemin={0}
-                aria-valuemax={100}
-              >
-                <i
-                  data-level={w.usedPercent >= 90 ? "alto" : w.usedPercent >= 70 ? "medio" : "ok"}
-                  style={{ width: `${w.usedPercent}%` }}
-                />
-              </div>
-              {w.resetsAt && <small>renova em {reset(w.resetsAt)}</small>}
-            </div>
-          ))}
-        </div>
-      ))}
-    </>
   );
 }
 function DeleteDialog({

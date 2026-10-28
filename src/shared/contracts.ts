@@ -361,6 +361,20 @@ export type UpdateStatus =
   | { state: "idle" }
   | { state: "downloading"; version: string; percent: number }
   | { state: "ready"; version: string };
+export interface YouTubeBounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+export type YouTubeCommand = "back" | "forward" | "reload" | "home" | "close";
+export interface YouTubeState {
+  url: string;
+  title: string;
+  loading: boolean;
+  canGoBack: boolean;
+  canGoForward: boolean;
+}
 export interface GolfinhoAPI {
   request(request: Request): Promise<Response>;
   getPathForFile(file: File): string;
@@ -369,6 +383,12 @@ export interface GolfinhoAPI {
     status(): Promise<UpdateStatus>;
     install(): Promise<void>;
     subscribe(listener: (status: UpdateStatus) => void): () => void;
+  };
+  youtube: {
+    show(bounds: YouTubeBounds): Promise<void>;
+    hide(): Promise<void>;
+    command(command: YouTubeCommand): Promise<void>;
+    subscribe(listener: (state: YouTubeState) => void): () => void;
   };
 }
 declare global {

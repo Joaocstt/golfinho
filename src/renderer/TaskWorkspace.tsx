@@ -1,6 +1,23 @@
 import React, { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Activity, Files, GitBranch, Play, Plus, Search, TerminalSquare, X } from "lucide-react";
+import {
+  Activity,
+  Check as CheckMark,
+  Files,
+  GitBranch,
+  GitCommitHorizontal,
+  GitCompare,
+  History,
+  ListChecks,
+  MessageSquare,
+  Play,
+  Plus,
+  Search,
+  SquareTerminal,
+  Terminal,
+  TerminalSquare,
+  X,
+} from "lucide-react";
 import type { Check, Provider, Request, Review, Snapshot, Task, TaskEvent } from "../shared/contracts";
 import { TerminalPane, DiffPane, FileEditor, FileTree } from "./Editors";
 import { ChatPane } from "./ChatPane";
@@ -10,6 +27,8 @@ import { AgentPicker } from "./AgentPicker";
 import { useConfirm } from "./ui";
 import { CommitPanel } from "./CommitPanel";
 import { ReviewFiles } from "./ReviewFiles";
+import { TaskQuota } from "./AgentQuota";
+import { HIDDEN_KEY, ORDER_EVENT, ORDER_KEY, TABS, arrangeTabs, mergeOrder, moveTab, storedHiddenTabs, storedTabOrder } from "./tabOrder";
 
 type DropZone = "left" | "right" | "top" | "bottom" | "center";
 // Layout da divisão fica nesta máquina, como preferência de tela.
@@ -50,8 +69,48 @@ const request = <T,>(r: Request) => window.golfinho.request(r) as Promise<T>;
 function savedTab(taskId: string) {
   try {
     const value = localStorage.getItem(`golfinho.task.${taskId}.tab`);
-    return value && ["Terminal", "Chat", "Shell", "Diff", "Commit", "Arquivos", "Histórico", "Checks"].includes(value) ? value : "Terminal";
+    return value && TABS.includes(value) ? value : "Terminal";
   } catch { return "Terminal"; }
+}
+export const TAB_ICONS: Record<string, React.ComponentType<{ size?: number }>> = {
+  Terminal: TerminalSquare,
+  Chat: MessageSquare,
+  Shell: SquareTerminal,
+  Diff: GitCompare,
+  Commit: GitCommitHorizontal,
+  Arquivos: Files,
+  Histórico: History,
+  Checks: ListChecks,
+};
+function store(key: string, value: string[]) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    /* sem armazenamento: a preferência só não fica lembrada */
+  }
+  window.dispatchEvent(new Event(ORDER_EVENT));
+}
+// Cada tarefa aberta tem sua barra; todas acompanham a mesma ordem e as mesmas abas escondidas.
+function useTabOrder() {
+  const [order, setOrder] = useState(storedTabOrder);
+  const [hidden, setHidden] = useState(storedHiddenTabs);
+  useEffect(() => {
+    const sync = () => {
+      setOrder(storedTabOrder());
+      setHidden(storedHiddenTabs());
+    };
+    window.addEventListener(ORDER_EVENT, sync);
+    return () => window.removeEventListener(ORDER_EVENT, sync);
+  }, []);
+  const saveOrder = (next: string[]) => {
+    setOrder(next);
+    store(ORDER_KEY, next);
+  };
+  const saveHidden = (next: string[]) => {
+    setHidden(next);
+    store(HIDDEN_KEY, next);
+  };
+  return { order, saveOrder, hidden, saveHidden };
 }
 export interface TaskWorkspaceHandle {
   /** true na hora quando não há alteração; com alteração, a resposta da confirmação. */
@@ -90,6 +149,11 @@ export const TaskWorkspace = forwardRef<TaskWorkspaceHandle, Props>(function Tas
   const resizeCleanup = useRef<() => void>(() => {});
   useEffect(() => () => resizeCleanup.current(), []);
   const detailEpoch = useRef(0);
+  const { order: tabOrder, saveOrder: saveTabOrder, hidden: hiddenTabs, saveHidden: saveHiddenTabs } = useTabOrder();
+  const [tabMenu, setTabMenu] = useState<{ x: number; y: number } | null>(null);
+  // Posição de cada aba nesta tarefa, misturando fixas e sessões do +. Sessões não
+  // sobrevivem ao reinício do app, então essa mistura também fica só na memória.
+  const [placed, setPlaced] = useState<Record<string, string[]>>({});
   const [tab, setTab] = useState(() => savedTab(task.id)),
     [review, setReview] = useState<Review | null>(null),
     [events, setEvents] = useState<TaskEvent[]>([]),
@@ -196,6 +260,24 @@ export const TaskWorkspace = forwardRef<TaskWorkspaceHandle, Props>(function Tas
       await loadDetails(task.id);
     } catch (error) { report(error); }
     finally { setBusy(false); }
+  }
+  const sessionList = sessions[task.id] ?? [];
+  const fixedTabs = tabOrder
+    .filter((t) => (t !== "Shell" && t !== "Commit") || task.branchCreated)
+    // Aba escondida que está aberta continua visível até o usuário sair dela.
+    .filter((t) => !hiddenTabs.includes(t) || shown(t));
+  const tabBar = arrangeTabs(
+    placed[task.id] ?? [],
+    fixedTabs,
+    sessionList.map((s) => `session:${s.key}`),
+  );
+  // Põe a aba arrastada no lugar da outra. Se a ordem das fixas mudou, ela vale para
+  // todas as tarefas; a posição das sessões é só desta tarefa.
+  function placeTab(dragged: string, target: string) {
+    const next = moveTab(tabBar, dragged, target);
+    setPlaced((all) => ({ ...all, [task.id]: next }));
+    const fixed = next.filter((k) => TABS.includes(k));
+    if (fixed.join() !== fixedTabs.join()) saveTabOrder(mergeOrder(fixed, tabOrder));
   }
   function dragStart(e: React.DragEvent, name: string) {
     e.dataTransfer.setData("text/plain", name);
@@ -345,10 +427,9 @@ export const TaskWorkspace = forwardRef<TaskWorkspaceHandle, Props>(function Tas
               hidden={!visible} style={{ gridColumn: column, gridRow: 1 }}
               onPointerDownCapture={() => onFocus(task.id)} onFocusCapture={() => onFocus(task.id)}>
               <div className="detail-head">
-                <div>
-                  {/* Status ao lado do título, no lugar da linha "TAREFA · …"; a branch só se repete se for diferente. */}
-                  <div className="detail-title">
-                    <h2>{task.title}</h2>
+                {/* Uma linha só: título, status, agente e de onde a branch saiu. */}
+                <div className="detail-title">
+                    <h2 title={task.title}>{task.title}</h2>
                     <span className={"status-pill " + task.status}>{labels[task.status]}</span>
                     <AgentPicker
                       value={task.provider}
@@ -361,21 +442,55 @@ export const TaskWorkspace = forwardRef<TaskWorkspaceHandle, Props>(function Tas
                       }
                       onChange={changeAgent}
                     />
-                  </div>
-                  <p>
-                    <GitBranch size={13} />
-                    {task.branch !== task.title && <>{task.branch} </>}
-                    <span>
-                      {task.branch !== task.title ? "← " : "a partir de "}
-                      {task.base} · {task.remote}
+                    <span className="detail-branch" title={`${task.branch} ← ${task.base} · ${task.remote}`}>
+                      <GitBranch size={12} />
+                      {task.branch !== task.title && <strong>{task.branch}</strong>}
+                      <span>
+                        {task.branch !== task.title ? "← " : "a partir de "}
+                        {task.base} · {task.remote}
+                      </span>
                     </span>
-                  </p>
                 </div>
-                <button aria-label="Fechar tarefa" onClick={() => onClose(task.id)}>
-                  <X size={18} />
+                <button className="detail-close" aria-label="Fechar tarefa" title="Fechar tarefa" onClick={() => onClose(task.id)}>
+                  <X size={15} />
                 </button>
               </div>
               {task.error && <div className="error">{task.error}</div>}
+              {(() => {
+                // Projeto sem worktree: as tarefas dividem a pasta, que só fica numa branch por vez.
+                const active = snapshot.activeBranches?.[task.projectId];
+                if (task.worktreePath || !task.branchCreated || active === undefined || active === task.branch) return null;
+                const owner = snapshot.tasks.find(
+                  (t) => t.id !== task.id && t.projectId === task.projectId && !t.worktreePath && t.branch === active,
+                );
+                const live = (s: string) => ["running", "waiting", "queued"].includes(s);
+                const blocker = snapshot.tasks.find(
+                  (t) => t.id !== task.id && t.projectId === task.projectId && !t.worktreePath && live(t.status),
+                );
+                const running = live(task.status) || Boolean(blocker);
+                return (
+                  <div className="notice notice-warn branch-switch" role="status">
+                    <p>
+                      As tarefas deste projeto dividem a mesma pasta, e agora ela está em{" "}
+                      <strong>{active || "nenhuma branch"}</strong>
+                      {owner && <> (tarefa “{owner.title}”)</>}. Para ver os arquivos e rodar esta tarefa, troque a pasta
+                      para <strong>{task.branch}</strong>.
+                    </p>
+                    <button
+                      disabled={busy || running}
+                      title={
+                        blocker
+                          ? `A tarefa “${blocker.title}” está executando nesta pasta. Espere ela terminar.`
+                          : "Faz git switch na pasta do projeto. Alterações não commitadas impedem a troca."
+                      }
+                      onClick={() => act("activate")}
+                    >
+                      <GitBranch size={13} />
+                      Trocar a pasta para {task.branch}
+                    </button>
+                  </div>
+                );
+              })()}
               {task.testCheckout && (
                 <p className="notice notice-warn" role="status">
                   A pasta do projeto está no código desta tarefa, para teste. A branch original era{" "}
@@ -390,39 +505,73 @@ export const TaskWorkspace = forwardRef<TaskWorkspaceHandle, Props>(function Tas
               )}
               <div className="workbar">
                 <div className="tab-group">
-                  <div className="tabs">
-                  {["Terminal", "Chat", "Shell", "Diff", "Commit", "Arquivos", "Histórico", "Checks"]
-                    .filter((t) => (t !== "Shell" && t !== "Commit") || task.branchCreated)
-                    .map((t) => (
-                    <button
-                      key={t}
-                      className={tab === t ? "active" : secondTab === t ? "active secondary" : ""}
-                      draggable
-                      onDragStart={(e) => dragStart(e, t)}
-                      onDragEnd={dragEnd}
-                      onClick={() => navigate(() => selectTab(t))}
-                    >
-                      {t}
-                    </button>
-                  ))}
-                  {(sessions[task.id] ?? []).map((s) => (
+                  <div
+                    className="tabs"
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      setTabMenu({ x: e.clientX, y: e.clientY });
+                    }}
+                  >
+                  {tabBar.map((key) => {
+                    // Qualquer aba (fixa ou do +) pode passar por cima de qualquer outra.
+                    const reorder = {
+                      onDragOver: (e: React.DragEvent<HTMLElement>) => {
+                        if (!dragTab || !tabBar.includes(dragTab)) return;
+                        e.preventDefault();
+                        if (dragTab === key) return;
+                        // Só troca depois de passar do meio da outra aba: abas de larguras
+                        // diferentes não ficam trocando de lugar sem parar sob o cursor.
+                        const box = e.currentTarget.getBoundingClientRect();
+                        const middle = box.left + box.width / 2;
+                        const right = tabBar.indexOf(dragTab) < tabBar.indexOf(key);
+                        if (right ? e.clientX < middle : e.clientX > middle) return;
+                        placeTab(dragTab, key);
+                      },
+                      onDrop: (e: React.DragEvent<HTMLElement>) => {
+                        if (!dragTab || !tabBar.includes(dragTab)) return;
+                        e.preventDefault();
+                        dragEnd();
+                      },
+                    };
+                    const state =
+                      (tab === key ? "active" : secondTab === key ? "active secondary" : "") +
+                      (dragTab === key ? " dragging" : "");
+                    const s = key.startsWith("session:")
+                      ? sessionList.find((x) => `session:${x.key}` === key)
+                      : undefined;
+                    if (!s) {
+                      const Icon = TAB_ICONS[key];
+                      return (
+                        <button
+                          key={key}
+                          title="Arraste para reordenar · botão direito para escolher as abas"
+                          className={state}
+                          draggable
+                          onDragStart={(e) => dragStart(e, key)}
+                          onDragEnd={dragEnd}
+                          {...reorder}
+                          onClick={() => navigate(() => selectTab(key))}
+                        >
+                          <Icon size={13} />
+                          {key}
+                        </button>
+                      );
+                    }
+                    return (
                     <span
-                      key={s.key}
-                      className={"session-tab " + (tab === `session:${s.key}` ? "active" : "")}
+                      key={key}
+                      className={"session-tab " + state}
+                      {...reorder}
                     >
                       <button
-                        className={
-                          tab === `session:${s.key}`
-                            ? "active"
-                            : secondTab === `session:${s.key}`
-                              ? "active secondary"
-                              : ""
-                        }
+                        className={tab === key ? "active" : secondTab === key ? "active secondary" : ""}
                         draggable
-                        onDragStart={(e) => dragStart(e, `session:${s.key}`)}
+                        onDragStart={(e) => dragStart(e, key)}
                         onDragEnd={dragEnd}
-                        onClick={() => navigate(() => selectTab(`session:${s.key}`))}
+                        onClick={() => navigate(() => selectTab(key))}
+                        title="Arraste para reordenar"
                       >
+                        {s.provider ? <AgentIcon provider={s.provider} /> : <Terminal size={13} />}
                         {s.label}
                       </button>
                       <button
@@ -435,14 +584,15 @@ export const TaskWorkspace = forwardRef<TaskWorkspaceHandle, Props>(function Tas
                               ...all,
                               [task.id]: (all[task.id] ?? []).filter((x) => x.key !== s.key),
                             }));
-                            if (tab === `session:${s.key}`) setTab("Terminal");
+                            if (tab === key) setTab("Terminal");
                           })
                         }
                       >
                         <X size={11} />
                       </button>
                     </span>
-                  ))}
+                    );
+                  })}
                 </div>
                 {task.branchCreated && (
                   <div className="session-new">
@@ -486,6 +636,21 @@ export const TaskWorkspace = forwardRef<TaskWorkspaceHandle, Props>(function Tas
                     </div>
                   )}
                 </div>
+                {tabMenu && (
+                  <TabMenu
+                    at={tabMenu}
+                    tabs={tabOrder.filter((t) => (t !== "Shell" && t !== "Commit") || task.branchCreated)}
+                    hidden={hiddenTabs}
+                    onToggle={(t) =>
+                      saveHiddenTabs(hiddenTabs.includes(t) ? hiddenTabs.filter((x) => x !== t) : [...hiddenTabs, t])
+                    }
+                    onReset={() => {
+                      saveHiddenTabs([]);
+                      saveTabOrder(TABS);
+                    }}
+                    onClose={() => setTabMenu(null)}
+                  />
+                )}
                 <div className="actions">
                   {["draft", "failed", "cancelled", "interrupted", "review", "completed"].includes(
                     task.status,
@@ -932,7 +1097,76 @@ export const TaskWorkspace = forwardRef<TaskWorkspaceHandle, Props>(function Tas
                   <p className="side-hint">Carregue a revisão para ver os arquivos alterados.</p>
                 )}
               </div>
+              <TaskQuota
+                provider={task.provider}
+                label={snapshot.agents.find((a) => a.provider === task.provider)?.label ?? task.provider}
+              />
             </>
     ), inspectorHost)}
   </>);
 });
+
+// Menu do botão direito na barra de abas: marca quais abas fixas aparecem.
+function TabMenu({
+  at,
+  tabs,
+  hidden,
+  onToggle,
+  onReset,
+  onClose,
+}: {
+  at: { x: number; y: number };
+  tabs: string[];
+  hidden: string[];
+  onToggle: (tab: string) => void;
+  onReset: () => void;
+  onClose: () => void;
+}) {
+  const menu = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const away = (e: PointerEvent) => {
+      if (!menu.current?.contains(e.target as Node)) onClose();
+    };
+    const key = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("pointerdown", away);
+    window.addEventListener("keydown", key);
+    return () => {
+      window.removeEventListener("pointerdown", away);
+      window.removeEventListener("keydown", key);
+    };
+  }, [onClose]);
+  return createPortal(
+    <div
+      ref={menu}
+      className="tab-menu"
+      role="menu"
+      aria-label="Abas visíveis"
+      style={{ left: Math.min(at.x, window.innerWidth - 200), top: at.y }}
+    >
+      <p>Abas visíveis</p>
+      {tabs.map((t) => {
+        const Icon = TAB_ICONS[t];
+        const on = !hidden.includes(t);
+        return (
+          <button
+            key={t}
+            role="menuitemcheckbox"
+            aria-checked={on}
+            disabled={t === "Terminal"}
+            title={t === "Terminal" ? "O Terminal fica sempre visível" : undefined}
+            onClick={() => onToggle(t)}
+          >
+            <span className="tab-menu-check">{on && <CheckMark size={12} />}</span>
+            <Icon size={13} />
+            {t}
+          </button>
+        );
+      })}
+      <hr />
+      <button role="menuitem" onClick={onReset}>
+        Restaurar ordem e abas
+      </button>
+    </div>,
+    document.body,
+  );
+}

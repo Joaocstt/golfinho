@@ -561,6 +561,18 @@ export class Service {
           if (!t.branchCreated) throw new Error("Inicie a tarefa antes de selecionar sua branch.");
           if (t.worktreePath)
             throw new Error("Esta tarefa tem pasta própria. Não é preciso ativar a branch.");
+          // A pasta é dividida: trocar a branch embaixo de um agente rodando estragaria o trabalho dele.
+          const busy = this.store
+            .tasks()
+            .find(
+              (o) =>
+                o.id !== t.id &&
+                o.projectId === t.projectId &&
+                !o.worktreePath &&
+                ["running", "waiting", "queued"].includes(o.status),
+            );
+          if (busy)
+            throw new Error(`A tarefa "${busy.title}" está usando a pasta do projeto. Espere ela terminar para trocar a branch.`);
           const p = this.store.project(t.projectId);
           await this.git.prepare(p.path, t.branch, t.baseCommit ?? t.base, true);
           this.store.note(t.id, "Branch selecionada para edição/revisão.");

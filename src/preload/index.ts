@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron";
-import type { GolfinhoAPI, Signal, UpdateStatus } from "../shared/contracts";
+import type { GolfinhoAPI, Signal, UpdateStatus, YouTubeState } from "../shared/contracts";
 const api: GolfinhoAPI = {
   getPathForFile(file) {
     return webUtils.getPathForFile(file);
@@ -21,6 +21,16 @@ const api: GolfinhoAPI = {
       const handler = (_event: unknown, status: UpdateStatus) => listener(status);
       ipcRenderer.on("golfinho:update", handler);
       return () => ipcRenderer.removeListener("golfinho:update", handler);
+    },
+  },
+  youtube: {
+    show: (bounds) => ipcRenderer.invoke("golfinho:youtube:show", bounds),
+    hide: () => ipcRenderer.invoke("golfinho:youtube:hide"),
+    command: (command) => ipcRenderer.invoke("golfinho:youtube:command", command),
+    subscribe(listener) {
+      const handler = (_event: unknown, state: YouTubeState) => listener(state);
+      ipcRenderer.on("golfinho:youtube", handler);
+      return () => ipcRenderer.removeListener("golfinho:youtube", handler);
     },
   },
 };
