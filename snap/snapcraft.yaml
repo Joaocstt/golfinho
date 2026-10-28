@@ -21,14 +21,14 @@ platforms:
 apps:
   golfinho:
     # Snaps não aceitam o chrome-sandbox com setuid, então o sandbox do Chromium fica desligado.
-    command: golfinho/golfinho --no-sandbox
+    command: opt/golfinho/golfinho --no-sandbox
 
 parts:
   golfinho:
     plugin: dump
     source: release/linux-unpacked
     organize:
-      "*": golfinho/
+      "*": opt/golfinho/
     # Sem patchelf: como no .deb, o binário usa as bibliotecas do sistema.
     override-pull: |
       craftctl default
