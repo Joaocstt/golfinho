@@ -45,6 +45,23 @@ sudo snap install golfinho --classic
 O snap se atualiza sozinho. O `--classic` é necessário porque o Golfinho abre terminais,
 roda o `git` e os CLIs dos agentes e edita as pastas dos seus projetos.
 
+**Linux sem snap (ou antes de o snap chegar à loja):**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Joaocstt/golfinho/main/scripts/install-linux.sh | bash
+```
+
+O script baixa o AppImage mais recente, confere o sha512 e o instala na sua pasta de usuário
+(`~/.local/share/golfinho-app`), com atalho no menu de aplicativos e o comando `golfinho`.
+Se faltar a `libfuse2`, ele a instala pelo `apt` (pede sua senha). Essa instalação se atualiza
+pelo botão de atualizar do Golfinho. Prefere o pacote `.deb`, instalado pelo `apt`?
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Joaocstt/golfinho/main/scripts/install-linux.sh | bash -s -- --deb
+```
+
+Com o `.deb`, rode o mesmo comando para atualizar.
+
 No macOS, instale pelo Terminal:
 
 ```bash
