@@ -6071,6 +6071,101 @@ select {
   display: block;
   margin: -2px 0 8px;
 }
+/* Arquivo citado no chat: link que abre o preview */
+.chat-file-link {
+  cursor: pointer;
+  color: var(--chat-accent, #7cc4ff);
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+}
+.chat-file-link:hover,
+.chat-file-link:focus-visible {
+  text-decoration-style: solid;
+  outline: none;
+}
+.chat-result-block summary .chat-file-link {
+  font-family: var(--mono);
+}
+.modal.file-preview {
+  width: min(920px, 100%);
+  height: min(84vh, 900px);
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+}
+.file-preview-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px 10px 16px;
+  border-bottom: 1px solid #ffffff1a;
+}
+.file-preview-head strong {
+  font-weight: 600;
+  white-space: nowrap;
+}
+.file-preview-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg-muted);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.file-preview-head button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 9px;
+  font-size: 12px;
+}
+.file-preview-head .file-preview-close {
+  background: transparent;
+  border: 0;
+  padding: 4px;
+  color: var(--fg-muted);
+}
+.file-preview-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 18px 24px;
+}
+.file-preview-body > .error {
+  border-radius: 5px;
+}
+.file-preview-md {
+  max-width: 780px;
+  margin: 0 auto;
+  line-height: 1.6;
+}
+.file-preview-code {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.5;
+  white-space: pre;
+}
+.file-preview-md h1 {
+  font-size: 1.7em;
+  margin: 0 0 12px;
+}
+.file-preview-md h2 {
+  font-size: 1.35em;
+  margin: 22px 0 10px;
+}
+.file-preview-md h3 {
+  font-size: 1.12em;
+  margin: 18px 0 8px;
+}
+.file-preview-md hr {
+  border: 0;
+  border-top: 1px solid #ffffff1f;
+  margin: 18px 0;
+}
 .youtube-bar .youtube-adblock.on {
   color: #4ade80;
 }

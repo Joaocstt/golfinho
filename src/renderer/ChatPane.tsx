@@ -1,9 +1,11 @@
-import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import React, { createContext, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Brain, Lock, Paperclip, Play, X } from "lucide-react";
 import type { ChatBlock, ChatEvent, ChatHistoryItem, Provider, Request } from "../shared/contracts";
 import { currentContext } from "../shared/chatContext";
+import { absolutePathIn, asFilePath } from "./filePaths";
+import { FilePreview } from "./FilePreview";
 export interface ChatPaneProps {
   taskId: string;
   provider: string;
@@ -14,6 +16,8 @@ export interface ChatPaneProps {
   approvalTarget?: { id: string; version: number };
   /** Chat bloqueado enquanto a sessão da tarefa não é retomada: aviso e ação no lugar do campo. */
   locked?: { message: string; actionLabel: string; onAction: () => void; busy?: boolean } | null;
+  /** Abre o arquivo no editor da aba Arquivos. */
+  onOpenFile?: (path: string) => void;
 }
 // Cada provedor tem a sua cor de destaque, para não parecer a conversa de outro.
 const LABELS: Record<string, string> = { claude: "Claude", codex: "Codex", antigravity: "Antigravity" };
@@ -122,6 +126,55 @@ function CodeBlock({ children, ...props }: React.HTMLAttributes<HTMLPreElement> 
     </div>
   );
 }
+// Arquivos citados nas respostas abrem um preview; o contexto evita passar a função bloco a bloco.
+const OpenFile = createContext<(path: string) => void>(() => undefined);
+function FileLink({ path, children }: { path: string; children: React.ReactNode }) {
+  const open = React.useContext(OpenFile);
+  return (
+    <code
+      className="chat-file-link"
+      role="button"
+      tabIndex={0}
+      title={`Abrir ${path}`}
+      onClick={(e) => {
+        // Dentro do <summary> de um resultado, o clique não deve abrir/fechar o bloco.
+        e.preventDefault();
+        e.stopPropagation();
+        open(path);
+      }}
+      onKeyDown={(e) => {
+        if (e.key !== "Enter" && e.key !== " ") return;
+        e.preventDefault();
+        open(path);
+      }}
+    >
+      {children}
+    </code>
+  );
+}
+// Código inline que é só um caminho de arquivo vira link; o resto fica como está.
+function InlineCode({ children, className, ...props }: React.HTMLAttributes<HTMLElement> & { children?: React.ReactNode }) {
+  const text = typeof children === "string" ? children : null;
+  const path = text && !className ? asFilePath(text) : null;
+  if (path) return <FileLink path={path}>{children}</FileLink>;
+  return (
+    <code className={className} {...props}>
+      {children}
+    </code>
+  );
+}
+// Linha de resultado de ferramenta com o caminho absoluto clicável.
+function ResultLine({ line }: { line: string }) {
+  const found = absolutePathIn(line);
+  if (!found) return <>{line}</>;
+  return (
+    <>
+      {found.before}
+      <FileLink path={found.path}>{found.path}</FileLink>
+      {found.after}
+    </>
+  );
+}
 // Guarda a resposta como nota da memória do projeto, com a tarefa como origem.
 function SaveToMemory({ taskId, blocks, onError }: { taskId: string; blocks: ChatBlock[]; onError: (e: unknown) => void }) {
   const [saved, setSaved] = useState(false);
@@ -150,7 +203,7 @@ const Blocks = memo(function Blocks({ blocks }: { blocks: ChatBlock[] }) {
       {blocks.map((block, index) =>
         block.kind === "text" ? (
           <div key={index} className="chat-text">
-            <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ pre: CodeBlock }}>
+            <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ pre: CodeBlock, code: InlineCode }}>
               {block.text}
             </ReactMarkdown>
           </div>
@@ -158,14 +211,19 @@ const Blocks = memo(function Blocks({ blocks }: { blocks: ChatBlock[] }) {
           <div key={index} className="chat-tool">
             <span className="chat-tool-icon" aria-hidden="true">⚙</span>
             <span className="chat-tool-name">{block.name}</span>
-            <code>{block.summary}</code>
+            {asFilePath(block.summary) ? (
+              <FileLink path={asFilePath(block.summary)!}>{block.summary}</FileLink>
+            ) : (
+              <code>{block.summary}</code>
+            )}
           </div>
         ),
       )}
     </>
   );
 });
-export function ChatPane({ taskId, provider, model, draft, onDraftChange, onError, approvalTarget, locked }: ChatPaneProps) {
+export function ChatPane({ taskId, provider, model, draft, onDraftChange, onError, approvalTarget, locked, onOpenFile }: ChatPaneProps) {
+  const [preview, setPreview] = useState<string | null>(null);
   const [items, setItems] = useState<ChatHistoryItem[]>([]);
   const [attachments, setAttachments] = useState<string[]>([]);
   const [viewer, setViewer] = useState<string | null>(null);
@@ -384,7 +442,7 @@ export function ChatPane({ taskId, provider, model, draft, onDraftChange, onErro
             return (
               <details key={seq} className={event.isError ? "chat-result-block error" : "chat-result-block"}>
                 <summary>
-                  <span className="chat-result-mark">{event.isError ? "✗" : "✓"}</span> {summary}
+                  <span className="chat-result-mark">{event.isError ? "✗" : "✓"}</span> <ResultLine line={summary} />
                   {event.text.includes("\n") && (
                     <em className="chat-result-lines">{event.text.split("\n").length} linhas</em>
                   )}
@@ -448,6 +506,7 @@ export function ChatPane({ taskId, provider, model, draft, onDraftChange, onErro
     [shownItems, resolved, provider, decide],
   );
   return (
+    <OpenFile.Provider value={setPreview}>
     <div className={`chat-pane chat-${provider}`} onDragOver={dragOver} onDrop={dropFiles}>
       <div className="chat-log" ref={logRef} onScroll={onLogScroll}>
         {items.length === 0 && (
@@ -600,6 +659,21 @@ export function ChatPane({ taskId, provider, model, draft, onDraftChange, onErro
           <img src={viewer} alt="Imagem ampliada" />
         </div>
       )}
+      {preview && (
+        <FilePreview
+          taskId={taskId}
+          path={preview}
+          onClose={() => setPreview(null)}
+          onOpenInFiles={
+            onOpenFile &&
+            ((path) => {
+              setPreview(null);
+              onOpenFile(path);
+            })
+          }
+        />
+      )}
     </div>
+    </OpenFile.Provider>
   );
 }

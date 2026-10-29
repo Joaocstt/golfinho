@@ -744,6 +744,14 @@ export const TaskWorkspace = forwardRef<TaskWorkspaceHandle, Props>(function Tas
                   <div className="tab-slot bare" style={place("Chat")}>
                     <ChatPane taskId={task.id} provider={task.provider} model={task.model ?? null} draft={chatDraft} onDraftChange={setChatDraft} onError={report}
                       approvalTarget={approvalTarget}
+                      onOpenFile={(path) =>
+                        navigate(() => {
+                          // Somente leitura: para editar, o arquivo é aberto pela árvore.
+                          setFileWritable(false);
+                          setFile(path);
+                          selectTab("Arquivos");
+                        })
+                      }
                       locked={
                         // Sessão parada (interrompida, cancelada ou com falha) esperando ser retomada:
                         // o chat só libera depois que ela volta.

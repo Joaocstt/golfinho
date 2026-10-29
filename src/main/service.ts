@@ -11,6 +11,7 @@ import { checkoutOf, requireCheckout } from "./checkout";
 import type { Shells } from "./shells";
 import { homedir } from "node:os";
 import { realpath } from "node:fs/promises";
+import { isAbsolute, relative } from "node:path";
 import { remoteList, remoteRead, remoteRoots, remoteStat, remoteWrite, sshArgs, sshEnv } from "./ssh";
 import type { Vault } from "./vault";
 import { readQuota } from "./quota";
@@ -24,6 +25,14 @@ import type {
   Provider,
   Task,
 } from "../shared/contracts";
+// O chat cita arquivos pelo caminho absoluto; o leitor da árvore só aceita caminhos relativos.
+// Fora da pasta o resultado começa com "..", e a leitura recusa.
+async function insideRoot(root: string, path: string) {
+  if (!isAbsolute(path)) return path.replace(/^\.\//, "");
+  const rel = relative(root, path);
+  if (!rel.startsWith("..")) return rel;
+  return relative(await realpath(root), await realpath(path).catch(() => path));
+}
 const STATUS_LABELS: Partial<Record<Task["status"], string>> = {
   running: "em andamento",
   waiting: "em andamento",
@@ -585,8 +594,10 @@ export class Service {
         const { root, kind } = await this.treeRoot(r.taskId);
         return { root: kind, ...(await this.git.list(root, r.path)) };
       }
-      case "readTree":
-        return this.git.read((await this.treeRoot(r.taskId)).root, r.path);
+      case "readTree": {
+        const { root } = await this.treeRoot(r.taskId);
+        return this.git.read(root, await insideRoot(root, r.path));
+      }
       case "shellOpen": {
         const shells = this.requireShells();
         const { root, kind } = await this.treeRoot(r.taskId);
