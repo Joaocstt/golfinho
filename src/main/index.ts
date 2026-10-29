@@ -192,7 +192,7 @@ else {
           return { ok: false, error: (error as Error).message };
         }
       });
-      // Atualização: status vai para a janela e a instalação só começa com pedido explícito.
+      // Atualização: status vai para a janela; verificar, baixar e instalar são pedidos do usuário.
       updater = startUpdater((status) => {
         if (window && !window.isDestroyed()) window.webContents.send("golfinho:update", status);
       });
@@ -203,6 +203,13 @@ else {
       ipcMain.handle("golfinho:update:status", (event) => {
         if (!trusted(event)) return { state: "unsupported" };
         return updater?.status() ?? { state: "unsupported" };
+      });
+      // Verificar e baixar só acontecem quando o usuário clica.
+      ipcMain.handle("golfinho:update:check", (event) => {
+        if (trusted(event)) updater?.check();
+      });
+      ipcMain.handle("golfinho:update:download", (event) => {
+        if (trusted(event)) updater?.download();
       });
       ipcMain.handle("golfinho:update:install", (event) => {
         if (!trusted(event) || updater?.status().state !== "ready") return;

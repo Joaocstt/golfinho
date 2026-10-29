@@ -60,7 +60,7 @@ function setup(tasks: Task[] = [], rejectCreate = false, chatHistory: Record<str
   window.golfinho = {
     getPathForFile: () => '',
     request,
-    update:{status:async()=>({state:'unsupported'}),install:async()=>{},subscribe:()=>()=>{}},youtube:{show:async()=>{},hide:async()=>{},command:async()=>{},subscribe:()=>()=>{}},
+    update:{status:async()=>({state:'unsupported'}),check:async()=>{},download:async()=>{},install:async()=>{},subscribe:()=>()=>{}},youtube:{show:async()=>{},hide:async()=>{},command:async()=>{},subscribe:()=>()=>{}},
     subscribe: (listener) => {
       listeners.add(listener);
       return () => { listeners.delete(listener); };
@@ -494,7 +494,7 @@ it("permite tentar novamente quando o workspace não carrega", async () => {
     .fn()
     .mockRejectedValueOnce(new Error("Backend indisponível"))
     .mockResolvedValue(snapshot);
-  window.golfinho = { request, getPathForFile: () => '', update:{status:async()=>({state:'unsupported'}),install:async()=>{},subscribe:()=>()=>{}},youtube:{show:async()=>{},hide:async()=>{},command:async()=>{},subscribe:()=>()=>{}}, subscribe: () => () => {} };
+  window.golfinho = { request, getPathForFile: () => '', update:{status:async()=>({state:'unsupported'}),check:async()=>{},download:async()=>{},install:async()=>{},subscribe:()=>()=>{}},youtube:{show:async()=>{},hide:async()=>{},command:async()=>{},subscribe:()=>()=>{}}, subscribe: () => () => {} };
   render(<App />);
   fireEvent.click(await screen.findByRole("button", { name: "Tentar novamente" }));
   expect(await screen.findByText("Projeto real")).toBeTruthy();
@@ -539,7 +539,7 @@ it("mantém dirty quando usuário edita durante salvamento IPC", async () => {
   let resolveSave: () => void = () => {};
   window.golfinho = {
     getPathForFile: () => '',
-    update:{status:async()=>({state:'unsupported'}),install:async()=>{},subscribe:()=>()=>{}},youtube:{show:async()=>{},hide:async()=>{},command:async()=>{},subscribe:()=>()=>{}},
+    update:{status:async()=>({state:'unsupported'}),check:async()=>{},download:async()=>{},install:async()=>{},subscribe:()=>()=>{}},youtube:{show:async()=>{},hide:async()=>{},command:async()=>{},subscribe:()=>()=>{}},
     request: vi.fn(async (r) => {
       if (r.action === "readTree") return "inicial";
       return new Promise<null>((resolve) => {

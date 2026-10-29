@@ -45,12 +45,28 @@ sudo snap install golfinho --classic
 O snap se atualiza sozinho. O `--classic` é necessário porque o Golfinho abre terminais,
 roda o `git` e os CLIs dos agentes e edita as pastas dos seus projetos.
 
+No macOS, instale pelo Terminal:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Joaocstt/golfinho/main/scripts/install-mac.sh | bash
+```
+
+O script baixa a versão mais recente para o seu Mac (Apple Silicon ou Intel), confere o
+sha512, instala em *Aplicativos* e abre o app. Como o download não passa pelo navegador, o
+macOS não marca o app com quarentena e não é preciso rodar `xattr`. As versões seguintes vêm
+pelo próprio Golfinho (veja abaixo).
+
+**Atualizações:** o Golfinho não verifica nada sozinho. Clique no botão de download ao lado de
+*Configurações*, no topo da barra lateral: se houver versão nova, o aviso mostra *Atualizar*,
+que baixa a versão, e depois *Reiniciar e atualizar*. Funciona no Windows, no macOS e no
+AppImage; o snap se atualiza pela loja e o `.deb` pelo `apt`.
+
 Para os outros sistemas, baixe os arquivos na página de [Releases](https://github.com/Joaocstt/golfinho/releases).
 
 | Sistema | Arquivo | Como instalar |
 | --- | --- | --- |
 | Windows | `Golfinho Setup <versão>.exe` | Execute o instalador. Ele pode escolher outra pasta de instalação. |
-| macOS | `Golfinho-<versão>.dmg` (Apple Silicon ou Intel) | Arraste o app para *Aplicativos*. |
+| macOS | `Golfinho-<versão>.dmg` (Apple Silicon ou Intel) | Arraste o app para *Aplicativos* (prefira o script acima). |
 | Linux (qualquer distribuição) | `Golfinho-<versão>.AppImage` | `chmod +x Golfinho-<versão>.AppImage` e execute. |
 | Linux (Debian/Ubuntu) | `golfinho_<versão>_amd64.deb` | `sudo apt install ./golfinho_<versão>_amd64.deb` |
 
@@ -58,8 +74,9 @@ Para os outros sistemas, baixe os arquivos na página de [Releases](https://gith
 
 - **Windows:** o SmartScreen mostra "O Windows protegeu o computador". Clique em
   *Mais informações* e depois em *Executar mesmo assim*.
-- **macOS:** o Gatekeeper pode bloquear o primeiro uso. Vá em *Ajustes do Sistema →
-  Privacidade e Segurança* e clique em *Abrir mesmo assim*.
+- **macOS:** com o `.dmg` baixado pelo navegador, o Gatekeeper bloqueia o app. Use o
+  script acima ou rode `xattr -dr com.apple.quarantine /Applications/Golfinho.app` uma vez;
+  as atualizações seguintes, feitas pelo botão de atualizar do Golfinho, não precisam disso.
 - **Linux:** o AppImage precisa de FUSE. No Ubuntu 24.04 e derivados, instale com
   `sudo apt install libfuse2t64` (em versões anteriores, `libfuse2`).
 
@@ -446,7 +463,6 @@ O ícone do Codex usa azul na interface.
 
 - Merge automático de branches e resolução de conflitos.
 - Assinatura de código para Windows e macOS (os instaladores são distribuídos sem assinatura).
-- Atualização automática do aplicativo.
 - Navegador embutido, integração de voz, DAG de agentes e loja de extensões.
 - Retomada automática de conversas após reiniciar o aplicativo: a retomada depende de
   uma ação do usuário.

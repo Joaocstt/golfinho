@@ -371,6 +371,10 @@ export type Signal =
 export type UpdateStatus =
   | { state: "unsupported" }
   | { state: "idle" }
+  | { state: "checking" }
+  | { state: "latest"; version: string }
+  | { state: "available"; version: string }
+  | { state: "error"; message: string }
   | { state: "downloading"; version: string; percent: number }
   | { state: "ready"; version: string };
 export interface YouTubeBounds {
@@ -394,6 +398,8 @@ export interface GolfinhoAPI {
   subscribe(listener: (signal: Signal) => void): () => void;
   update: {
     status(): Promise<UpdateStatus>;
+    check(): Promise<void>;
+    download(): Promise<void>;
     install(): Promise<void>;
     subscribe(listener: (status: UpdateStatus) => void): () => void;
   };

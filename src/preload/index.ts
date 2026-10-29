@@ -16,6 +16,8 @@ const api: GolfinhoAPI = {
   },
   update: {
     status: () => ipcRenderer.invoke("golfinho:update:status"),
+    check: () => ipcRenderer.invoke("golfinho:update:check"),
+    download: () => ipcRenderer.invoke("golfinho:update:download"),
     install: () => ipcRenderer.invoke("golfinho:update:install"),
     subscribe(listener) {
       const handler = (_event: unknown, status: UpdateStatus) => listener(status);

@@ -4302,6 +4302,18 @@ select {
   border: 1px solid var(--branch);
   font-size: var(--text-sm);
 }
+.update-banner .update-close {
+  display: grid;
+  place-items: center;
+  padding: 4px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.update-banner .update-close:hover {
+  color: inherit;
+}
 
 /* Refinamento visual: aprovações neutras, coluna central do chat, campo de mensagem em cartão,
    abas mais leves, status com ponto em vez de fundo colorido e textos secundários um degrau maior. */

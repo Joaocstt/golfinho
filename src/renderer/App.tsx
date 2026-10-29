@@ -20,6 +20,7 @@ import {
   Server,
   ChevronDown,
   CircleHelp,
+  Download,
   Brain,
   Columns2,
   Maximize2,
@@ -143,6 +144,7 @@ function Workspace() {
   const [dashboard, setDashboard] = useState(false);
   const [sshView, setSshView] = useState(false);
   const [helpView, setHelpView] = useState(false);
+  const [updateRequest, setUpdateRequest] = useState(0);
   const [memoryView, setMemoryView] = useState(false);
   const [youtubeView, setYoutubeView] = useState(false);
   // Onde o YouTube aparece: na própria aba, ao lado da visão atual ou num mini player.
@@ -469,7 +471,7 @@ function Workspace() {
       className={"app" + (sidebarHidden ? " sidebar-hidden" : "")}
       style={{ "--sidebar-width": `${sidebarWidth}px` } as React.CSSProperties}
     >
-      <UpdateBanner />
+      <UpdateBanner requested={updateRequest} />
       <aside className="sidebar" aria-label="Projetos e tarefas">
         <div className="brand">
           <span className="brand-mark">
@@ -490,6 +492,13 @@ function Workspace() {
             onClick={() => navigate(() => (setDashboard(false), setSshView(false), setActiveGeneral(""), setSelected(""), setHelpView(true)))}
           >
             <CircleHelp size={14} />
+          </button>
+          <button
+            aria-label="Verificar atualizações"
+            title="Verificar atualizações"
+            onClick={() => setUpdateRequest((n) => n + 1)}
+          >
+            <Download size={14} />
           </button>
           <button
             aria-label="Configurações"
