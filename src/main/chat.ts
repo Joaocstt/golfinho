@@ -13,6 +13,8 @@ import { CodexChatSession } from "./codexChat";
 import { AntigravityChatSession } from "./antigravityChat";
 import { withHandoff } from "./handoff";
 import { MEMORY_SERVER, type McpEndpoint } from "./memory";
+import { spawn } from "node:child_process";
+import { wslChild, wslTarget } from "./wsl";
 // Resumo curto da ferramenta para o cartão de aprovação. Comando e caminho são o que a pessoa
 // precisa ver para decidir; o resto do input fica de fora.
 export function summarize(toolName: string, input: Record<string, unknown>): string {
@@ -41,6 +43,8 @@ export interface ChatOptions {
   onSession?: (id: string) => void;
   // Servidor MCP da memória do projeto; null quando a memória está desligada ou indisponível.
   mcp?: McpEndpoint | null;
+  /** CLI configurada; dentro do WSL vale o comando de mesmo nome instalado na distro. */
+  executable?: string;
 }
 // Uma conversa do Claude por tarefa. As mensagens entram por uma fila, então o SDK mantém a
 // sessão aberta entre um turno e o seguinte.
@@ -145,9 +149,24 @@ export class ChatSession {
           : {}),
         permissionMode: "default",
         canUseTool: (toolName, input, options) => this.approve(toolName, input, options),
+        ...this.wslSpawn(),
       },
     });
     void this.consume(this.running);
+  }
+  // Projeto no WSL: o SDK fala com o `claude` instalado na distro, rodando lá dentro.
+  // Só atravessam as variáveis que o SDK definiu ou mudou para a CLI.
+  private wslSpawn() {
+    const where = wslTarget(this.cwd);
+    if (!where) return {};
+    const command = this.options.executable || "claude";
+    return {
+      spawnClaudeCodeProcess: (o: { args: string[]; env: NodeJS.ProcessEnv; signal?: AbortSignal }) => {
+        const keys = Object.keys(o.env).filter((k) => o.env[k] !== undefined && o.env[k] !== process.env[k]);
+        const child = wslChild(where, command, o.args, o.env, keys);
+        return spawn(child.file, child.args, { ...child.options, stdio: ["pipe", "pipe", "pipe"], signal: o.signal });
+      },
+    };
   }
   private async consume(stream: Query) {
     try {
@@ -277,7 +296,7 @@ export class ChatManager {
           ? new CodexChatSession(target.cwd, target.executable, emit, options)
           : target.provider === "antigravity"
             ? new AntigravityChatSession(target.cwd, target.executable, emit, options)
-            : new ChatSession(target.cwd, emit, options);
+            : new ChatSession(target.cwd, emit, { ...options, executable: target.executable });
       this.sessions.set(taskId, session);
     }
     session.send(text, images, withHandoff(handoff, text));

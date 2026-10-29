@@ -3,6 +3,8 @@ import { spawn } from "node:child_process";
 import { executablePath } from "./agents";
 import type { Driver } from "./coordinator";
 import { launchTarget } from "./shellCommand";
+import { homedir } from "node:os";
+import { wslEnv, wslLaunch, wslPath } from "./wsl";
 // Encerra a CLI e os processos do mesmo grupo. Fora do Linux não há /proc para rastrear
 // membros, então o grupo inteiro é sinalizado. No Windows, taskkill /T derruba a árvore.
 // Resolve quando a tentativa de encerrar a árvore termina; no Windows isso é um processo filho.
@@ -55,19 +57,28 @@ export function childEnv(
 }
 export const ptyDriver: Driver = {
   async start(command, args, cwd, data, exit, env) {
-    const path = executablePath(command);
-    if (!path)
-      throw new Error(
-        `Executável não encontrado: ${command}. Configure seu caminho em Configurações.`,
-      );
+    // Pasta do WSL: o processo roda dentro da distro, com o programa instalado lá.
+    const wsl = process.platform === "win32" ? wslPath(cwd) : null;
+    let target: { file: string; args: string[] };
+    if (wsl) target = wslLaunch(wsl, command, args);
+    else {
+      const path = executablePath(command);
+      if (!path)
+        throw new Error(
+          `Executável não encontrado: ${command}. Configure seu caminho em Configurações.`,
+        );
+      target = launchTarget(path, args);
+    }
     const pty = await import("node-pty");
-    const target = launchTarget(path, args);
+    const extra = { ...env, TERM: "xterm-256color", COLORTERM: "truecolor" };
+    const childEnvironment = childEnv(process.env, extra);
     const child = pty.spawn(target.file, target.args, {
-      cwd,
+      // O wsl.exe recebe a pasta Linux em --cd; a pasta de rede não serve de cwd no Windows.
+      cwd: wsl ? homedir() : cwd,
       cols: 100,
       rows: 28,
       name: "xterm-256color",
-      env: childEnv(process.env, { ...env, TERM: "xterm-256color", COLORTERM: "truecolor" }),
+      env: wsl ? wslEnv(childEnvironment, Object.keys(extra)) : childEnvironment,
     });
     const owned = identity(child.pid);
     let ended = false;

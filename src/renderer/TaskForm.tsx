@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { GitBranch, GitBranchPlus, Info, Settings2 } from "lucide-react";
-import type { CreateTask, ProjectRefs, Provider, Request, Snapshot } from "../shared/contracts";
+import type { CreateTask, ProjectRefs, Provider, Request, Snapshot, WslAgents } from "../shared/contracts";
 import { AgentIcon } from "./agentIcons";
 import { FileTypeIcon } from "./fileIcons";
 import { Badge, Button, Field, Segmented, Select, TextInput } from "./ui";
@@ -74,6 +74,22 @@ export function TaskForm({
   // Sem lista utilizável o campo volta a aceitar texto, em vez de travar a criação.
   // Pasta sem Git: a tarefa roda direto nela, sem branch, base nem remoto.
   const folder = project?.kind === "folder";
+  // Pasta do WSL aberta no Windows: o agente roda dentro da distro, então a CLI instalada no Windows não importa.
+  const wslDistro = /^[\\/]{2}wsl(?:\$|\.localhost)[\\/]([^\\/]+)/i.exec(project?.path ?? "")?.[1] ?? null;
+  // Quais CLIs existem dentro da distro: o aviso de "não encontrada" passa a valer para elas.
+  const [wslAgents, setWslAgents] = useState<WslAgents | null>(null);
+  useEffect(() => {
+    setWslAgents(null);
+    if (!wslDistro || !p) return;
+    let alive = true;
+    request<WslAgents | null>({ action: "wslAgents", projectId: p })
+      .then((result) => alive && setWslAgents(result))
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [wslDistro, p]);
+  const missingInWsl = wslDistro && wslAgents ? wslAgents.available[provider] === false : false;
   const typedBase = refsFailed || refs?.branches.length === 0;
   const loadingRefs = !refs && !refsFailed;
   const agent = snapshot.agents.find((a) => a.provider === provider);
@@ -146,7 +162,14 @@ export function TaskForm({
           </Field>
           <Field
             label="Agente"
-            error={agent?.available === false ? "CLI não encontrada. Configure o caminho em Configurações." : undefined}
+            error={
+              missingInWsl
+                ? `CLI não encontrada dentro da distro ${wslDistro}. Instale e faça login nela pelo terminal do WSL.`
+                : agent?.available === false && !wslDistro
+                  ? "CLI não encontrada. Configure o caminho em Configurações."
+                  : undefined
+            }
+            hint={wslDistro && !missingInWsl ? `Projeto no WSL: o agente instalado na distro ${wslDistro} é usado.` : undefined}
           >
             <Segmented
               label="Agente"

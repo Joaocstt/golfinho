@@ -10,6 +10,7 @@ import { join } from "node:path";
 import type { Provider } from "../shared/contracts";
 import { withHandoff } from "./handoff";
 import { MEMORY_TOKEN_ENV, prepareMemory, withMemory, type MemoryLink } from "./memory";
+import { toUnc, wslHome, wslPath } from "./wsl";
 import { folderFingerprint, isFolderTask, subrepoHeads, workspaceMap, withWorkspace } from "./workspace";
 export interface Handle {
   write(data: string): void;
@@ -167,6 +168,14 @@ export class Coordinator {
       return;
     }
   }
+  // Pasta de uma tarefa nova. Projeto no WSL ganha a pasta dentro da distro, no disco do
+  // Linux: no disco do Windows o git e o node_modules ficariam lentos e com outro dono.
+  private async worktreeDir(projectPath: string, projectId: string, taskId: string) {
+    const wsl = process.platform === "win32" ? wslPath(projectPath) : null;
+    if (!wsl) return join(this.worktreeRoot, projectId, taskId);
+    const home = await wslHome(wsl.distro);
+    return toUnc(wsl.distro, `${home}/.local/share/golfinho/worktrees/${projectId}/${taskId}`);
+  }
   private async launch(id: string, e: Execution) {
     try {
       const t = this.store.task(id);
@@ -189,7 +198,7 @@ export class Coordinator {
         );
         e.path = project.path;
       } else {
-        const dir = t.worktreePath ?? join(this.worktreeRoot, t.projectId, t.id);
+        const dir = t.worktreePath ?? (await this.worktreeDir(project.path, t.projectId, t.id));
         base = await this.git.prepareWorktree(
           project.path,
           dir,
@@ -243,7 +252,9 @@ export class Coordinator {
       // Memória do projeto: as ferramentas MCP valem também ao retomar; as notas entram só numa
       // execução nova, como o handoff. O Antigravity não tem MCP por execução.
       const memoryOn = settings.memory?.enabled !== false;
-      const mcp = memoryOn && t.provider !== "antigravity" ? (this.memory?.launch(id) ?? null) : null;
+      // Agente dentro do WSL recebe o endereço da memória que a distro alcança.
+      const inWsl = process.platform === "win32" && wslPath(e.path) !== null;
+      const mcp = memoryOn && t.provider !== "antigravity" ? (this.memory?.launch(id, inWsl) ?? null) : null;
       const memory =
         // Sem instruções a CLI abre vazia: só as notas fariam o agente agir sem pedido.
         memoryOn && !resume && t.prompt.trim()

@@ -6,6 +6,7 @@ import { createHash } from "node:crypto";
 import { relative, resolve, sep, isAbsolute, basename, dirname } from "node:path";
 import type { Review, FileChange, TreeEntry, Changes } from "../shared/contracts";
 import { readdir } from "node:fs/promises";
+import { toUnc, wslEnv, wslGit, wslPath } from "./wsl";
 
 // Pasta com milhares de entradas (node_modules) não deve travar a árvore: a lista corta aqui.
 const MAX_ENTRIES = 2000;
@@ -30,12 +31,17 @@ export class GitService {
     );
   }
   async run(cwd: string, args: string[]): Promise<string> {
+    // Pasta do WSL: o git da própria distro roda lá dentro, com os caminhos do Linux.
+    const wsl = process.platform === "win32" ? wslPath(cwd) : null;
+    const target = wsl ? wslGit(wsl, args) : { file: "git", args };
+    const env = { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_OPTIONAL_LOCKS: "0" } as Record<string, string>;
     try {
-      const { stdout } = await exec("git", args, {
-        cwd,
+      const { stdout } = await exec(target.file, target.args, {
+        ...(wsl ? {} : { cwd }),
         timeout: 30_000,
         maxBuffer: 4 * 1024 * 1024,
-        env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_OPTIONAL_LOCKS: "0" },
+        env: wsl ? wslEnv(env, ["GIT_TERMINAL_PROMPT", "GIT_OPTIONAL_LOCKS"]) : env,
+        windowsHide: true,
       });
       return stdout;
     } catch (e) {
@@ -43,8 +49,14 @@ export class GitService {
       throw new Error((error.stderr || error.message).trim().slice(0, 2000));
     }
   }
+  // Caminho que o git devolveu, no formato que o resto do app usa: dentro do WSL ele vem
+  // como /home/...; fora, o caminho do Windows é o caminho do git.
+  private fromGit(cwd: string, path: string) {
+    const wsl = process.platform === "win32" ? wslPath(cwd) : null;
+    return wsl && path.startsWith("/") ? toUnc(wsl.distro, path) : path;
+  }
   async inspect(path: string) {
-    const root = await realpath((await this.run(path, ["rev-parse", "--show-toplevel"])).trim());
+    const root = await realpath(this.fromGit(path, (await this.run(path, ["rev-parse", "--show-toplevel"])).trim()));
     return {
       path: root,
       name: basename(root),
@@ -71,7 +83,7 @@ export class GitService {
     let openIn: string | null = null;
     let current = "";
     for (const line of worktrees.split("\n")) {
-      if (line.startsWith("worktree ")) current = line.slice("worktree ".length);
+      if (line.startsWith("worktree ")) current = this.fromGit(repo, line.slice("worktree ".length));
       if (line === `branch refs/heads/${branch}`) openIn = current;
     }
     return { exists: true, sha, openIn };

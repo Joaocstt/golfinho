@@ -1,6 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import type { ChatBlock, ChatEvent } from "../shared/contracts";
 import { launchTarget } from "./shellCommand";
+import { wslChild, wslTarget } from "./wsl";
 import type { ChatBackend, ChatOptions } from "./chat";
 import type { ChatImage } from "./chatImages";
 // Mesma ideia da Codex: um processo `agy` por conversa, um turno por linha no stdin. Formatos
@@ -148,8 +149,17 @@ export class AntigravityChatSession implements ChatBackend {
       ...(this.options.resume ? ["--conversation", this.options.resume] : []),
       ...(this.options.model ? ["--model", this.options.model] : []),
     ];
-    const target = launchTarget(this.executable, args);
-    const child = spawn(target.file, target.args, { cwd: this.cwd, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+    // Projeto no WSL: o agy instalado na distro roda lá dentro, na pasta Linux.
+    const wsl = wslTarget(this.cwd);
+    const child = wsl
+      ? (() => {
+          const target = wslChild(wsl, this.executable, args, process.env, []);
+          return spawn(target.file, target.args, { ...target.options, stdio: ["pipe", "pipe", "pipe"] });
+        })()
+      : (() => {
+          const target = launchTarget(this.executable, args);
+          return spawn(target.file, target.args, { cwd: this.cwd, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+        })();
     this.child = child;
     this.buffer = "";
     this.stderr = "";

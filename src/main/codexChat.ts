@@ -4,6 +4,7 @@ import type { ChatEvent } from "../shared/contracts";
 import { codexMcpArgs, executablePath } from "./agents";
 import { MEMORY_TOKEN_ENV } from "./memory";
 import { launchTarget } from "./shellCommand";
+import { linuxArg, wslChild, wslTarget } from "./wsl";
 import type { ChatBackend, ChatOptions } from "./chat";
 import type { ChatImage } from "./chatImages";
 // Versão do cliente informada ao app-server. Acompanha a versão do app em package.json.
@@ -89,11 +90,11 @@ export class CodexChatSession implements ChatBackend {
       await this.start();
       const started = await this.request("turn/start", {
         threadId: this.threadId,
-        cwd: this.cwd,
+        cwd: this.workDir,
         model: this.options.model ?? undefined,
         // A Codex lê a imagem do disco pelo caminho; o texto vem depois, como no chat do Claude.
         input: [
-          ...images.map((image) => ({ type: "localImage", path: image.path })),
+          ...images.map((image) => ({ type: "localImage", path: this.wsl ? linuxArg(image.path) : image.path })),
           ...(text ? [{ type: "text", text }] : []),
         ],
       });
@@ -108,18 +109,34 @@ export class CodexChatSession implements ChatBackend {
     if (!this.starting) this.starting = this.launch();
     return this.starting;
   }
+  // Projeto no WSL: a Codex roda dentro da distro e recebe a pasta pelo caminho Linux.
+  private get wsl() {
+    return wslTarget(this.cwd);
+  }
+  private get workDir() {
+    return this.wsl ? this.wsl.linux : this.cwd;
+  }
   private async launch() {
-    const path = executablePath(this.executable);
-    if (!path) throw new Error(`Executável não encontrado: ${this.executable}. Configure seu caminho em Configurações.`);
     // A memória do projeto entra como servidor MCP só desta conversa; o token vai pelo ambiente.
     const mcp = this.options.mcp;
-    const target = launchTarget(path, ["app-server", ...codexMcpArgs(mcp)]);
-    const child = spawn(target.file, target.args, {
-      cwd: this.cwd,
-      stdio: ["pipe", "pipe", "pipe"],
-      windowsHide: true,
-      ...(mcp ? { env: { ...process.env, [MEMORY_TOKEN_ENV]: mcp.token } } : {}),
-    });
+    const args = ["app-server", ...codexMcpArgs(mcp)];
+    const wsl = this.wsl;
+    let child: ChildProcessWithoutNullStreams;
+    if (wsl) {
+      const env = mcp ? { ...process.env, [MEMORY_TOKEN_ENV]: mcp.token } : process.env;
+      const target = wslChild(wsl, this.executable, args, env, mcp ? [MEMORY_TOKEN_ENV] : []);
+      child = spawn(target.file, target.args, { ...target.options, stdio: ["pipe", "pipe", "pipe"] });
+    } else {
+      const path = executablePath(this.executable);
+      if (!path) throw new Error(`Executável não encontrado: ${this.executable}. Configure seu caminho em Configurações.`);
+      const target = launchTarget(path, args);
+      child = spawn(target.file, target.args, {
+        cwd: this.cwd,
+        stdio: ["pipe", "pipe", "pipe"],
+        windowsHide: true,
+        ...(mcp ? { env: { ...process.env, [MEMORY_TOKEN_ENV]: mcp.token } } : {}),
+      });
+    }
     this.child = child;
     child.stdout.setEncoding("utf8");
     child.stdout.on("data", (chunk: string) => this.read(chunk));
@@ -133,7 +150,7 @@ export class CodexChatSession implements ChatBackend {
     });
     this.write({ method: "initialized" });
     // Com uma conversa salva, a thread é retomada; se ela não existir mais, abre outra.
-    const params = { cwd: this.cwd, approvalPolicy: "on-request", sandbox: "workspace-write" };
+    const params = { cwd: this.workDir, approvalPolicy: "on-request", sandbox: "workspace-write" };
     let started: Json;
     if (this.options.resume) {
       try {

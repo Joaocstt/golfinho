@@ -12,6 +12,7 @@ import type { Shells } from "./shells";
 import { homedir } from "node:os";
 import { realpath, stat, writeFile } from "node:fs/promises";
 import { basename, isAbsolute, join, relative } from "node:path";
+import { linuxCommand, wslCommands, wslPath, wslTarget } from "./wsl";
 import { findSubprojects, folderFingerprint, folderReview, isFolderProject, isFolderTask, workspaceMap, withWorkspace } from "./workspace";
 import { remoteList, remoteRead, remoteRoots, remoteStat, remoteWrite, sshArgs, sshEnv } from "./ssh";
 import type { Vault } from "./vault";
@@ -24,6 +25,7 @@ import type {
   Review,
   ProviderQuota,
   Provider,
+  WslAgents,
   Task,
 } from "../shared/contracts";
 // O chat cita arquivos pelo caminho absoluto; o leitor da árvore só aceita caminhos relativos.
@@ -303,6 +305,20 @@ export class Service {
         const project = this.store.addProject({ ...p, id: randomUUID() });
         this.changed();
         return project;
+      }
+      case "wslAgents": {
+        // Projeto no WSL: quais CLIs existem dentro da distro, pelo mesmo nome que o app vai chamar.
+        const where = wslTarget(this.store.project(r.projectId).path);
+        if (!where) return null;
+        const executables = this.store.settings().executables;
+        const names = Object.fromEntries(
+          (Object.keys(executables) as Provider[]).map((p) => [p, linuxCommand(executables[p])]),
+        ) as Record<Provider, string>;
+        const found = await wslCommands(where.distro, Object.values(names));
+        return {
+          distro: where.distro,
+          available: Object.fromEntries(Object.entries(names).map(([p, name]) => [p, found.has(name)])),
+        } satisfies WslAgents;
       }
       case "initGit": {
         // Começar a versionar uma pasta: vira um projeto Git normal, com um primeiro commit.
@@ -692,7 +708,11 @@ export class Service {
           executable: this.store.settings().executables[task.provider],
           model: task.model ?? null,
           // O Antigravity não aceita MCP por execução: recebe só as notas na primeira mensagem.
-          mcp: memoryOn && task.provider !== "antigravity" ? (this.memoryLink?.endpoint(task.id) ?? null) : null,
+          // Dentro do WSL, a memória é chamada pelo endereço do Windows que a distro alcança.
+          mcp:
+            memoryOn && task.provider !== "antigravity"
+              ? (this.memoryLink?.endpoint(task.id, process.platform === "win32" && wslPath(root) !== null) ?? null)
+              : null,
         };
         // Cada imagem é conferida aqui (pasta do app, tipo e tamanho) antes de ir para o agente.
         const images = await Promise.all((r.images ?? []).map((path) => this.requireChatImages().verify(path)));

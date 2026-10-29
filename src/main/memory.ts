@@ -229,8 +229,9 @@ export interface McpLaunch {
 }
 // O que o terminal e o chat precisam do servidor: a conexão de uma tarefa e o token.
 export interface MemoryLink {
-  launch(taskId: string): McpLaunch | null;
-  endpoint(taskId: string): McpEndpoint | null;
+  /** wsl: o agente roda dentro do WSL e precisa de um endereço do Windows que a distro alcance. */
+  launch(taskId: string, wsl?: boolean): McpLaunch | null;
+  endpoint(taskId: string, wsl?: boolean): McpEndpoint | null;
   readonly token: string;
 }
 // O Codex lê o token desta variável (bearer_token_env_var), então ele não vai na linha de comando.

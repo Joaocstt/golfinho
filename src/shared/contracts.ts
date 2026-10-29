@@ -223,6 +223,7 @@ export type Request =
   | { action: "addProject"; path?: string }
   | { action: "removeProject"; projectId: string }
   | { action: "initGit"; projectId: string }
+  | { action: "wslAgents"; projectId: string }
   | { action: "createTask"; input: CreateTask }
   | { action: "branches"; projectId: string }
   | { action: "quota"; provider: Provider; refresh?: boolean }
@@ -310,7 +311,13 @@ export interface TreeListing {
   entries: TreeEntry[];
   truncated: boolean;
 }
+/** CLIs encontradas dentro da distro de um projeto do WSL. */
+export interface WslAgents {
+  distro: string;
+  available: Partial<Record<Provider, boolean>>;
+}
 export type Response =
+  | WslAgents
   | Snapshot
   | TreeListing
   | Changes

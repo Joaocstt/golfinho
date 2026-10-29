@@ -2,6 +2,8 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { networkInterfaces } from "node:os";
+import { wslHostAddress } from "./wsl";
 import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -19,6 +21,10 @@ const TASK_PATH = /^\/mcp\/([0-9a-f-]{36})\/?$/i;
 
 export class MemoryMcp implements MemoryLink {
   private server: Server | null = null;
+  // Segunda escuta, no adaptador do WSL: agentes dentro da distro não alcançam o 127.0.0.1 do
+  // Windows no modo de rede padrão. Continua exigindo o token.
+  private wslServer: Server | null = null;
+  private wslHost: string | null = null;
   private port = 0;
   readonly token = randomBytes(32).toString("hex");
   constructor(
@@ -39,23 +45,40 @@ export class MemoryMcp implements MemoryLink {
     const address = server.address();
     this.port = typeof address === "object" && address ? address.port : 0;
     this.server = server;
+    const host = process.platform === "win32" ? wslHostAddress(networkInterfaces()) : null;
+    if (host) {
+      const extra = createServer((req, res) => void this.handle(req, res));
+      const ok = await new Promise<boolean>((resolve) => {
+        extra.once("error", () => resolve(false));
+        extra.listen(this.port, host, () => resolve(true));
+      });
+      if (ok) {
+        this.wslServer = extra;
+        this.wslHost = host;
+      }
+    }
   }
   async stop(): Promise<void> {
     const server = this.server;
     this.server = null;
     if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
+    const extra = this.wslServer;
+    this.wslServer = null;
+    if (extra) await new Promise<void>((resolve) => extra.close(() => resolve()));
     rmSync(this.configDir, { recursive: true, force: true });
   }
-  endpoint(taskId: string): McpEndpoint | null {
+  endpoint(taskId: string, wsl = false): McpEndpoint | null {
     if (!this.server) return null;
-    return { url: `http://127.0.0.1:${this.port}/mcp/${taskId}`, token: this.token };
+    // Sem o adaptador do WSL (modo de rede espelhado), o 127.0.0.1 da distro já é o do Windows.
+    const host = wsl && this.wslHost ? this.wslHost : "127.0.0.1";
+    return { url: `http://${host}:${this.port}/mcp/${taskId}`, token: this.token };
   }
   // O que a CLI recebe para se conectar. O arquivo do Claude é reescrito a cada início porque a
   // porta e o token mudam quando o app reabre.
-  launch(taskId: string): McpLaunch | null {
-    const endpoint = this.endpoint(taskId);
+  launch(taskId: string, wsl = false): McpLaunch | null {
+    const endpoint = this.endpoint(taskId, wsl);
     if (!endpoint) return null;
-    const claudeConfig = join(this.configDir, `${taskId}.json`);
+    const claudeConfig = join(this.configDir, `${taskId}${wsl ? "-wsl" : ""}.json`);
     const config = {
       mcpServers: {
         [MEMORY_SERVER]: {
