@@ -10,8 +10,9 @@ import type { ChatImage } from "./chatImages";
 import { checkoutOf, requireCheckout } from "./checkout";
 import type { Shells } from "./shells";
 import { homedir } from "node:os";
-import { realpath } from "node:fs/promises";
-import { isAbsolute, relative } from "node:path";
+import { realpath, stat, writeFile } from "node:fs/promises";
+import { basename, isAbsolute, join, relative } from "node:path";
+import { findSubprojects, folderFingerprint, folderReview, isFolderProject, isFolderTask, workspaceMap, withWorkspace } from "./workspace";
 import { remoteList, remoteRead, remoteRoots, remoteStat, remoteWrite, sshArgs, sshEnv } from "./ssh";
 import type { Vault } from "./vault";
 import { readQuota } from "./quota";
@@ -205,12 +206,13 @@ export class Service {
     if (!t.branchCreated) throw new Error("Branch ainda não criada.");
     const p = this.store.project(t.projectId);
     const dir = requireCheckout(t, p);
+    if (isFolderTask(t)) return folderReview(this.git, dir, t.folderBases ?? {});
     const review = await this.git.review(dir, t.branch, t.baseCommit ?? t.base);
     for (const other of this.store
       .tasks()
       .filter(
         (o) =>
-          o.id !== t.id && o.projectId === t.projectId && o.branchCreated && o.status !== "completed",
+          o.id !== t.id && o.projectId === t.projectId && o.branchCreated && !isFolderTask(o) && o.status !== "completed",
       )) {
       try {
         const result = await this.git.review(p.path, other.branch, other.baseCommit ?? other.base);
@@ -292,10 +294,42 @@ export class Service {
       case "addProject": {
         const path = r.path ?? (await this.chooseFolder());
         if (!path) return null;
-        const p = await this.git.inspect(path);
+        // Pasta que não é repositório vira projeto "pasta": pode ser o começo de um projeto
+        // ou um workspace com vários projetos dentro, alguns com Git.
+        const p = await this.git.inspect(path).catch(async () => {
+          const root = await realpath(path);
+          return { path: root, name: basename(root), remotes: [] as string[], kind: "folder" as const };
+        });
         const project = this.store.addProject({ ...p, id: randomUUID() });
         this.changed();
         return project;
+      }
+      case "initGit": {
+        // Começar a versionar uma pasta: vira um projeto Git normal, com um primeiro commit.
+        const project = this.store.project(r.projectId);
+        if (!isFolderProject(project)) throw new Error("Este projeto já é um repositório Git.");
+        if ((await findSubprojects(project.path)).some((s) => s.git))
+          throw new Error(
+            "Esta pasta tem projetos com Git dentro. Iniciar um repositório aqui misturaria os dois; ela continua como pasta.",
+          );
+        if (this.store.tasks().some((t) => t.projectId === project.id && ["running", "waiting", "queued"].includes(t.status)))
+          throw new Error("Espere as tarefas desta pasta terminarem antes de iniciar o Git.");
+        await this.git.run(project.path, ["init"]);
+        // Sem .gitignore, o primeiro commit levaria dependências e segredos junto.
+        const ignore = join(project.path, ".gitignore");
+        if (!(await stat(ignore).catch(() => null))) await writeFile(ignore, "node_modules/\n.env\n.DS_Store\n");
+        await this.git.run(project.path, ["add", "-A"]);
+        try {
+          await this.git.run(project.path, ["commit", "--allow-empty", "-m", "Primeiro commit"]);
+        } catch (e) {
+          throw new Error(
+            `O repositório foi criado, mas o primeiro commit falhou: ${(e as Error).message}\nConfigure seu nome e e-mail no Git (git config --global user.name / user.email) e tente de novo.`,
+          );
+        }
+        const inspected = await this.git.inspect(project.path);
+        this.store.updateProject({ ...project, ...inspected, kind: "git" });
+        this.changed();
+        return null;
       }
       case "removeProject": {
         const project = this.store.project(r.projectId);
@@ -308,13 +342,16 @@ export class Service {
       }
       case "quota":
         return this.quota(r.provider, r.refresh === true);
-      case "branches":
-        return this.git.branches(this.store.project(r.projectId).path);
+      case "branches": {
+        const project = this.store.project(r.projectId);
+        if (isFolderProject(project)) return { current: "", branches: [] };
+        return this.git.branches(project.path);
+      }
       case "deleteInfo": {
         const t = this.store.task(r.taskId);
         const p = this.store.project(t.projectId);
         const busy = ["running", "waiting", "queued"].includes(t.status);
-        const status = t.branchCreated
+        const status = t.branchCreated && !isFolderTask(t)
           ? await this.git.branchStatus(p.path, t.branch, t.baseCommit ?? t.base, t.base)
           : { exists: false, active: false, ahead: 0, dirty: false, fallback: "" };
         // A política de bloqueio mora aqui; a janela só mostra o motivo.
@@ -352,7 +389,7 @@ export class Service {
           this.shells?.closeTask(t.id);
           if (t.worktreePath) await this.git.removeWorktree(p.path, t.worktreePath);
           // Branch que já existia é do usuário: a exclusão da tarefa só remove a pasta dela.
-          if (t.branchCreated && !t.adoptedBranch) await this.git.deleteBranch(p.path, t.branch, t.base);
+          if (t.branchCreated && !t.adoptedBranch && !isFolderTask(t)) await this.git.deleteBranch(p.path, t.branch, t.base);
           this.store.deleteTask(t.id);
           this.logs.remove(t.id);
           this.changed();
@@ -360,7 +397,16 @@ export class Service {
         });
       case "createTask": {
         const p = this.store.project(r.input.projectId);
-        if (!(await this.git.inspect(p.path)).remotes.includes(r.input.remote))
+        if (isFolderProject(p)) {
+          // Pasta: a tarefa roda direto nela, sem branch, base nem remoto.
+          const t = this.store.createTask({ ...r.input, branch: "", base: "", remote: "", adopt: false });
+          this.changed();
+          return t;
+        }
+        if (!r.input.branch || !r.input.base) throw new Error("Escolha a branch e a base da tarefa.");
+        const remotes = (await this.git.inspect(p.path)).remotes;
+        // Repositório sem remoto (ex.: acabou de nascer no Golfinho): a tarefa funciona, só não publica.
+        if (remotes.length ? !remotes.includes(r.input.remote) : r.input.remote !== "")
           throw new Error("Configure o remoto selecionado no repositório antes de criar a tarefa.");
         if (r.input.adopt) {
           // Branch existente: a base é o commit atual dela, então a revisão mostra só o que a tarefa
@@ -481,6 +527,7 @@ export class Service {
         this.changed();
         return null;
       case "uncommitted": {
+        if (isFolderProject(this.store.project(this.store.task(r.taskId).projectId))) return 0;
         const { root } = await this.treeRoot(r.taskId);
         return this.git.uncommitted(root);
       }
@@ -568,7 +615,7 @@ export class Service {
         return this.coordinator.exclusive(r.taskId, async () => {
           const t = this.store.task(r.taskId);
           if (!t.branchCreated) throw new Error("Inicie a tarefa antes de selecionar sua branch.");
-          if (t.worktreePath)
+          if (t.worktreePath || isFolderTask(t))
             throw new Error("Esta tarefa tem pasta própria. Não é preciso ativar a branch.");
           // A pasta é dividida: trocar a branch embaixo de um agente rodando estragaria o trabalho dele.
           const busy = this.store
@@ -657,7 +704,13 @@ export class Service {
           memoryOn && this.requireChat().isFresh(r.taskId)
             ? prepareMemory(this.store, task.projectId, `${task.title}\n${task.prompt}\n${r.text}`, target.mcp !== null)
             : { text: null, ids: [] };
-        const preamble = handoff && memory.text ? withHandoff(handoff, memory.text) : (handoff ?? memory.text);
+        const joined = handoff && memory.text ? withHandoff(handoff, memory.text) : (handoff ?? memory.text);
+        // Pasta com vários projetos: o mapa do workspace abre a conversa nova.
+        const map =
+          isFolderProject(this.store.project(task.projectId)) && this.requireChat().isFresh(r.taskId)
+            ? await workspaceMap(this.git, root)
+            : null;
+        const preamble = map ? (joined ? withWorkspace(map, joined) : map) : joined;
         this.requireChat().send(r.taskId, target, r.text, images, preamble);
         if (handoff) this.store.clearHandoff(r.taskId, "Resumo da troca de agente entregue ao chat.");
         if (memory.ids.length) {
@@ -733,6 +786,8 @@ export class Service {
         return this.coordinator.exclusive(r.taskId, async () => {
           const t = this.store.task(r.taskId);
           if (!t.branchCreated) throw new Error("Branch ainda não criada.");
+          if (isFolderTask(t))
+            throw new Error("Esta tarefa é de uma pasta sem Git. Faça os commits dentro de cada subprojeto.");
           const dir = requireCheckout(t, this.store.project(t.projectId));
           await this.git.requireCurrent(dir, t.branch);
           const sha = await this.git.commitPaths(dir, r.paths, r.message);
@@ -750,6 +805,7 @@ export class Service {
       case "changeDiff":
         return this.git.workingDiff((await this.treeRoot(r.taskId)).root, r.path);
       case "changes":
+        if (isFolderProject(this.store.project(this.store.task(r.taskId).projectId))) return {};
         return this.git.changes((await this.treeRoot(r.taskId)).root);
       case "readFile":
         return this.coordinator.exclusive(r.taskId, async () => {
@@ -794,7 +850,7 @@ export class Service {
           const t = this.store.task(r.taskId);
           const path = requireCheckout(t, this.store.project(t.projectId));
           await this.git.requireCurrent(path, t.branch);
-          const revision = await this.git.fingerprint(path);
+          const revision = isFolderTask(t) ? await folderFingerprint(this.git, path) : await this.git.fingerprint(path);
           const result = this.store.complete(t.id, revision);
           await this.rememberTask(result);
           this.changed();
@@ -804,6 +860,8 @@ export class Service {
         return this.coordinator.exclusive(r.taskId, async () => {
           const t = this.store.task(r.taskId);
           if (!t.branchCreated) throw new Error("Branch ainda não criada.");
+          if (isFolderTask(t)) throw new Error("Esta tarefa é de uma pasta sem Git: não há branch para publicar.");
+          if (!t.remote) throw new Error("Este repositório não tem remoto. Adicione um (git remote add) para publicar.");
           const dir = requireCheckout(t, this.store.project(t.projectId));
           await this.git.requireCurrent(dir, t.branch);
           if ((await this.git.run(dir, ["status", "--porcelain=v1", "-z"])).length)

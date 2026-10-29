@@ -3,6 +3,7 @@ import {
   Plus,
   Settings as SettingsIcon,
   GitBranch,
+  GitBranchPlus,
   List,
   X,
   Search,
@@ -561,6 +562,11 @@ function Workspace() {
                 >
                   <FileTypeIcon name={p.name} kind="directory" open={!closedProject(p.id)} size={15} />
                   <span>{p.name}</span>
+                  {p.kind === "folder" && (
+                    <span className="project-branch" title="Pasta sem Git: as tarefas rodam direto nela">
+                      pasta
+                    </span>
+                  )}
                   {snapshot.activeBranches?.[p.id] && (
                     <span className="project-branch" title="Branch ativa na pasta do projeto">
                       <GitBranch size={11} />
@@ -569,6 +575,28 @@ function Workspace() {
                   )}
                   <small>{snapshot.tasks.filter((t) => t.projectId === p.id).length}</small>
                 </button>
+                {p.kind === "folder" && (
+                  <button
+                    className="project-remove project-git-init"
+                    aria-label={`Iniciar Git em ${p.name}`}
+                    title="Iniciar Git nesta pasta"
+                    disabled={busy}
+                    onClick={async () => {
+                      if (
+                        !(await confirm({
+                          title: `Iniciar Git em "${p.name}"?`,
+                          message:
+                            "A pasta vira um repositório Git, com um primeiro commit de tudo que está nela (um .gitignore básico é criado se não houver). Depois disso, cada tarefa nova ganha sua branch. Pastas que já têm projetos com Git dentro continuam como pasta.",
+                          confirmLabel: "Iniciar Git",
+                        }))
+                      )
+                        return;
+                      perform(() => request({ action: "initGit", projectId: p.id }));
+                    }}
+                  >
+                    <GitBranchPlus size={12} />
+                  </button>
+                )}
                 <button
                   className="project-remove"
                   aria-label={`Remover ${p.name} do Golfinho`}
@@ -582,7 +610,7 @@ function Workspace() {
                     if (
                       !(await confirm({
                         title: `Remover "${p.name}" do Golfinho?`,
-                        message: "Só o registro sai do Golfinho. A pasta e o repositório Git não são alterados.",
+                        message: "Só o registro sai do Golfinho. A pasta e os arquivos dela não são alterados.",
                         confirmLabel: "Remover projeto",
                         tone: "danger",
                       }))
@@ -652,7 +680,7 @@ function Workspace() {
               </div>
             ))}
           {snapshot?.projects.length === 0 && (
-            <p className="side-hint">Adicione um repositório Git para começar.</p>
+            <p className="side-hint">Adicione um repositório Git ou uma pasta para começar.</p>
           )}
           {query && tasks.length === 0 && <p className="side-hint">Nenhuma tarefa encontrada.</p>}
         </div>

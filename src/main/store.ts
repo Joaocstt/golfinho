@@ -82,6 +82,9 @@ export class Store {
     this.db.prepare("INSERT INTO projects VALUES(?,?)").run(p.id, JSON.stringify(p));
     return p;
   }
+  updateProject(p: Project) {
+    this.db.prepare("UPDATE projects SET body = ? WHERE id = ?").run(JSON.stringify(p), p.id);
+  }
   // Só remove o registro do Golfinho. A pasta e o repositório Git não são tocados.
   removeProject(id: string) {
     this.db.prepare("DELETE FROM projects WHERE id = ?").run(id);
@@ -104,14 +107,14 @@ export class Store {
   }
   createTask(input: CreateTask): Task {
     this.project(input.projectId);
-    if (this.tasks().some((t) => t.projectId === input.projectId && t.branch === input.branch))
+    if (input.branch && this.tasks().some((t) => t.projectId === input.projectId && t.branch === input.branch))
       throw new Error("Essa branch já pertence a outra tarefa.");
     // adopt não é campo da tarefa: vira a marca de branch que já existia.
     const { adopt, ...fields } = input;
     const t: Task = {
       ...fields,
       adoptedBranch: adopt === true,
-      title: input.title || input.branch,
+      title: input.title || input.branch || "Tarefa",
       id: randomUUID(),
       status: "draft",
       createdAt: now(),
@@ -158,7 +161,7 @@ export class Store {
     patch: Partial<
       Pick<
         Task,
-        "branchCreated" | "published" | "reviewSummary" | "baseCommit" | "sessionId" | "worktreePath" | "setupDone" | "testCheckout"
+        "branchCreated" | "published" | "reviewSummary" | "baseCommit" | "sessionId" | "worktreePath" | "setupDone" | "testCheckout" | "folderBases"
       >
     >,
     message: string,

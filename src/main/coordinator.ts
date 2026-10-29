@@ -10,6 +10,7 @@ import { join } from "node:path";
 import type { Provider } from "../shared/contracts";
 import { withHandoff } from "./handoff";
 import { MEMORY_TOKEN_ENV, prepareMemory, withMemory, type MemoryLink } from "./memory";
+import { folderFingerprint, isFolderTask, subrepoHeads, workspaceMap, withWorkspace } from "./workspace";
 export interface Handle {
   write(data: string): void;
   resize(cols: number, rows: number): void;
@@ -172,8 +173,14 @@ export class Coordinator {
       const project = this.store.project(t.projectId);
       const started = Date.now();
       const legacy = !t.worktreePath;
+      const folder = isFolderTask(t);
       let base: string;
-      if (legacy) {
+      if (folder) {
+        // Pasta sem Git: nada a preparar. Guarda o HEAD dos repositórios de dentro para a revisão.
+        base = "";
+        e.path = project.path;
+        if (!t.branchCreated) this.store.update(id, { folderBases: await subrepoHeads(this.git, project.path) }, "Tarefa iniciada direto na pasta, sem branch.");
+      } else if (legacy) {
         base = await this.git.prepare(
           project.path,
           t.branch,
@@ -199,13 +206,15 @@ export class Coordinator {
       }
       this.blocked.delete(id);
       const patch: Parameters<Store["update"]>[1] = {};
-      if (!t.branchCreated) Object.assign(patch, { branchCreated: true, baseCommit: base });
-      if (!legacy && !t.worktreePath) patch.worktreePath = e.path;
+      if (!t.branchCreated) Object.assign(patch, { branchCreated: true, baseCommit: base || null });
+      if (!legacy && !folder && !t.worktreePath) patch.worktreePath = e.path;
       if (Object.keys(patch).length)
         this.store.update(
           id,
           patch,
-          patch.worktreePath
+          folder
+            ? "Pasta da tarefa pronta."
+            : patch.worktreePath
             ? `Pasta de trabalho criada em ${e.path}. Branch local: ${t.branch}. Publicação é uma ação separada.`
             : `Branch local criada: ${t.branch}. Publicação é uma ação separada.`,
         );
@@ -240,11 +249,13 @@ export class Coordinator {
         memoryOn && !resume && t.prompt.trim()
           ? prepareMemory(this.store, t.projectId, `${t.title}\n${t.prompt}`, mcp !== null)
           : { text: null, ids: [] };
-      const prompt = withHandoff(handoff, withMemory(memory.text, t.prompt));
+      // Pasta com vários projetos: o mapa do workspace abre a execução nova.
+      const map = folder && !resume && t.prompt.trim() ? await workspaceMap(this.git, e.path) : null;
+      const prompt = withHandoff(handoff, withWorkspace(map, withMemory(memory.text, t.prompt)));
       const args = invocation(t.provider, e.path, prompt, resume, mcp).args;
       this.logs.append(
         id,
-        `\r\n── ${t.provider} · ${t.branch}${resume ? " · retomando sessão" : ""} ──\r\n`,
+        `\r\n── ${t.provider} · ${t.branch || "pasta"}${resume ? " · retomando sessão" : ""} ──\r\n`,
       );
       const handle = await this.driver.start(
         cmd,
@@ -476,7 +487,9 @@ export class Coordinator {
       if (!task.branchCreated) throw new Error("A branch da tarefa ainda não foi criada.");
       const path = requireCheckout(task, this.store.project(task.projectId));
       await this.git.requireCurrent(path, task.branch);
-      const revision = await this.git.fingerprint(path);
+      const fingerprint = (dir: string) =>
+        isFolderTask(task) ? folderFingerprint(this.git, dir) : this.git.fingerprint(dir);
+      const revision = await fingerprint(path);
       const check = this.store.addCheck(id, command);
       const run = {
         taskId: id,
@@ -493,7 +506,7 @@ export class Coordinator {
         if (this.stopping || !this.checks.has(check.id)) return;
         let unchanged = false;
         try {
-          unchanged = revision === (await this.git.fingerprint(path));
+          unchanged = revision === (await fingerprint(path));
         } catch {
           /* cannot certify */
         }

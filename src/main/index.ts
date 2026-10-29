@@ -113,7 +113,7 @@ else {
       };
       const service = new Service(store, git, coordinator, logs, changed, async () => {
         const result = await dialog.showOpenDialog(window!, {
-          title: "Selecionar repositório Git",
+          title: "Selecionar a pasta do projeto",
           properties: ["openDirectory"],
         });
         return result.canceled ? null : result.filePaths[0];

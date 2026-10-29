@@ -4,6 +4,7 @@ import {
   Activity,
   Check as CheckMark,
   Files,
+  FolderOpen,
   GitBranch,
   GitCommitHorizontal,
   GitCompare,
@@ -261,9 +262,11 @@ export const TaskWorkspace = forwardRef<TaskWorkspaceHandle, Props>(function Tas
     } catch (error) { report(error); }
     finally { setBusy(false); }
   }
+  // Tarefa de pasta sem Git: sem branch, sem painel de commit, sem publicação.
+  const folderTask = task.branch === "";
   const sessionList = sessions[task.id] ?? [];
   const fixedTabs = tabOrder
-    .filter((t) => (t !== "Shell" && t !== "Commit") || task.branchCreated)
+    .filter((t) => (t !== "Shell" && t !== "Commit") || (task.branchCreated && (t !== "Commit" || !folderTask)))
     // Aba escondida que está aberta continua visível até o usuário sair dela.
     .filter((t) => !hiddenTabs.includes(t) || shown(t));
   const tabBar = arrangeTabs(
@@ -442,14 +445,21 @@ export const TaskWorkspace = forwardRef<TaskWorkspaceHandle, Props>(function Tas
                       }
                       onChange={changeAgent}
                     />
-                    <span className="detail-branch" title={`${task.branch} ← ${task.base} · ${task.remote}`}>
+                    {folderTask ? (
+                      <span className="detail-branch" title="Pasta sem Git: a tarefa roda direto nela, sem branch">
+                        <FolderOpen size={12} />
+                        <span>direto na pasta, sem Git</span>
+                      </span>
+                    ) : (
+                    <span className="detail-branch" title={`${task.branch} ← ${task.base}${task.remote ? ` · ${task.remote}` : ""}`}>
                       <GitBranch size={12} />
                       {task.branch !== task.title && <strong>{task.branch}</strong>}
                       <span>
                         {task.branch !== task.title ? "← " : "a partir de "}
-                        {task.base} · {task.remote}
+                        {task.base}{task.remote ? ` · ${task.remote}` : " · sem remoto"}
                       </span>
                     </span>
+                    )}
                 </div>
                 <button className="detail-close" aria-label="Fechar tarefa" title="Fechar tarefa" onClick={() => onClose(task.id)}>
                   <X size={15} />
@@ -639,7 +649,7 @@ export const TaskWorkspace = forwardRef<TaskWorkspaceHandle, Props>(function Tas
                 {tabMenu && (
                   <TabMenu
                     at={tabMenu}
-                    tabs={tabOrder.filter((t) => (t !== "Shell" && t !== "Commit") || task.branchCreated)}
+                    tabs={tabOrder.filter((t) => (t !== "Shell" && t !== "Commit") || (task.branchCreated && (t !== "Commit" || !folderTask)))}
                     hidden={hiddenTabs}
                     onToggle={(t) =>
                       saveHiddenTabs(hiddenTabs.includes(t) ? hiddenTabs.filter((x) => x !== t) : [...hiddenTabs, t])
@@ -1035,14 +1045,23 @@ export const TaskWorkspace = forwardRef<TaskWorkspaceHandle, Props>(function Tas
                   <dd>{snapshot?.projects.find((p) => p.id === task.projectId)?.name}</dd>
                   <dt>Agente</dt>
                   <dd><AgentIcon provider={task.provider} /> {task.provider}</dd>
-                  <dt>Branch</dt>
-                  <dd>{task.branch}</dd>
-                  <dt>Base</dt>
-                  <dd>{task.base}</dd>
-                  <dt>Remoto</dt>
-                  <dd>{task.remote}</dd>
-                  <dt>Publicação</dt>
-                  <dd>{task.published ? "Publicada" : "Não publicada"}</dd>
+                  {folderTask ? (
+                    <>
+                      <dt>Pasta</dt>
+                      <dd>Sem Git, direto na pasta</dd>
+                    </>
+                  ) : (
+                    <>
+                      <dt>Branch</dt>
+                      <dd>{task.branch}</dd>
+                      <dt>Base</dt>
+                      <dd>{task.base}</dd>
+                      <dt>Remoto</dt>
+                      <dd>{task.remote || "Nenhum"}</dd>
+                      <dt>Publicação</dt>
+                      <dd>{task.published ? "Publicada" : "Não publicada"}</dd>
+                    </>
+                  )}
                 </dl>
               </div>
               {/* Tarefas antigas ainda têm instruções; as novas abrem a CLI vazia e não mostram a seção. */}

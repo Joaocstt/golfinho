@@ -72,6 +72,8 @@ export function TaskForm({
   useEffect(() => setRemote(project?.remotes[0] ?? ""), [project]);
 
   // Sem lista utilizável o campo volta a aceitar texto, em vez de travar a criação.
+  // Pasta sem Git: a tarefa roda direto nela, sem branch, base nem remoto.
+  const folder = project?.kind === "folder";
   const typedBase = refsFailed || refs?.branches.length === 0;
   const loadingRefs = !refs && !refsFailed;
   const agent = snapshot.agents.find((a) => a.provider === provider);
@@ -80,12 +82,13 @@ export function TaskForm({
   const taken = mode === "new" && !!name && !!refs?.branches.includes(name);
   const branchError = problem || (taken ? "Essa branch já existe. Use \"Branch existente\" para trabalhar nela." : "");
   const target = mode === "new" ? name : existing;
-  const ready =
-    !busy &&
-    !loadingRefs &&
-    !!project?.remotes.length &&
-    !!remote &&
-    (mode === "new" ? !!name && !branchError && !!base.trim() : !!existing);
+  const ready = folder
+    ? !busy && !!project
+    : !busy &&
+      !loadingRefs &&
+      // Sem remoto a tarefa funciona; só não publica.
+      (!project?.remotes.length || !!remote) &&
+      (mode === "new" ? !!name && !!base.trim() && !branchError : !!existing);
   const others = useMemo(
     () => snapshot.tasks.filter((t) => t.projectId === p && ["running", "waiting", "queued"].includes(t.status)).length,
     [snapshot.tasks, p],
@@ -94,6 +97,8 @@ export function TaskForm({
   function submit() {
     setTouched(true);
     if (!ready) return;
+    if (folder)
+      return onSubmit({ projectId: p, title: "", prompt: "", provider, branch: "", base: "", remote: "", timeoutMinutes: timeout });
     onSubmit({
       projectId: p,
       title: "",
@@ -122,7 +127,9 @@ export function TaskForm({
       }}
     >
       <p className="task-form-intro">
-        A tarefa nasce como rascunho numa branch própria. Depois, converse com o agente pelo Terminal ou pelo Chat.
+        {folder
+          ? "Esta pasta não usa Git: a tarefa roda direto nela, e o agente recebe um mapa dos projetos que estão dentro. Depois, converse com ele pelo Terminal ou pelo Chat."
+          : "A tarefa nasce como rascunho numa branch própria. Depois, converse com o agente pelo Terminal ou pelo Chat."}
       </p>
 
       <section className="task-form-section">
@@ -159,6 +166,7 @@ export function TaskForm({
         </div>
       </section>
 
+      {!folder && (
       <section className="task-form-section">
         <h3>Branch</h3>
         <Segmented
@@ -244,19 +252,22 @@ export function TaskForm({
           )}
         </div>
       </section>
+      )}
 
       <details className="task-form-advanced">
         <summary>
           <Settings2 size={14} /> Opções avançadas
         </summary>
         <div className="task-form-grid">
-          <Field label="Remoto" htmlFor="task-remote" hint="Para onde a branch vai quando você publicar.">
-            <Select id="task-remote" name="remote" required value={remote} onChange={(e) => setRemote(e.target.value)}>
-              {(project?.remotes ?? []).map((r) => (
-                <option key={r}>{r}</option>
-              ))}
-            </Select>
-          </Field>
+          {!!project?.remotes.length && (
+            <Field label="Remoto" htmlFor="task-remote" hint="Para onde a branch vai quando você publicar.">
+              <Select id="task-remote" name="remote" required value={remote} onChange={(e) => setRemote(e.target.value)}>
+                {project.remotes.map((r) => (
+                  <option key={r}>{r}</option>
+                ))}
+              </Select>
+            </Field>
+          )}
           <Field
             label="Encerrar se parado (minutos)"
             htmlFor="task-timeout"
@@ -276,9 +287,16 @@ export function TaskForm({
         </div>
       </details>
 
-      {!project?.remotes.length ? (
-        <p className="task-form-note warn" role="note">
-          <Info size={14} /> Este projeto não tem um remoto Git. Configure um remoto no repositório antes de criar a tarefa.
+      {folder ? (
+        <p className={"task-form-note" + (others ? " warn" : "")} role="note">
+          <Info size={14} />
+          {others
+            ? `${others} tarefa(s) desta pasta em execução. Uma tarefa por vez trabalha na pasta: esta começa quando a outra terminar.`
+            : "Sem Git, não há branch nem commit pelo Golfinho. A revisão mostra o que mudou nos projetos com Git que estão dentro."}
+        </p>
+      ) : !project?.remotes.length ? (
+        <p className="task-form-note" role="note">
+          <Info size={14} /> Este repositório não tem remoto. A tarefa funciona normalmente; só não dá para publicar a branch até você adicionar um.
         </p>
       ) : (
         <p className={"task-form-note" + (others ? " warn" : "")} role="note">
@@ -293,7 +311,11 @@ export function TaskForm({
         <div className="task-form-summary-text">
           {project && <FileTypeIcon name={project.name} kind="directory" size={16} />}
           <span>
-            {target ? (
+            {folder ? (
+              <>
+                Trabalha direto na pasta <code>{project?.name}</code>
+              </>
+            ) : target ? (
               <>
                 {mode === "new" ? "Cria " : "Trabalha em "}
                 <code>{target}</code>

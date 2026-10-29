@@ -99,6 +99,8 @@ export class GitService {
     };
   }
   async requireCurrent(path: string, branch: string) {
+    // Tarefa de pasta (sem branch): não há o que conferir.
+    if (!branch) return;
     const current = await this.current(path);
     if (current === branch) return;
     // Sem worktree, as tarefas do projeto dividem uma pasta só, que fica numa branch por vez.

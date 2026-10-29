@@ -14,6 +14,8 @@ export interface Project {
   name: string;
   path: string;
   remotes: string[];
+  /** "folder": pasta sem Git (pode conter vários projetos). Ausente = repositório Git. */
+  kind?: "git" | "folder";
 }
 export interface Task {
   id: string;
@@ -50,6 +52,8 @@ export interface Task {
   /** Onde a pasta do projeto estava antes do teste desta tarefa. Null quando ela não está em teste. */
   testCheckout?: { branch: string; sha: string } | null;
   terminalReady?: boolean;
+  /** Tarefa de pasta: HEAD de cada repositório de dentro quando ela começou, para a revisão. */
+  folderBases?: Record<string, string> | null;
 }
 export interface TaskEvent {
   id: number;
@@ -218,6 +222,7 @@ export type Request =
   | { action: "snapshot" }
   | { action: "addProject"; path?: string }
   | { action: "removeProject"; projectId: string }
+  | { action: "initGit"; projectId: string }
   | { action: "createTask"; input: CreateTask }
   | { action: "branches"; projectId: string }
   | { action: "quota"; provider: Provider; refresh?: boolean }

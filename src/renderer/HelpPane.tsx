@@ -16,7 +16,7 @@ import {
 // Ajuda do app: o fluxo inteiro em etapas, depois os detalhes de cada parte. O texto segue o
 // que o app faz hoje; ao mudar um comportamento, atualize a seção correspondente aqui.
 const FLOW = [
-  { icon: FolderPlus, title: "Projeto", text: "Adicione um repositório Git local." },
+  { icon: FolderPlus, title: "Projeto", text: "Adicione um repositório Git ou uma pasta." },
   { icon: ListPlus, title: "Tarefa", text: "Descreva o que o agente deve fazer." },
   { icon: Hourglass, title: "Fila", text: "O app cria a branch e espera a vez." },
   { icon: SquareTerminal, title: "Trabalho", text: "O agente roda no Terminal ou no Chat." },
@@ -36,8 +36,10 @@ const TOPICS: Topic[] = [
     body: (
       <ol>
         <li>
-          Em <b>Projetos → +</b>, escolha um repositório Git local. Ele precisa ter pelo menos um commit e
-          um remoto configurado.
+          Em <b>Projetos → +</b>, escolha um repositório Git local ou qualquer pasta. Num repositório, cada
+          tarefa ganha sua branch; sem remoto, ela só não publica. Numa pasta sem Git (por exemplo, um
+          workspace com vários projetos), a tarefa roda direto nela e o agente recebe um mapa dos projetos de
+          dentro. Para começar a versionar uma pasta, use o botão de Git ao lado do nome dela.
         </li>
         <li>
           Em <b>Configurações</b> (engrenagem), confira os caminhos das CLIs: <code>codex</code>,{" "}

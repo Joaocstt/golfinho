@@ -45,6 +45,7 @@ export const requestSchema = z.discriminatedUnion("action", [
     .object({ action: z.literal("addProject"), path: z.string().min(1).max(4096).optional() })
     .strict(),
   z.object({ action: z.literal("removeProject"), projectId: id }).strict(),
+  z.object({ action: z.literal("initGit"), projectId: id }).strict(),
   z.object({ action: z.literal("branches"), projectId: id }).strict(),
   z.object({ action: z.literal("quota"), provider, refresh: z.boolean().optional() }).strict(),
   z.object({ action: z.literal("deleteInfo"), taskId: id }).strict(),
@@ -60,9 +61,10 @@ export const requestSchema = z.discriminatedUnion("action", [
           title: z.string().trim().max(200),
           prompt: z.string().trim().max(16000),
           provider,
-          branch: z.string().min(1).max(200),
-          base: z.string().min(1).max(200),
-          remote: z.string().min(1).max(200),
+          // Vazios numa tarefa de pasta (sem Git); o serviço exige os três em projetos Git.
+          branch: z.string().max(200),
+          base: z.string().max(200),
+          remote: z.string().max(200),
           timeoutMinutes: z.number().int().min(0).max(1440),
         })
         .strict(),

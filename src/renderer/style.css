@@ -6169,3 +6169,10 @@ select {
 .youtube-bar .youtube-adblock.on {
   color: #4ade80;
 }
+/* Iniciar Git: ao lado do X de remover, só em projetos pasta. */
+.project-remove.project-git-init {
+  right: 24px;
+}
+.project-remove.project-git-init:hover:not(:disabled) {
+  color: #4ade80;
+}
