@@ -1,4 +1,6 @@
-import { BrowserWindow, WebContentsView, session, shell } from "electron";
+import { BrowserWindow, WebContentsView, session, shell, type Session } from "electron";
+import { readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import type { YouTubeBounds, YouTubeCommand, YouTubeState } from "../shared/contracts";
 const HOME = "https://www.youtube.com/";
 // Só YouTube e o login do Google. Qualquer outro endereço vai para o navegador padrão:
@@ -22,16 +24,54 @@ export function allowedUrl(raw: string): boolean {
 }
 // A página fica numa WebContentsView sobreposta à janela, sem preload e com sessão
 // própria: nada do YouTube enxerga a API do Golfinho nem os cookies do app.
+type Blocker = import("@ghostery/adblocker-electron").ElectronBlocker;
 export class YouTube {
   private view: WebContentsView | null = null;
+  // Bloqueador de anúncios (listas do uBlock/EasyList via Ghostery). Ligado por padrão;
+  // a escolha fica em youtube.json e as listas, em cache, na pasta de dados do app.
+  private adblock = true;
+  private blocker: Promise<Blocker> | null = null;
+  private readonly prefs: Promise<void>;
   private bounds: YouTubeBounds | null = null;
   private shown = false;
   private fullscreen = false;
   constructor(
     private readonly window: BrowserWindow,
     private readonly emit: (state: YouTubeState) => void,
+    private readonly dataDir: string,
   ) {
     window.on("resize", () => this.layout());
+    this.prefs = readFile(join(dataDir, "youtube.json"), "utf8")
+      .then((text) => {
+        const saved = JSON.parse(text) as { adblock?: unknown };
+        if (typeof saved.adblock === "boolean") this.adblock = saved.adblock;
+      })
+      .catch(() => undefined);
+  }
+  private loadBlocker() {
+    this.blocker ??= (async () => {
+      const { ElectronBlocker } = await import("@ghostery/adblocker-electron");
+      const path = join(this.dataDir, "adblock-engine.bin");
+      return ElectronBlocker.fromPrebuiltAdsAndTracking(fetch, {
+        path,
+        read: (file) => readFile(file),
+        write: (file, data) => writeFile(file, data),
+      });
+    })();
+    // Sem rede na primeira vez: tenta de novo na próxima abertura.
+    this.blocker.catch(() => (this.blocker = null));
+    return this.blocker;
+  }
+  private async syncAdblock(partition: Session) {
+    await this.prefs;
+    try {
+      const blocker = await this.loadBlocker();
+      const on = blocker.isBlockingEnabled(partition);
+      if (this.adblock && !on) blocker.enableBlockingInSession(partition);
+      if (!this.adblock && on) blocker.disableBlockingInSession(partition);
+    } catch {
+      // Listas indisponíveis: o YouTube abre normalmente, só sem o bloqueio.
+    }
   }
   private create() {
     const partition = session.fromPartition("persist:youtube");
@@ -72,7 +112,10 @@ export class YouTube {
     for (const name of ["did-navigate", "did-navigate-in-page", "page-title-updated", "did-start-loading", "did-stop-loading"] as const)
       contents.on(name as "did-stop-loading", () => this.publish());
     this.view = view;
-    void contents.loadURL(HOME);
+    // Carrega a página só depois do bloqueador, para os primeiros anúncios não passarem.
+    void this.syncAdblock(partition).finally(() => {
+      if (!contents.isDestroyed()) void contents.loadURL(HOME);
+    });
     return view;
   }
   private layout() {
@@ -91,6 +134,7 @@ export class YouTube {
       loading: contents.isLoading(),
       canGoBack: contents.navigationHistory.canGoBack(),
       canGoForward: contents.navigationHistory.canGoForward(),
+      adblock: this.adblock,
     });
   }
   show(bounds: YouTubeBounds) {
@@ -128,6 +172,12 @@ export class YouTube {
     if (command === "forward" && contents.navigationHistory.canGoForward()) contents.navigationHistory.goForward();
     if (command === "reload") contents.reload();
     if (command === "home") void contents.loadURL(HOME);
+    if (command === "adblock") {
+      this.adblock = !this.adblock;
+      void writeFile(join(this.dataDir, "youtube.json"), JSON.stringify({ adblock: this.adblock })).catch(() => undefined);
+      void this.syncAdblock(contents.session).then(() => !contents.isDestroyed() && contents.reload());
+      this.publish();
+    }
     // Fechar a aba para de verdade: some o áudio de fundo e libera a memória da página.
     if (command === "close") {
       this.hide();

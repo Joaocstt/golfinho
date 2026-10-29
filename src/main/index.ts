@@ -212,7 +212,7 @@ else {
       });
       const youtube = new YouTube(window, (state) => {
         if (window && !window.isDestroyed()) window.webContents.send("golfinho:youtube", state);
-      });
+      }, app.getPath("userData"));
       const number = (value: unknown) => (typeof value === "number" && Number.isFinite(value) ? value : 0);
       ipcMain.handle("golfinho:youtube:show", (event, bounds: unknown) => {
         if (!trusted(event) || !bounds || typeof bounds !== "object") return;
@@ -224,7 +224,7 @@ else {
       });
       ipcMain.handle("golfinho:youtube:command", (event, command: unknown) => {
         if (!trusted(event)) return;
-        if (command === "back" || command === "forward" || command === "reload" || command === "home" || command === "close")
+        if (command === "back" || command === "forward" || command === "reload" || command === "home" || command === "close" || command === "adblock")
           youtube.command(command);
       });
       window.once("ready-to-show", () => window?.show());

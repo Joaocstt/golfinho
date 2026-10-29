@@ -7,6 +7,8 @@ import {
   Maximize2,
   PictureInPicture2,
   RotateCw,
+  ShieldCheck,
+  ShieldOff,
   Square,
   X,
 } from "lucide-react";
@@ -77,6 +79,16 @@ export function YouTubePane({
         </button>
         <button aria-label="Início do YouTube" title="Início" onClick={() => go("home")}>
           <House size={13} />
+        </button>
+        <button
+          className={state?.adblock ? "youtube-adblock on" : "youtube-adblock"}
+          aria-label={state?.adblock ? "Desligar o bloqueador de anúncios" : "Ligar o bloqueador de anúncios"}
+          aria-pressed={state?.adblock ?? false}
+          title={state?.adblock ? "Bloqueador de anúncios ligado (clique para desligar)" : "Bloqueador de anúncios desligado (clique para ligar)"}
+          disabled={!state}
+          onClick={() => go("adblock")}
+        >
+          {state?.adblock ? <ShieldCheck size={13} /> : <ShieldOff size={13} />}
         </button>
         <span className="youtube-title" title={state?.url}>
           {state?.title || "YouTube"}

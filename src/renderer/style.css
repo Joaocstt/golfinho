@@ -6071,3 +6071,6 @@ select {
   display: block;
   margin: -2px 0 8px;
 }
+.youtube-bar .youtube-adblock.on {
+  color: #4ade80;
+}

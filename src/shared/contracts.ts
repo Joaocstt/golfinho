@@ -367,13 +367,14 @@ export interface YouTubeBounds {
   width: number;
   height: number;
 }
-export type YouTubeCommand = "back" | "forward" | "reload" | "home" | "close";
+export type YouTubeCommand = "back" | "forward" | "reload" | "home" | "close" | "adblock";
 export interface YouTubeState {
   url: string;
   title: string;
   loading: boolean;
   canGoBack: boolean;
   canGoForward: boolean;
+  adblock: boolean;
 }
 export interface GolfinhoAPI {
   request(request: Request): Promise<Response>;
