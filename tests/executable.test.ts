@@ -1,5 +1,5 @@
 import { it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { executablePath } from "../src/main/agents";
@@ -69,4 +69,46 @@ it("executa .cmd pelo cmd no Windows, sem alterar o caminho de executáveis", ()
   expect(launchTarget("C:\\bin\\claude.exe", ["x"])).toEqual({ file: "C:\\bin\\claude.exe", args: ["x"] });
   Object.defineProperty(process, "platform", { value: "linux" });
   expect(launchTarget("/usr/bin/codex.cmd", [])).toEqual({ file: "/usr/bin/codex.cmd", args: [] });
+});
+it("atalho .cmd do npm roda o programa real, e o prompt de várias linhas chega inteiro", () => {
+  Object.defineProperty(process, "platform", { value: "win32" });
+  const exe = join(dir, "node_modules", "@anthropic-ai", "claude-code", "bin");
+  mkdirSync(exe, { recursive: true });
+  writeFileSync(join(exe, "claude.exe"), "");
+  const claudeShim = [
+    "@ECHO off",
+    "GOTO start",
+    ":find_dp0",
+    "SET dp0=%~dp0",
+    "EXIT /b",
+    ":start",
+    "SETLOCAL",
+    "CALL :find_dp0",
+    String.raw`"%dp0%\node_modules\@anthropic-ai\claude-code\bin\claude.exe"   %*`,
+  ].join("\r\n");
+  writeFileSync(join(dir, "claude.cmd"), claudeShim);
+  const prompt = "Notas da memória\n\n---\n\nInstruções da tarefa";
+  expect(launchTarget(join(dir, "claude.cmd"), ["--", prompt])).toEqual({
+    file: join(exe, "claude.exe"),
+    args: ["--", prompt],
+  });
+  // Codex: .js rodado pelo node que estiver ao lado do atalho.
+  const js = join(dir, "node_modules", "@openai", "codex", "bin");
+  mkdirSync(js, { recursive: true });
+  writeFileSync(join(js, "codex.js"), "");
+  writeFileSync(join(dir, "node.exe"), "");
+  const codexShim = [
+    "@SETLOCAL",
+    String.raw`IF EXIST "%dp0%\node.exe" (`,
+    String.raw`  SET "_prog=%dp0%\node.exe"`,
+    ")",
+    String.raw`endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\node_modules\@openai\codex\bin\codex.js" %*`,
+  ].join("\r\n");
+  writeFileSync(join(dir, "codex.cmd"), codexShim);
+  expect(launchTarget(join(dir, "codex.cmd"), ["x"])).toEqual({ file: join(dir, "node.exe"), args: [join(js, "codex.js"), "x"] });
+});
+it("atalho .cmd desconhecido segue pelo cmd, sem quebras de linha que cortariam o argumento", () => {
+  Object.defineProperty(process, "platform", { value: "win32" });
+  writeFileSync(join(dir, "outro.cmd"), "@echo off\r\nfoo.exe %*\r\n");
+  expect(launchTarget(join(dir, "outro.cmd"), ["a\nb"]).args).toEqual(["/d", "/s", "/c", join(dir, "outro.cmd"), "a b"]);
 });
