@@ -482,7 +482,7 @@ function Workspace() {
       <aside className="sidebar" aria-label="Projetos e tarefas">
         <div className="brand">
           <span className="brand-mark">
-            <img src={golfinhoLogo} alt="" width={23} height={23} />
+            <img src={golfinhoLogo} alt="" width={22} height={22} />
           </span>
           <strong>golfinho</strong>
           <button
@@ -490,56 +490,107 @@ function Workspace() {
             title="Recolher navegação"
             onClick={() => toggleSidebar(true)}
           >
-            <PanelLeftClose size={14} />
-          </button>
-          <button
-            aria-label="Ajuda"
-            title="Ajuda: como o Golfinho funciona"
-            className={helpView ? "active" : ""}
-            onClick={() => navigate(() => (setDashboard(false), setSshView(false), setActiveGeneral(""), setSelected(""), setHelpView(true)))}
-          >
-            <CircleHelp size={14} />
-          </button>
-          <button
-            aria-label="Verificar atualizações"
-            title="Verificar atualizações"
-            onClick={() => setUpdateRequest((n) => n + 1)}
-          >
-            <Download size={14} />
-          </button>
-          <button
-            aria-label="Configurações"
-            title="Configurações"
-            onClick={() => setModal("settings")}
-          >
-            <SettingsIcon size={14} />
+            <PanelLeftClose size={16} />
           </button>
         </div>
+        <button
+          className="new-task-button"
+          disabled={!snapshot?.projects.length || busy}
+          onClick={() => setModal("task")}
+        >
+          <Plus size={16} />
+          Nova tarefa
+        </button>
         <div className="search">
-          <Search size={13} />
+          <Search size={14} />
           <input
             type="search"
             aria-label="Buscar projetos e tarefas"
-            placeholder="Buscar"
+            placeholder="Buscar tarefas"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
         </div>
-        <button
-          className={!project ? "nav-item active" : "nav-item"}
-          onClick={() => setProject("")}
-        >
-          <List size={14} />
-          Todas as tarefas<span>{snapshot?.tasks.length ?? "—"}</span>
-        </button>
-        <button
-          className="nav-item new-task"
-          disabled={!snapshot?.projects.length || busy}
-          onClick={() => setModal("task")}
-        >
-          <Plus size={14} />
-          Nova tarefa
-        </button>
+        {/* Visões do app, como itens de navegação: a barra de cima fica só com o que está aberto. */}
+        <nav className="side-nav" role="tablist" aria-label="Navegação" aria-orientation="vertical">
+            <button
+              role="tab"
+              aria-label="Visão geral das tarefas"
+              title="Tarefas"
+              aria-selected={!selected && !dashboard && !sshView && !helpView && !memoryView && !youtubeView && !officeView && !activeGeneral}
+              className={!selected && !dashboard && !sshView && !helpView && !memoryView && !youtubeView && !officeView && !activeGeneral ? "active" : ""}
+              onClick={() => navigate(() => (setDashboard(false), setSshView(false), setHelpView(false), setMemoryView(false), setYoutubeView(false), setOfficeView(false), setActiveGeneral(""), setSelected("")))}
+            >
+              <List size={16} />
+              <span className="nav-label">Tarefas</span>
+            </button>
+            <button
+              role="tab"
+              aria-label="Painel de consumo"
+              title="Consumo"
+              aria-selected={dashboard}
+              className={dashboard ? "active" : ""}
+              onClick={() => navigate(() => (setDashboard(true), setSshView(false), setActiveGeneral(""), setSelected("")))}
+            >
+              <Gauge size={16} />
+              <span className="nav-label">Consumo</span>
+            </button>
+            <button
+              role="tab"
+              aria-label="Conexões SSH"
+              title="SSH"
+              aria-selected={sshView}
+              className={sshView ? "active" : ""}
+              onClick={() => navigate(() => (setDashboard(false), setActiveGeneral(""), setSelected(""), setSshView(true)))}
+            >
+              <Server size={16} />
+              <span className="nav-label">SSH</span>
+            </button>
+            <button
+              role="tab"
+              aria-label="Memória dos projetos"
+              title="Memória"
+              aria-selected={memoryView}
+              className={memoryView ? "active" : ""}
+              onClick={() =>
+                navigate(() => (setDashboard(false), setSshView(false), setHelpView(false), setActiveGeneral(""), setSelected(""), setMemoryView(true)))
+              }
+            >
+              <Brain size={16} />
+              <span className="nav-label">Memória</span>
+            </button>
+            <button
+              role="tab"
+              aria-label="Escritório de agentes"
+              title="Escritório"
+              aria-selected={officeView}
+              className={officeView ? "active" : ""}
+              onClick={() =>
+                navigate(() => (setDashboard(false), setSshView(false), setHelpView(false), setMemoryView(false), setYoutubeView(false), setActiveGeneral(""), setSelected(""), setOfficeView(true)))
+              }
+            >
+              <Briefcase size={16} />
+              <span className="nav-label">Escritório</span>
+            </button>
+            <button
+              role="tab"
+              aria-label="YouTube"
+              title="YouTube"
+              aria-selected={youtubeView}
+              className={youtubeView ? "active" : ""}
+              onClick={() =>
+                navigate(() => {
+                  if (selected) beforeYoutube.current = selected;
+                  setDashboard(false), setSshView(false), setHelpView(false), setMemoryView(false), setActiveGeneral(""), setSelected("");
+                  setYoutubeLayout("tab");
+                  setYoutubeView(true);
+                })
+              }
+            >
+              <TvMinimalPlay size={16} />
+              <span className="nav-label">YouTube</span>
+            </button>
+        </nav>
         <div className="sidebar-label">
           Projetos
           <button
@@ -573,7 +624,8 @@ function Workspace() {
                 <button
                   className={"project-row " + (project === p.id ? "active" : "")}
                   title={p.path}
-                  onClick={() => setProject(p.id)}
+                  // Clicar no projeto filtra as tarefas por ele; clicar de novo mostra todas.
+                  onClick={() => setProject(project === p.id ? "" : p.id)}
                   onDoubleClick={() => toggleProject(p.id)}
                 >
                   <FileTypeIcon name={p.name} kind="directory" open={!closedProject(p.id)} size={15} />
@@ -700,12 +752,29 @@ function Workspace() {
           )}
           {query && tasks.length === 0 && <p className="side-hint">Nenhuma tarefa encontrada.</p>}
         </div>
-          <div className="sidebar-bottom">
-          <span>
+        <div className="sidebar-bottom">
+          <span className="sidebar-env" title="Tarefas em branches na pasta do projeto">
             <i className="state-dot completed" />
             Ambiente local
           </span>
-          <small>Tarefas em branches · sem worktrees</small>
+          <button
+            aria-label="Ajuda"
+            title="Ajuda: como o Golfinho funciona"
+            className={helpView ? "active" : ""}
+            onClick={() => navigate(() => (setDashboard(false), setSshView(false), setActiveGeneral(""), setSelected(""), setHelpView(true)))}
+          >
+            <CircleHelp size={16} />
+          </button>
+          <button
+            aria-label="Verificar atualizações"
+            title="Verificar atualizações"
+            onClick={() => setUpdateRequest((n) => n + 1)}
+          >
+            <Download size={16} />
+          </button>
+          <button aria-label="Configurações" title="Configurações" onClick={() => setModal("settings")}>
+            <SettingsIcon size={16} />
+          </button>
         </div>
       </aside>
       <div
@@ -747,85 +816,8 @@ function Workspace() {
               if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) e.currentTarget.scrollLeft += e.deltaY;
             }}
             role="tablist"
-            aria-label="Workspaces"
+            aria-label="Abertos"
           >
-            <button
-              role="tab"
-              aria-label="Visão geral das tarefas"
-              title="Tarefas"
-              aria-selected={!selected && !dashboard && !sshView && !helpView && !memoryView && !youtubeView && !officeView && !activeGeneral}
-              className={!selected && !dashboard && !sshView && !helpView && !memoryView && !youtubeView && !officeView && !activeGeneral ? "active" : ""}
-              onClick={() => navigate(() => (setDashboard(false), setSshView(false), setHelpView(false), setMemoryView(false), setYoutubeView(false), setOfficeView(false), setActiveGeneral(""), setSelected("")))}
-            >
-              <List size={12} />
-              <span className="nav-label">Tarefas</span>
-            </button>
-            <button
-              role="tab"
-              aria-label="Painel de consumo"
-              title="Consumo"
-              aria-selected={dashboard}
-              className={dashboard ? "active" : ""}
-              onClick={() => navigate(() => (setDashboard(true), setSshView(false), setActiveGeneral(""), setSelected("")))}
-            >
-              <Gauge size={12} />
-              <span className="nav-label">Consumo</span>
-            </button>
-            <button
-              role="tab"
-              aria-label="Conexões SSH"
-              title="SSH"
-              aria-selected={sshView}
-              className={sshView ? "active" : ""}
-              onClick={() => navigate(() => (setDashboard(false), setActiveGeneral(""), setSelected(""), setSshView(true)))}
-            >
-              <Server size={12} />
-              <span className="nav-label">SSH</span>
-            </button>
-            <button
-              role="tab"
-              aria-label="Memória dos projetos"
-              title="Memória"
-              aria-selected={memoryView}
-              className={memoryView ? "active" : ""}
-              onClick={() =>
-                navigate(() => (setDashboard(false), setSshView(false), setHelpView(false), setActiveGeneral(""), setSelected(""), setMemoryView(true)))
-              }
-            >
-              <Brain size={12} />
-              <span className="nav-label">Memória</span>
-            </button>
-            <button
-              role="tab"
-              aria-label="Escritório de agentes"
-              title="Escritório"
-              aria-selected={officeView}
-              className={officeView ? "active" : ""}
-              onClick={() =>
-                navigate(() => (setDashboard(false), setSshView(false), setHelpView(false), setMemoryView(false), setYoutubeView(false), setActiveGeneral(""), setSelected(""), setOfficeView(true)))
-              }
-            >
-              <Briefcase size={12} />
-              <span className="nav-label">Escritório</span>
-            </button>
-            <button
-              role="tab"
-              aria-label="YouTube"
-              title="YouTube"
-              aria-selected={youtubeView}
-              className={youtubeView ? "active" : ""}
-              onClick={() =>
-                navigate(() => {
-                  if (selected) beforeYoutube.current = selected;
-                  setDashboard(false), setSshView(false), setHelpView(false), setMemoryView(false), setActiveGeneral(""), setSelected("");
-                  setYoutubeLayout("tab");
-                  setYoutubeView(true);
-                })
-              }
-            >
-              <TvMinimalPlay size={12} />
-              <span className="nav-label">YouTube</span>
-            </button>
             {open
               .map((id) => snapshot?.tasks.find((t) => t.id === id))
               .filter((t): t is Task => !!t)
@@ -1167,7 +1159,8 @@ function Workspace() {
           </span>
         </footer>
       </div>
-      {inspector && (
+      {/* O inspetor acompanha a tarefa (ou os servidores SSH abertos); sem eles, a tela fica livre. */}
+      {inspector && (task || general.some((g) => g.connectionId)) && (
         <aside className="inspector" aria-label="Inspetor da tarefa">
           <div className="inspector-heading">
             <Server size={14} />

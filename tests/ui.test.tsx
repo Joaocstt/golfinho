@@ -69,7 +69,12 @@ function setup(tasks: Task[] = [], rejectCreate = false, chatHistory: Record<str
   render(<App />);
   return request;
 }
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  localStorage.clear();
+});
+// Aba em que a tarefa abre (o padrão é o Chat).
+const startOn = (taskId: string, tab: string) => localStorage.setItem(`golfinho.task.${taskId}.tab`, tab);
 // Responde à janela de confirmação do app (no lugar do window.confirm): true confirma, false cancela.
 async function answer(ok: boolean) {
   const dialog = await screen.findByRole("alertdialog");
@@ -260,7 +265,8 @@ describe("interface de tarefas", () => {
       },
     ]);
     fireEvent.click(await screen.findByRole("button", { name: /Interrompida/ }));
-    expect(await screen.findByRole("button", { name: "Retomar sessão" })).toBeTruthy();
+    // Aparece no cabeçalho e no chat, que agora é a tela principal da tarefa.
+    expect((await screen.findAllByRole("button", { name: "Retomar sessão" })).length).toBeGreaterThan(0);
     expect(screen.queryByRole("button", { name: "Colocar na fila" })).toBeNull();
   });
 });
@@ -337,6 +343,8 @@ it("notifica pergunta do Terminal em segundo plano e mantém a divisão ao abrir
   expect(within(screen.getByRole("region", { name: "Tarefa main" })).getByText("Terminal conectado")).toBeTruthy();
 });
 it("abrir pedido visível na divisão interna mantém a proteção do editor não salvo", async () => {
+  // A tarefa abre no Chat por padrão; aqui ela começa nos Arquivos, como antes.
+  startOn("edit", "Arquivos");
   setup([{ ...editableTask, status: "running" }]);
   fireEvent.click(await screen.findByRole("button", { name: "Editar arquivo" }));
   fireEvent.click(screen.getByRole("button", { name: "Arquivos" }));
@@ -358,6 +366,8 @@ it("abrir pedido visível na divisão interna mantém a proteção do editor nã
   expect(screen.getByRole("button", { name: "Editar conteúdo" })).toBeTruthy();
 });
 it("divide duas tarefas com abas e ações independentes", async () => {
+  startOn("edit", "Terminal");
+  startOn("other", "Terminal");
   const request = setup([editableTask, { ...editableTask, id: "other", title: "Outra tarefa", branch: "main" }]);
   fireEvent.click(await screen.findByRole("button", { name: "Editar arquivo" }));
   fireEvent.click(screen.getByRole("button", { name: "Outra tarefa" }));
@@ -635,8 +645,13 @@ it("filtra tarefas e navega pelas abas do workspace", async () => {
   fireEvent.change(screen.getByRole("searchbox", { name: "Buscar projetos e tarefas" }), {
     target: { value: "" },
   });
+  // Com as duas abertas, as abas de cima trocam entre elas.
+  fireEvent.click(screen.getByRole("button", { name: "Editar arquivo" }));
+  fireEvent.click(screen.getByRole("tab", { name: "Workspace golfinho/other" }));
+  expect(screen.getByRole("tab", { name: "Workspace golfinho/other" })).toHaveProperty("ariaSelected", "true");
   fireEvent.click(screen.getByRole("tab", { name: "Workspace golfinho/edit" }));
-  expect(screen.getByRole("button", { name: "Fechar tarefa" })).toBeTruthy();
+  expect(screen.getByRole("tab", { name: "Workspace golfinho/edit" })).toHaveProperty("ariaSelected", "true");
+  expect(screen.getAllByRole("button", { name: "Fechar tarefa" }).length).toBeGreaterThan(0);
 });
 it("redimensiona navegação e oculta inspetor", async () => {
   setup();

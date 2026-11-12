@@ -4,6 +4,7 @@ import type { AgentInfo, Project, Provider, Settings } from "../shared/contracts
 import { AgentIcon } from "./agentIcons";
 import { FileTypeIcon } from "./fileIcons";
 import { UI_SCALES, applyUiScale, readUiScale } from "./uiScale";
+import { UI_THEMES, applyUiTheme, readUiTheme } from "./uiTheme";
 import { useConfirm } from "./ui";
 
 type Section = "geral" | "agentes" | "memoria" | "projetos";
@@ -51,6 +52,7 @@ export function SettingsPanel({
   });
   const [draft, setDraft] = useState<Settings>(() => structuredClone(settings));
   const [uiScale, setUiScale] = useState(readUiScale);
+  const [uiTheme, setUiTheme] = useState(readUiTheme);
   const dirty = useMemo(() => JSON.stringify(normalize(draft)) !== JSON.stringify(normalize(settings)), [draft, settings]);
   const memoryOn = draft.memory?.enabled !== false;
 
@@ -123,6 +125,32 @@ export function SettingsPanel({
           {section === "geral" && (
             <>
               <SectionHead title="Geral" text="Como o Golfinho aparece e quantas coisas ele roda ao mesmo tempo." />
+              <div className="settings-card">
+                <div className="settings-row">
+                  <div className="settings-label">
+                    <strong id="ui-theme-label">Tema</strong>
+                    <small>Escuro, claro ou o mesmo do sistema. Vale na hora.</small>
+                  </div>
+                </div>
+                <div className="settings-segments" role="radiogroup" aria-labelledby="ui-theme-label">
+                  {UI_THEMES.map((t) => (
+                    <button
+                      key={t.value}
+                      type="button"
+                      role="radio"
+                      aria-checked={uiTheme === t.value}
+                      className={uiTheme === t.value ? "active" : ""}
+                      onClick={() => {
+                        applyUiTheme(t.value);
+                        setUiTheme(t.value);
+                      }}
+                    >
+                      <span className={`theme-swatch ${t.value}`} aria-hidden="true" />
+                      <small>{t.label}</small>
+                    </button>
+                  ))}
+                </div>
+              </div>
               <div className="settings-card">
                 <div className="settings-row">
                   <div className="settings-label">
