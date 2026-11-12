@@ -1,11 +1,12 @@
 import React, { createContext, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Brain, Lock, Paperclip, Play, X } from "lucide-react";
+import { ArrowUp, Brain, Lock, Paperclip, Play, Square, X } from "lucide-react";
 import type { ChatBlock, ChatEvent, ChatHistoryItem, Provider, Request } from "../shared/contracts";
 import { currentContext } from "../shared/chatContext";
 import { absolutePathIn, asFilePath } from "./filePaths";
 import { FilePreview } from "./FilePreview";
+import { AgentIcon } from "./agentIcons";
 export interface ChatPaneProps {
   taskId: string;
   provider: string;
@@ -507,10 +508,10 @@ export function ChatPane({ taskId, provider, model, draft, onDraftChange, onErro
   );
   return (
     <OpenFile.Provider value={setPreview}>
-    <div className={`chat-pane chat-${provider}`} onDragOver={dragOver} onDrop={dropFiles}>
+    <div className={`chat-pane chat-${provider}${items.length === 0 ? " empty" : ""}`} onDragOver={dragOver} onDrop={dropFiles}>
       <div className="chat-log" ref={logRef} onScroll={onLogScroll}>
         {items.length === 0 && (
-          <p className="chat-empty">Escreva uma mensagem para começar a conversa nesta tarefa.</p>
+          <p className="chat-empty">Como posso ajudar nesta tarefa?</p>
         )}
         {items.length > shownItems.length && (
           <button type="button" className="chat-more" onClick={() => setShown((n) => n + MESSAGES_PAGE)}>
@@ -598,8 +599,11 @@ export function ChatPane({ taskId, provider, model, draft, onDraftChange, onErro
                   Compactar
                 </button>
               )}
-              <label className="chat-model">
-                Modelo
+              <span className="chat-agent" title="Agente desta tarefa">
+                <AgentIcon provider={provider as Provider} />
+                {LABELS[provider] ?? provider}
+              </span>
+              <label className="chat-model" title="Modelo do chat">
                 <select
                   aria-label="Modelo do chat"
                   value={model ?? ""}
@@ -631,7 +635,8 @@ export function ChatPane({ taskId, provider, model, draft, onDraftChange, onErro
           <textarea
             ref={composerRef}
             value={draft}
-            placeholder={`Mensagem para ${LABELS[provider] ?? "o agente"} (Enter envia, Shift+Enter quebra linha)`}
+            placeholder={`Mensagem para ${LABELS[provider] ?? "o agente"}…`}
+            title="Enter envia · Shift+Enter quebra a linha"
             rows={2}
             onChange={(e) => onDraftChange(e.target.value)}
             onPaste={paste}
@@ -643,12 +648,18 @@ export function ChatPane({ taskId, provider, model, draft, onDraftChange, onErro
             }}
           />
           {busy ? (
-            <button type="button" className="chat-stop" title="Interromper o agente" onClick={interrupt}>
-              Parar
+            <button type="button" className="chat-stop" aria-label="Parar" title="Interromper o agente" onClick={interrupt}>
+              <Square size={13} fill="currentColor" />
             </button>
           ) : (
-            <button type="submit" disabled={!draft.trim() && !attachments.length}>
-              Enviar
+            <button
+              type="submit"
+              className="chat-send"
+              aria-label="Enviar"
+              title="Enviar (Enter)"
+              disabled={!draft.trim() && !attachments.length}
+            >
+              <ArrowUp size={18} />
             </button>
           )}
         </div>
