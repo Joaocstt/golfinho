@@ -50,6 +50,7 @@ export class Store {
       CREATE TABLE IF NOT EXISTS secrets(id TEXT PRIMARY KEY, body TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS chat_events(id INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT NOT NULL, body TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS memories(id TEXT PRIMARY KEY, project_id TEXT NOT NULL, body TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS offices(project_id TEXT PRIMARY KEY, body TEXT NOT NULL);
       CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(id UNINDEXED, title, content, tokenize="unicode61 remove_diacritics 2");
       CREATE VIRTUAL TABLE IF NOT EXISTS chat_fts USING fts5(seq UNINDEXED, task_id UNINDEXED, project_id UNINDEXED, who UNINDEXED, text, tokenize="unicode61 remove_diacritics 2");`);
     // Conversas gravadas antes do índice existir: entram uma vez, na primeira abertura.
@@ -87,7 +88,23 @@ export class Store {
   }
   // Só remove o registro do Golfinho. A pasta e o repositório Git não são tocados.
   removeProject(id: string) {
+    this.db.prepare("DELETE FROM offices WHERE project_id = ?").run(id);
     this.db.prepare("DELETE FROM projects WHERE id = ?").run(id);
+  }
+  // Escritório do projeto: a sala, a equipe e o histórico de conversas e entregas, num JSON só.
+  office(projectId: string): unknown {
+    const row = this.db.prepare("SELECT body FROM offices WHERE project_id = ?").get(projectId);
+    if (!row) return null;
+    try {
+      return JSON.parse(String(row.body));
+    } catch {
+      return null;
+    }
+  }
+  saveOffice(projectId: string, body: unknown) {
+    this.db
+      .prepare("INSERT INTO offices(project_id, body) VALUES(?, ?) ON CONFLICT(project_id) DO UPDATE SET body = excluded.body")
+      .run(projectId, JSON.stringify(body));
   }
   project(id: string): Project {
     const p = this.projects().find((p) => p.id === id);

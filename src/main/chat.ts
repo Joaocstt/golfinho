@@ -24,6 +24,20 @@ export function summarize(toolName: string, input: Record<string, unknown>): str
   const text = JSON.stringify(input) ?? "";
   return text.length > 300 ? `${text.slice(0, 300)}…` : text;
 }
+// Projeto no WSL: o SDK fala com o `claude` instalado na distro, rodando lá dentro.
+// Só atravessam as variáveis que o SDK definiu ou mudou para a CLI.
+export function wslSpawn(cwd: string, executable?: string) {
+  const where = wslTarget(cwd);
+  if (!where) return {};
+  const command = executable || "claude";
+  return {
+    spawnClaudeCodeProcess: (o: { args: string[]; env: NodeJS.ProcessEnv; signal?: AbortSignal }) => {
+      const keys = Object.keys(o.env).filter((k) => o.env[k] !== undefined && o.env[k] !== process.env[k]);
+      const child = wslChild(where, command, o.args, o.env, keys);
+      return spawn(child.file, child.args, { ...child.options, stdio: ["pipe", "pipe", "pipe"], signal: o.signal });
+    },
+  };
+}
 function toolResultText(content: unknown): string {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
@@ -149,24 +163,10 @@ export class ChatSession {
           : {}),
         permissionMode: "default",
         canUseTool: (toolName, input, options) => this.approve(toolName, input, options),
-        ...this.wslSpawn(),
+        ...wslSpawn(this.cwd, this.options.executable),
       },
     });
     void this.consume(this.running);
-  }
-  // Projeto no WSL: o SDK fala com o `claude` instalado na distro, rodando lá dentro.
-  // Só atravessam as variáveis que o SDK definiu ou mudou para a CLI.
-  private wslSpawn() {
-    const where = wslTarget(this.cwd);
-    if (!where) return {};
-    const command = this.options.executable || "claude";
-    return {
-      spawnClaudeCodeProcess: (o: { args: string[]; env: NodeJS.ProcessEnv; signal?: AbortSignal }) => {
-        const keys = Object.keys(o.env).filter((k) => o.env[k] !== undefined && o.env[k] !== process.env[k]);
-        const child = wslChild(where, command, o.args, o.env, keys);
-        return spawn(child.file, child.args, { ...child.options, stdio: ["pipe", "pipe", "pipe"], signal: o.signal });
-      },
-    };
   }
   private async consume(stream: Query) {
     try {

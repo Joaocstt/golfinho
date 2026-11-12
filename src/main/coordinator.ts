@@ -103,6 +103,52 @@ export class Coordinator {
     this.changed();
     this.pump();
   }
+  // Trabalho feito pelo chat (o Escritório): prepara a branch na pasta da tarefa, reserva essa
+  // pasta como uma execução normal e deixa a tarefa "rodando". Quem chama manda as instruções
+  // pelo chat e depois chama endChatRun. Devolve a pasta onde o agente vai trabalhar.
+  async startChatRun(id: string): Promise<string> {
+    const t = this.store.task(id);
+    if (["running", "waiting", "queued"].includes(t.status)) throw new Error("Esta tarefa já está rodando.");
+    const project = this.store.project(t.projectId);
+    const folder = isFolderTask(t);
+    const dir = t.worktreePath ?? project.path;
+    const owner = this.owners.get(dir);
+    if (owner && owner !== id)
+      throw new Error("A pasta do projeto está em uso por outra tarefa rodando. Espere ela terminar e peça de novo.");
+    this.owners.set(dir, id);
+    try {
+      if (folder) {
+        if (!t.branchCreated)
+          this.store.update(id, { folderBases: await subrepoHeads(this.git, project.path), branchCreated: true }, "Tarefa iniciada direto na pasta, sem branch.");
+      } else if (t.worktreePath) {
+        await this.git.prepareWorktree(project.path, t.worktreePath, t.branch, t.baseCommit ?? t.base, true);
+      } else {
+        const base = await this.git.prepare(project.path, t.branch, t.baseCommit ?? t.base, t.branchCreated || Boolean(t.adoptedBranch));
+        if (!t.branchCreated)
+          this.store.update(
+            id,
+            { branchCreated: true, baseCommit: base || null },
+            `Branch local criada: ${t.branch}. O Escritório trabalha nela pelo chat. Publicação é uma ação separada.`,
+          );
+      }
+      // Sem passar pela fila: a tarefa não pode ser pega pela CLI do terminal ao mesmo tempo.
+      this.store.transition(id, "queued", "Escritório: preparando o trabalho pelo chat.");
+      this.store.transition(id, "running", "Escritório: agente trabalhando pelo chat.");
+      this.changed();
+      return dir;
+    } catch (error) {
+      if (this.owners.get(dir) === id) this.owners.delete(dir);
+      throw error;
+    }
+  }
+  endChatRun(id: string, ok: boolean, message: string) {
+    const t = this.store.task(id);
+    const dir = t.worktreePath ?? this.store.project(t.projectId).path;
+    if (this.owners.get(dir) === id) this.owners.delete(dir);
+    if (t.status === "running" || t.status === "waiting") this.store.transition(id, ok ? "review" : "failed", message);
+    this.changed();
+    this.pump();
+  }
   private slots() {
     return this.active.size + this.checks.size + this.starting;
   }

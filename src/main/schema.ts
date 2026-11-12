@@ -34,6 +34,52 @@ const settings = z
     memory: z.object({ enabled: z.boolean() }).strict().optional(),
   })
   .strict();
+// Sala do Escritório: o formato aqui, as regras (sobreposição, caminhos) em layoutProblems.
+const officeId = z.string().regex(/^[a-z0-9-]{1,40}$/, "Identificador de agente inválido.");
+const cell = z.number().int().min(0).max(63);
+const color = z.string().regex(/^#[0-9a-fA-F]{6}$/, "Cor inválida.");
+const officeLayout = z
+  .object({
+    cols: z.number().int().min(10).max(40),
+    rows: z.number().int().min(8).max(30),
+    tiles: z.string().max(1200).regex(/^[fctwj]*$/),
+    furniture: z
+      .array(
+        z
+          .object({
+            id: z.string().regex(/^[a-z0-9-]{1,40}$/),
+            kind: z.enum(["planta", "quadro", "chefe", "sofa", "estante", "bebedouro", "telao"]),
+            col: cell,
+            row: cell,
+          })
+          .strict(),
+      )
+      .max(80),
+    agents: z
+      .array(
+        z
+          .object({
+            id: officeId,
+            name: z.string().trim().min(1, "Todo agente precisa de um nome.").max(30),
+            article: z.enum(["a", "o"]),
+            role: z.string().trim().min(1, "Dê um cargo ao agente.").max(40),
+            area: z.string().trim().min(1, "Diga a área do agente.").max(60),
+            scope: z.string().trim().min(1, "Diga do que o agente cuida.").max(400),
+            personality: z.string().trim().max(200),
+            mode: z.enum(["deliver", "task"]),
+            web: z.boolean(),
+            model: z.enum(["padrao", "haiku", "sonnet", "opus"]),
+            color,
+            hair: color,
+            desk: z.object({ col: cell, row: cell }).strict(),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(8),
+    reviewer: officeId.nullable(),
+  })
+  .strict();
 const memoryKind = z.enum(["decisao", "convencao", "armadilha", "contexto", "tarefa"]);
 export const requestSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("readClipboard") }).strict(),
@@ -41,6 +87,27 @@ export const requestSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("chatImportImages"), paths: z.array(z.string().min(1).max(4096)).min(1).max(8) }).strict(),
   z.object({ action: z.literal("writeClipboard"), text: z.string().max(2*1024*1024).refine(text => Buffer.byteLength(text,"utf8") <= 2*1024*1024, "Seleção excede 2 MiB.") }).strict(),
   z.object({ action: z.literal("snapshot") }).strict(),
+  z.object({ action: z.literal("officeState"), projectId: id }).strict(),
+  z.object({ action: z.literal("officeRead"), projectId: id }).strict(),
+  z
+    .object({
+      action: z.literal("officeDecide"),
+      projectId: id,
+      jobId: id,
+      behavior: z.enum(["allow", "deny"]),
+      always: z.boolean().optional(),
+    })
+    .strict(),
+  z.object({ action: z.literal("officeCommit"), projectId: id, jobId: id }).strict(),
+  z.object({ action: z.literal("officeSaveLayout"), projectId: id, layout: officeLayout }).strict(),
+  z
+    .object({
+      action: z.literal("officeAsk"),
+      projectId: id,
+      agentId: officeId,
+      text: z.string().trim().min(1, "Escreva o pedido.").max(4000),
+    })
+    .strict(),
   z
     .object({ action: z.literal("addProject"), path: z.string().min(1).max(4096).optional() })
     .strict(),

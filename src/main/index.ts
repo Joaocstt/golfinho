@@ -12,7 +12,7 @@ import { TerminalLogs } from "./logs";
 import { ptyDriver } from "./pty";
 import { Service } from "./service";
 import { requestSchema } from "./schema";
-import type { Signal } from "../shared/contracts";
+import type { Signal, Task } from "../shared/contracts";
 import { Shells } from "./shells";
 import { ChatManager } from "./chat";
 import { MemoryMcp } from "./memoryMcp";
@@ -25,6 +25,9 @@ import { exercise } from "./smoke";
 import { writeFile } from "node:fs/promises";
 import { startUpdater, type Updater } from "./updater";
 import { YouTube } from "./youtube";
+import { Office } from "./office";
+import { prepareMemory } from "./memory";
+import { isFolderProject } from "./workspace";
 const here = dirname(fileURLToPath(import.meta.url));
 let window: BrowserWindow | null = null;
 let updater: Updater | undefined;
@@ -34,6 +37,7 @@ let store: Store | undefined;
 let logs: TerminalLogs | undefined;
 let shells: Shells | undefined;
 let chat: ChatManager | undefined;
+let office: Office | undefined;
 let memoryMcp: MemoryMcp | null = null;
 let closing = false;
 let shutdownDone = false;
@@ -74,6 +78,8 @@ else {
         signal({ kind: "chat", taskId, seq, event });
         // Fim de cada resposta do agente: o registro da tarefa na memória é atualizado.
         if (event.type === "status" && event.state === "idle") service.remember(taskId);
+        // Tarefa executada pelo Escritório: o andamento vira falas e ações na sala.
+        office?.onChat(taskId, event);
       }, {
         append: (taskId, event) => store!.chatAppend(taskId, event),
         list: (taskId) => store!.chatEvents(taskId),
@@ -143,6 +149,56 @@ else {
         },
       }, shells, vaultFrom(safeStorage), chat, chatImages);
       service.useMemory(memoryMcp);
+      // Escritório: a equipe de agentes trabalha no projeto escolhido. Quem pesquisa, escreve e
+      // revisa só lê os arquivos; o agente de código executa o pedido numa tarefa do Golfinho, pelo
+      // chat, numa branch própria, com o chefe aprovando as alterações pelo Escritório.
+      office = new Office({
+        project: (id) => store!.project(id),
+        memory: (projectId, text) =>
+          store!.settings().memory?.enabled === false ? null : prepareMemory(store!, projectId, text, false).text,
+        createTask: async (p, title, prompt, hint) => {
+          const folder = isFolderProject(p);
+          const slug =
+            hint.toLowerCase().normalize("NFD").replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) ||
+            "pedido";
+          const remotes = folder ? [] : (await git.inspect(p.path)).remotes;
+          return (await service.request({
+            action: "createTask",
+            input: {
+              projectId: p.id,
+              title,
+              prompt: prompt.slice(0, 16000),
+              provider: "claude",
+              branch: folder ? "" : `golfinho/escritorio-${slug}-${randomUUID().slice(0, 4)}`,
+              base: folder ? "" : await git.current(p.path),
+              remote: remotes[0] ?? "",
+              timeoutMinutes: 60,
+            },
+          })) as Task;
+        },
+        emit: (state) => signal({ kind: "office", state }),
+        executable: () => store!.settings().executables.claude,
+        load: (projectId) => store!.office(projectId),
+        save: (projectId, state) => store!.saveOffice(projectId, state),
+        runTask: async (taskId, text) => {
+          await coordinator!.startChatRun(taskId);
+          try {
+            await service.request({ action: "chatSend", taskId, text });
+          } catch (error) {
+            coordinator!.endChatRun(taskId, false, `Escritório: não consegui começar (${(error as Error).message}).`);
+            throw error;
+          }
+        },
+        endRun: (taskId, ok, message) => coordinator!.endChatRun(taskId, ok, message),
+        changes: async (taskId) => (await service.request({ action: "changes", taskId })) as Record<string, string>,
+        decide: async (taskId, id, behavior, always) => {
+          await service.request({ action: "chatDecide", taskId, id, behavior, always });
+        },
+        commit: async (taskId, paths, message) => {
+          await service.request({ action: "commitFiles", taskId, paths, message, push: false });
+        },
+      });
+      service.useOffice(office);
       coordinator.afterRun((taskId) => service.remember(taskId));
       window = new BrowserWindow({
         // Limitada à área útil do monitor: com escala do Windows acima de 100%, 950 px lógicos
@@ -281,6 +337,7 @@ else {
     void (async () => {
       shells?.closeAll();
       chat?.stopAll();
+      office?.stop();
       await coordinator?.shutdown();
       await memoryMcp?.stop();
       await Promise.allSettled([...requests]);

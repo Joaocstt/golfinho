@@ -22,6 +22,7 @@ import {
   CircleHelp,
   Download,
   Brain,
+  Briefcase,
   Columns2,
   Maximize2,
   ShieldQuestion,
@@ -47,6 +48,7 @@ import { YouTubeMini, YouTubePane, type YouTubeLayout } from "./YouTubePane";
 import { SshPanel } from "./SshPanel";
 import { HelpPane } from "./HelpPane";
 import { MemoryPane } from "./MemoryPane";
+import { OfficePane } from "./OfficePane";
 import { SettingsPanel } from "./SettingsPanel";
 import { TaskForm } from "./TaskForm";
 import { ConfirmProvider, useConfirm } from "./ui";
@@ -147,6 +149,7 @@ function Workspace() {
   const [updateRequest, setUpdateRequest] = useState(0);
   const [memoryView, setMemoryView] = useState(false);
   const [youtubeView, setYoutubeView] = useState(false);
+  const [officeView, setOfficeView] = useState(false);
   // Onde o YouTube aparece: na própria aba, ao lado da visão atual ou num mini player.
   const [youtubeLayout, setYoutubeLayout] = useState<YouTubeLayout>("tab");
   const [youtubeRatio, setYoutubeRatio] = useState(() => {
@@ -232,6 +235,10 @@ function Workspace() {
   useEffect(() => {
     if (dashboard || activeGeneral || selected || sshView || helpView || memoryView) setYoutubeView(false);
   }, [dashboard, activeGeneral, selected, sshView, helpView, memoryView]);
+  // E o Escritório.
+  useEffect(() => {
+    if (dashboard || activeGeneral || selected || sshView || helpView || memoryView || youtubeView) setOfficeView(false);
+  }, [dashboard, activeGeneral, selected, sshView, helpView, memoryView, youtubeView]);
   const resizeCleanup = useRef<() => void>(() => {});
   useEffect(() => () => resizeCleanup.current(), []);
   const snapshotEpoch = useRef(0);
@@ -746,9 +753,9 @@ function Workspace() {
               role="tab"
               aria-label="Visão geral das tarefas"
               title="Tarefas"
-              aria-selected={!selected && !dashboard && !sshView && !helpView && !memoryView && !youtubeView && !activeGeneral}
-              className={!selected && !dashboard && !sshView && !helpView && !memoryView && !youtubeView && !activeGeneral ? "active" : ""}
-              onClick={() => navigate(() => (setDashboard(false), setSshView(false), setHelpView(false), setMemoryView(false), setYoutubeView(false), setActiveGeneral(""), setSelected("")))}
+              aria-selected={!selected && !dashboard && !sshView && !helpView && !memoryView && !youtubeView && !officeView && !activeGeneral}
+              className={!selected && !dashboard && !sshView && !helpView && !memoryView && !youtubeView && !officeView && !activeGeneral ? "active" : ""}
+              onClick={() => navigate(() => (setDashboard(false), setSshView(false), setHelpView(false), setMemoryView(false), setYoutubeView(false), setOfficeView(false), setActiveGeneral(""), setSelected("")))}
             >
               <List size={12} />
               <span className="nav-label">Tarefas</span>
@@ -787,6 +794,19 @@ function Workspace() {
             >
               <Brain size={12} />
               <span className="nav-label">Memória</span>
+            </button>
+            <button
+              role="tab"
+              aria-label="Escritório de agentes"
+              title="Escritório"
+              aria-selected={officeView}
+              className={officeView ? "active" : ""}
+              onClick={() =>
+                navigate(() => (setDashboard(false), setSshView(false), setHelpView(false), setMemoryView(false), setYoutubeView(false), setActiveGeneral(""), setSelected(""), setOfficeView(true)))
+              }
+            >
+              <Briefcase size={12} />
+              <span className="nav-label">Escritório</span>
             </button>
             <button
               role="tab"
@@ -965,6 +985,9 @@ function Workspace() {
               onOpenTask={openTask}
             />
           )}
+          {officeView && snapshot && (
+            <OfficePane projects={snapshot.projects} tasks={snapshot.tasks} initialProject={project} onOpenTask={openTask} />
+          )}
           {sshView && snapshot && (
             <SshPanel
               connections={snapshot.settings.ssh}
@@ -1003,7 +1026,7 @@ function Workspace() {
               />
             </section>
           ))}
-          {!task && !dashboard && !sshView && !helpView && !memoryView && !youtubeView && !activeGeneral && (
+          {!task && !dashboard && !sshView && !helpView && !memoryView && !youtubeView && !officeView && !activeGeneral && (
             <section className="overview">
               <div className="overview-head">
                 <h1>{snapshot?.projects.find((p) => p.id === project)?.name ?? "Tarefas"}</h1>
@@ -1062,7 +1085,7 @@ function Workspace() {
           )}
           {snapshot && open.length > 0 && (
             <div className={"task-workspaces" + (splitTasks.length === 2 ? " divided" : "")}
-              hidden={!task || dashboard || Boolean(activeGeneral) || sshView || helpView || memoryView || youtubeView}
+              hidden={!task || dashboard || Boolean(activeGeneral) || sshView || helpView || memoryView || youtubeView || officeView}
               style={splitTasks.length === 2 ? { gridTemplateColumns: `minmax(0, ${taskRatio}fr) 6px minmax(0, ${1 - taskRatio}fr)` } : undefined}
               ref={taskArea}>
               {open.map((id) => {
@@ -1191,7 +1214,7 @@ function Workspace() {
               </div>
             ))}
           </div>
-          {youtubeView ? null : !activeGeneral && !sshView && task ? (
+          {youtubeView || officeView ? null : !activeGeneral && !sshView && task ? (
             <div ref={setInspectorHost} className="task-inspector-host" />
           ) : !sshView && !activeGeneral ? (
             <div className="empty inspector-empty">

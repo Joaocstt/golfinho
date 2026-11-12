@@ -19,6 +19,7 @@ import type { Vault } from "./vault";
 import { readQuota } from "./quota";
 import { buildHandoff, clip, withHandoff } from "./handoff";
 import { prepareMemory, taskDigest, titleFrom, type MemoryLink } from "./memory";
+import type { Office } from "./office";
 import type {
   Request,
   Response,
@@ -70,6 +71,15 @@ export class Service {
       dataUrl(path: string): Promise<string>;
     },
   ) {}
+  private office: Office | null = null;
+  // Equipe do Escritório; sem ela, as ações do Escritório respondem que ele não está disponível.
+  useOffice(office: Office | null) {
+    this.office = office;
+  }
+  private officeOrThrow() {
+    if (!this.office) throw new Error("O Escritório não está disponível.");
+    return this.office;
+  }
   private memoryLink: MemoryLink | null = null;
   // Servidor MCP da memória (o mesmo que o coordenador usa para o terminal).
   useMemory(link: MemoryLink | null) {
@@ -278,6 +288,18 @@ export class Service {
         if (!this.clipboard) throw new Error("Clipboard indisponível neste ambiente.");
         if (Buffer.byteLength(r.text,"utf8") > 2*1024*1024) throw new Error("Seleção excede 2 MiB."); await this.clipboard.write(r.text); return null;
       }
+      case "officeState":
+        return this.officeOrThrow().state(r.projectId);
+      case "officeRead":
+        return this.officeOrThrow().markRead(r.projectId);
+      case "officeDecide":
+        return this.officeOrThrow().decidePermission(r.projectId, r.jobId, r.behavior, r.always ?? false);
+      case "officeCommit":
+        return this.officeOrThrow().commitJob(r.projectId, r.jobId);
+      case "officeSaveLayout":
+        return this.officeOrThrow().saveLayout(r.projectId, r.layout);
+      case "officeAsk":
+        return this.officeOrThrow().ask(r.projectId, r.agentId, r.text);
       case "snapshot": {
         const projects = this.store.projects();
         // Branch atual da pasta de cada projeto, para a lateral mostrar qual tarefa está ativa.

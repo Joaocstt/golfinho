@@ -1,3 +1,4 @@
+import type { OfficeAgentId, OfficeDecision, OfficeLayout, OfficeState } from "./office";
 export type Provider = "codex" | "claude" | "antigravity";
 export type Status =
   | "draft"
@@ -291,7 +292,13 @@ export type Request =
   | { action: "memoryFromChat"; taskId: string; text: string }
   | { action: "readClipboard" }
   | { action: "pasteImage" }
-  | { action: "writeClipboard"; text: string };
+  | { action: "writeClipboard"; text: string }
+  | { action: "officeState"; projectId: string }
+  | { action: "officeAsk"; projectId: string; agentId: OfficeAgentId; text: string }
+  | { action: "officeRead"; projectId: string }
+  | { action: "officeSaveLayout"; projectId: string; layout: OfficeLayout }
+  | { action: "officeDecide"; projectId: string; jobId: string; behavior: "allow" | "deny"; always?: boolean }
+  | { action: "officeCommit"; projectId: string; jobId: string };
 export interface TerminalReplay {
   data: string;
   nextOffset: number;
@@ -317,6 +324,8 @@ export interface WslAgents {
   available: Partial<Record<Provider, boolean>>;
 }
 export type Response =
+  | OfficeState
+  | OfficeDecision
   | WslAgents
   | Snapshot
   | TreeListing
@@ -365,7 +374,8 @@ export type Signal =
   | { kind: "chat"; taskId: string; seq: number; event: ChatEvent }
   | { kind: "terminal"; taskId: string; data: string; offset: number }
   | { kind: "shell"; id: string; data: string }
-  | { kind: "shellEnded"; id: string; code: number };
+  | { kind: "shellEnded"; id: string; code: number }
+  | { kind: "office"; state: OfficeState };
 // Atualização do próprio app. "unsupported" vale para execuções de desenvolvimento e para o
 // pacote .deb, que o electron-updater não atualiza sozinho.
 export type UpdateStatus =
