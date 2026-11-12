@@ -20,6 +20,7 @@ import { readQuota } from "./quota";
 import { buildHandoff, clip, withHandoff } from "./handoff";
 import { prepareMemory, taskDigest, titleFrom, type MemoryLink } from "./memory";
 import type { Office } from "./office";
+import type { ChatEvent } from "../shared/contracts";
 import type {
   Request,
   Response,
@@ -72,6 +73,19 @@ export class Service {
     },
   ) {}
   private office: Office | null = null;
+  // Tarefas começadas pela conversa (tela inicial): quando o agente termina o turno, a tarefa
+  // vai para revisão e a pasta fica livre, como numa execução pela fila.
+  private chatRuns = new Set<string>();
+  onChatEvent(taskId: string, event: ChatEvent) {
+    if (!this.chatRuns.has(taskId) || event.type !== "status" || event.state === "running") return;
+    this.chatRuns.delete(taskId);
+    const ok = event.state === "idle" && event.message !== "Interrompido.";
+    this.coordinator.endChatRun(
+      taskId,
+      ok,
+      ok ? "Conversa terminada, pronta para revisar." : `A conversa parou: ${event.message ?? "erro"}.`,
+    );
+  }
   // Equipe do Escritório; sem ela, as ações do Escritório respondem que ele não está disponível.
   useOffice(office: Office | null) {
     this.office = office;
@@ -758,6 +772,18 @@ export class Service {
         if (memory.ids.length) {
           this.store.touchMemories(memory.ids);
           this.store.note(r.taskId, `${memory.ids.length} nota(s) da memória do projeto enviada(s) ao chat.`);
+        }
+        return null;
+      }
+      case "chatStart": {
+        await this.coordinator.startChatRun(r.taskId);
+        this.chatRuns.add(r.taskId);
+        try {
+          await this.request({ action: "chatSend", taskId: r.taskId, text: r.text });
+        } catch (error) {
+          this.chatRuns.delete(r.taskId);
+          this.coordinator.endChatRun(r.taskId, false, `Não consegui começar a conversa: ${(error as Error).message}`);
+          throw error;
         }
         return null;
       }

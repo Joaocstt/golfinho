@@ -90,6 +90,9 @@ export const requestSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("officeState"), projectId: id }).strict(),
   z.object({ action: z.literal("officeRead"), projectId: id }).strict(),
   z
+    .object({ action: z.literal("chatStart"), taskId: id, text: z.string().trim().min(1, "Escreva o pedido.").max(16000) })
+    .strict(),
+  z
     .object({
       action: z.literal("officeDecide"),
       projectId: id,

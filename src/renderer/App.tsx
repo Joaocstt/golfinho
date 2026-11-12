@@ -43,6 +43,7 @@ import { usePermissionRequests } from "./usePermissionRequests";
 import type { PermissionRequest } from "./permissionRequests";
 import { ShellPane } from "./ShellPane";
 import { AgentIcon } from "./agentIcons";
+import { HomeComposer } from "./HomeComposer";
 import { AgentQuotaTip, QuotaPanel } from "./AgentQuota";
 import { YouTubeMini, YouTubePane, type YouTubeLayout } from "./YouTubePane";
 import { SshPanel } from "./SshPanel";
@@ -416,6 +417,39 @@ function Workspace() {
     setActiveGeneral(key);
     setDashboard(false);
     setSelected("");
+  }
+  // Tela inicial: o pedido vira uma tarefa com branch nova e a conversa começa na hora.
+  async function startConversation(projectId: string, provider: Provider, text: string) {
+    const p = snapshot?.projects.find((x) => x.id === projectId);
+    if (!p) throw new Error("Escolha um projeto.");
+    const folder = p.kind === "folder";
+    const firstLine = text.split("\n")[0].trim();
+    const title = firstLine.length > 80 ? `${firstLine.slice(0, 79)}…` : firstLine;
+    const slug =
+      firstLine
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "")
+        .slice(0, 36)
+        .replace(/-+$/, "") || "tarefa";
+    const base = folder ? "" : (await request<{ current: string; branches: string[] }>({ action: "branches", projectId })).current;
+    const task = await request<Task>({
+      action: "createTask",
+      input: {
+        projectId,
+        title,
+        prompt: text,
+        provider,
+        branch: folder ? "" : `golfinho/${slug}-${Math.random().toString(36).slice(2, 6)}`,
+        base: base ?? "",
+        remote: folder ? "" : (p.remotes[0] ?? ""),
+        timeoutMinutes: 60,
+      },
+    });
+    await refresh();
+    openTask(task.id);
+    await request({ action: "chatStart", taskId: task.id, text });
   }
   function openTask(id: string) {
     if (splitTasks.includes(id)) {
@@ -1020,6 +1054,14 @@ function Workspace() {
           ))}
           {!task && !dashboard && !sshView && !helpView && !memoryView && !youtubeView && !officeView && !activeGeneral && (
             <section className="overview">
+              {snapshot && (
+                <HomeComposer
+                  projects={snapshot.projects}
+                  agents={snapshot.agents}
+                  defaultProject={project}
+                  onStart={startConversation}
+                />
+              )}
               <div className="overview-head">
                 <h1>{snapshot?.projects.find((p) => p.id === project)?.name ?? "Tarefas"}</h1>
                 <span>{tasks.length} tarefas</span>
