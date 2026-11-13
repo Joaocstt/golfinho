@@ -43,6 +43,7 @@ import { usePermissionRequests } from "./usePermissionRequests";
 import type { PermissionRequest } from "./permissionRequests";
 import { ShellPane } from "./ShellPane";
 import { AgentIcon } from "./agentIcons";
+import { WelcomeIntro } from "./WelcomeIntro";
 import { AgentQuotaTip, QuotaPanel } from "./AgentQuota";
 import { YouTubeMini, YouTubePane, type YouTubeLayout } from "./YouTubePane";
 import { SshPanel } from "./SshPanel";
@@ -91,6 +92,8 @@ export default function App() {
 }
 function Workspace() {
   const confirm = useConfirm();
+  // Boas-vindas ao abrir o app (fora dos testes): 15 s, fecha sozinha.
+  const [intro, setIntro] = useState(() => import.meta.env.MODE !== "test");
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null),
     [project, setProject] = useState(""),
     [selected, setSelected] = useState(""),
@@ -479,6 +482,7 @@ function Workspace() {
       style={{ "--sidebar-width": `${sidebarWidth}px` } as React.CSSProperties}
     >
       <UpdateBanner requested={updateRequest} />
+      {intro && <WelcomeIntro agents={snapshot?.agents ?? null} onDone={() => setIntro(false)} />}
       <aside className="sidebar" aria-label="Projetos e tarefas">
         <div className="brand">
           <span className="brand-mark">

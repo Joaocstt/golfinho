@@ -145,6 +145,8 @@ export interface AgentInfo {
   label: string;
   executable: string;
   available: boolean;
+  /** Onde a CLI foi encontrada no computador, quando foi. */
+  path?: string | null;
 }
 export interface Snapshot {
   /** Perfis que têm senha guardada no cofre. Os valores nunca saem do processo principal. */

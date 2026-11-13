@@ -94,10 +94,14 @@ export function executablePath(command: string): string | null {
   return null;
 }
 export function agentInfo(s: Settings): AgentInfo[] {
-  return (["codex", "claude", "antigravity"] as Provider[]).map((provider) => ({
-    provider,
-    label: { codex: "Codex", claude: "Claude Code", antigravity: "Antigravity" }[provider],
-    executable: s.executables[provider],
-    available: executablePath(s.executables[provider]) !== null,
-  }));
+  return (["codex", "claude", "antigravity"] as Provider[]).map((provider) => {
+    const path = executablePath(s.executables[provider]);
+    return {
+      provider,
+      label: { codex: "Codex", claude: "Claude Code", antigravity: "Antigravity" }[provider],
+      executable: s.executables[provider],
+      available: path !== null,
+      path,
+    };
+  });
 }
