@@ -14,6 +14,7 @@ import {
 } from "../shared/office";
 import { defaultLayout, layoutProblems } from "../shared/officeLayout";
 import { summarize, wslSpawn } from "./chat";
+import { sdkExecutableOption } from "./sdkBinary";
 import { chatToolInput, describeTool, speechFrom } from "../shared/officeSpeech";
 import type { ChatEvent } from "../shared/contracts";
 
@@ -745,6 +746,7 @@ Ao terminar, escreva um resumo curto do que mudou e do que ficou faltando.`;
           permissionMode: "default",
           canUseTool: deny,
           abortController: controller,
+          ...sdkExecutableOption(),
           ...wslSpawn(o.cwd, this.deps.executable()),
         },
       });

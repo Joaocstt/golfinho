@@ -15,6 +15,7 @@ import { withHandoff } from "./handoff";
 import { MEMORY_SERVER, type McpEndpoint } from "./memory";
 import { spawn } from "node:child_process";
 import { wslChild, wslTarget } from "./wsl";
+import { sdkExecutableOption } from "./sdkBinary";
 // Resumo curto da ferramenta para o cartão de aprovação. Comando e caminho são o que a pessoa
 // precisa ver para decidir; o resto do input fica de fora.
 export function summarize(toolName: string, input: Record<string, unknown>): string {
@@ -163,6 +164,7 @@ export class ChatSession {
           : {}),
         permissionMode: "default",
         canUseTool: (toolName, input, options) => this.approve(toolName, input, options),
+        ...sdkExecutableOption(),
         ...wslSpawn(this.cwd, this.options.executable),
       },
     });
