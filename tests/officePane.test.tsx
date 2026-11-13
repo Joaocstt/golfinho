@@ -66,7 +66,7 @@ it("mostra o andamento ao vivo e a entrega com o link da tarefa", async () => {
     },
   });
   expect(await screen.findByText("Corrigir login")).toBeTruthy();
-  expect(screen.getByText(/tarefa criada/)).toBeTruthy();
+  expect(screen.getByText(/implementado, falta o commit/)).toBeTruthy();
 });
 
 it("o modo de edição mostra as ferramentas e salva a sala", async () => {
@@ -136,7 +136,30 @@ it("entrega de código mostra o que mudou e faz o commit pelo Escritório", asyn
   await new Promise((r) => setTimeout(r, 60));
   fireEvent.keyDown(room, { key: "e" });
   const dialog = await screen.findByRole("dialog", { name: "Entregas" });
-  expect(within(dialog).getByText("Arquivos alterados (1)")).toBeTruthy();
+  // A entrega de código diz onde está e o que falta: o commit.
+  expect(within(dialog).getByText(/ainda sem commit/)).toBeTruthy();
+  expect(within(dialog).getByText("src/auth.ts")).toBeTruthy();
   fireEvent.click(within(dialog).getByRole("button", { name: /Commitar alterações/ }));
   await waitFor(() => expect(request).toHaveBeenCalledWith({ action: "officeCommit", projectId: project.id, jobId: "j1" }));
+});
+
+it("na mesa, plano espera a decisão do chefe e o botão Implementar manda fazer", async () => {
+  const { request } = setup({
+    jobs: [
+      {
+        id: "j1", agentId: "bruno", agentName: "Bruno", title: "Corrigir login", request: "corrige", status: "entregue",
+        activity: "", stage: "plano", result: "O plano é ajustar o auth.", notes: ["Plano ok"], reviewedBy: "Eva",
+        read: false, createdAt: new Date().toISOString(),
+      },
+    ],
+  });
+  await screen.findByText("Corrigir login");
+  const room = screen.getByLabelText(/Escritório: ande/);
+  await new Promise((r) => setTimeout(r, 60));
+  fireEvent.keyDown(room, { key: "e" });
+  const dialog = await screen.findByRole("dialog", { name: "Entregas" });
+  expect(within(dialog).getByText(/nada foi alterado ainda/)).toBeTruthy();
+  expect(within(dialog).getAllByText(/esperando sua decisão/).length).toBeGreaterThan(0);
+  fireEvent.click(within(dialog).getByRole("button", { name: /Implementar/ }));
+  await waitFor(() => expect(request).toHaveBeenCalledWith({ action: "officeImplement", projectId: project.id, jobId: "j1" }));
 });

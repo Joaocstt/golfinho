@@ -83,6 +83,14 @@ export interface OfficeJob {
   approval?: { id: string; tool: string; text: string; canAlways: boolean };
   /** Commit feito pelo Escritório depois da entrega. */
   committed?: string;
+  /** "plano": o agente de código planejou e espera o chefe decidir; "codigo": já implementou. */
+  stage?: "plano" | "codigo";
+  /** O chefe mandou implementar (na mesa dele). Sem isso, nada de código é feito. */
+  approved?: boolean;
+  /** Relatório que originou este trabalho de código. */
+  basedOn?: string;
+  /** Trabalho de código pedido a partir deste relatório. */
+  followUp?: string;
   error?: string;
   read: boolean;
   createdAt: string;

@@ -99,6 +99,7 @@ export const requestSchema = z.discriminatedUnion("action", [
     })
     .strict(),
   z.object({ action: z.literal("officeCommit"), projectId: id, jobId: id }).strict(),
+  z.object({ action: z.literal("officeImplement"), projectId: id, jobId: id }).strict(),
   z.object({ action: z.literal("officeSaveLayout"), projectId: id, layout: officeLayout }).strict(),
   z
     .object({

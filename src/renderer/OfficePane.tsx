@@ -52,6 +52,7 @@ import { drawBubble, drawDesk, drawEditorOverlay, drawFurniture, drawLabel, draw
 import { OfficeEditor, type Tool } from "./OfficeEditor";
 import { OfficeScene, type AgentView } from "./office3d";
 import { OfficeMonitor } from "./OfficeMonitor";
+import { OfficeDeliveries, onDesk } from "./OfficeDeliveries";
 import { useConfirm } from "./ui";
 
 const request = <T,>(r: Request) => window.golfinho.request(r) as Promise<T>;
@@ -77,7 +78,8 @@ export function statusLabel(job: OfficeJob): string {
   if (job.status === "fazendo" && job.approval) return `${job.agentName} esperando sua aprovação`;
   if (job.status === "fazendo") return job.taskId ? `${job.agentName} executando a tarefa` : `${job.agentName} trabalhando`;
   if (job.status === "revisao") return job.activity || "em revisão";
-  if (job.status === "entregue") return job.taskId ? "tarefa criada" : "na sua mesa";
+  if (job.status === "entregue" && job.stage === "plano" && !job.approved) return "plano na sua mesa, esperando você";
+  if (job.status === "entregue") return job.taskId ? (job.committed ? "commit feito" : "implementado, falta o commit") : "na sua mesa";
   return "deu erro";
 }
 
@@ -820,7 +822,7 @@ export function OfficePane({
   const agent = modal?.kind === "agent" && layout ? officeAgent(layout, modal.id) : undefined;
   const chat = agent ? office?.chats[agent.id] ?? [] : [];
   const thinking = agent ? office?.thinking.includes(agent.id) ?? false : false;
-  const delivered = office?.jobs.filter((j) => j.status === "entregue" || j.status === "erro") ?? [];
+  const delivered = office ? onDesk(office.jobs) : [];
   const sender = arrival && agent && arrival.to === agent.id && layout ? officeAgent(layout, arrival.from) : undefined;
   const greeting = !agent
     ? ""
@@ -967,7 +969,7 @@ export function OfficePane({
       {modal && !editing && (
         <div className="office-modal" role="presentation" onMouseDown={(e) => e.target === e.currentTarget && setModal(null)}>
           <div
-            className={`office-dialog${modal.kind === "telao" ? " wide" : ""}`}
+            className={`office-dialog${modal.kind === "telao" || modal.kind === "boss" ? " wide" : ""}`}
             role="dialog"
             aria-modal="true"
             aria-label={
@@ -1044,75 +1046,17 @@ export function OfficePane({
               </>
             )}
 
-            {modal.kind === "boss" && (
-              <div className="office-log">
-                {delivered.length === 0 && <p className="office-muted">Nada por aqui ainda.</p>}
-                {delivered.map((j) => (
-                  <article key={j.id} className={`office-delivery${j.read ? "" : " new"}`}>
-                    <h3>{j.title}</h3>
-                    <p className="office-muted">
-                      por {j.agentName}
-                      {j.reviewedBy ? `, revisado por ${j.reviewedBy}` : ""}
-                    </p>
-                    {j.notes.length > 0 && (
-                      <ul className="office-notes">
-                        {j.notes.map((n, i) => (
-                          <li key={i}>{n}</li>
-                        ))}
-                      </ul>
-                    )}
-                    {j.status === "erro" ? (
-                      <p className="office-error">Não deu certo: {j.error}</p>
-                    ) : (
-                      <div className="office-result">
-                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{j.result}</ReactMarkdown>
-                      </div>
-                    )}
-                    {j.changed && j.changed.length > 0 && (
-                      <div className="office-changed">
-                        <b>Arquivos alterados ({j.changed.length})</b>
-                        <ul>
-                          {j.changed.map((c) => (
-                            <li key={c.path}>
-                              <code>{c.path}</code> <span className={`office-change ${c.kind}`}>{CHANGE_LABEL[c.kind] ?? c.kind}</span>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-                    {j.taskId && (
-                      <div className="office-delivery-actions">
-                        {j.status === "entregue" && j.changed && j.changed.length > 0 && !j.committed && (
-                          <button
-                            type="button"
-                            className="primary"
-                            onClick={() =>
-                              void request({ action: "officeCommit", projectId: office!.projectId, jobId: j.id }).catch((e) =>
-                                setError((e as Error).message),
-                              )
-                            }
-                          >
-                            <GitCommitHorizontal size={12} /> Commitar alterações
-                          </button>
-                        )}
-                        {j.committed && <span className="office-muted">✔ Commit feito (não publicado)</span>}
-                        <button
-                          type="button"
-                          className="office-open-task"
-                          onClick={() => {
-                            setModal(null);
-                            if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined);
-                            onOpenTask(j.taskId!);
-                          }}
-                        >
-                          <ExternalLink size={12} /> Ver a tarefa e o diff
-                        </button>
-                      </div>
-                    )}
-                    {error && <p className="office-error">{error}</p>}
-                  </article>
-                ))}
-              </div>
+            {modal.kind === "boss" && office && (
+              <OfficeDeliveries
+                projectId={office.projectId}
+                jobs={office.jobs}
+                tasks={tasks}
+                onOpenTask={(id) => {
+                  setModal(null);
+                  if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined);
+                  onOpenTask(id);
+                }}
+              />
             )}
 
             {modal.kind === "telao" && office && (

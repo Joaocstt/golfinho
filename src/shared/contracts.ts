@@ -298,7 +298,8 @@ export type Request =
   | { action: "officeRead"; projectId: string }
   | { action: "officeSaveLayout"; projectId: string; layout: OfficeLayout }
   | { action: "officeDecide"; projectId: string; jobId: string; behavior: "allow" | "deny"; always?: boolean }
-  | { action: "officeCommit"; projectId: string; jobId: string };
+  | { action: "officeCommit"; projectId: string; jobId: string }
+  | { action: "officeImplement"; projectId: string; jobId: string };
 export interface TerminalReplay {
   data: string;
   nextOffset: number;

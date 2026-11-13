@@ -324,7 +324,22 @@ Responda só com JSON: {"acao":"aceitar|encaminhar|esclarecer","para":"id ou nul
     const project = this.deps.project(projectId);
     job.status = "fazendo";
     job.activity = "Começando";
-    job.startedAt = new Date().toISOString();
+    job.startedAt ??= new Date().toISOString();
+    // Plano já aprovado na mesa do chefe: vai direto para a implementação.
+    const approvedPlan = agent.mode === "task" && job.approved ? this.plans.get(job.id) : undefined;
+    if (approvedPlan) {
+      note(job, agent.name, "inicio", `${agent.name} começou a implementar: ${job.title}`);
+      this.emit(s);
+      try {
+        await this.execute(projectId, job, agent, approvedPlan);
+        job.stage = "codigo";
+        await this.afterWork(projectId, job, agent);
+      } catch (error) {
+        this.fail(job, error);
+      }
+      this.emit(s);
+      return;
+    }
     note(job, agent.name, "inicio", `${agent.name} começou: ${job.title}`);
     this.emit(s);
     const memory = this.deps.memory(projectId, job.request);
@@ -340,7 +355,7 @@ ${this.contexts.get(job.id) ?? job.request}
     const prompt =
       agent.mode === "task"
         ? `${base}
-Primeiro, só investigue (sem alterar nada) e planeje. Depois você mesmo vai executar o plano numa branch própria, com o chefe aprovando cada alteração.
+Investigue o projeto (sem alterar nada) e monte um plano de implementação. O plano vai para a mesa do chefe, que decide se você implementa; se ele aprovar, você mesmo vai executar o plano numa branch própria.
 Responda só com JSON: {"titulo":"até 60 caracteres","branch":"sufixo curto em kebab-case, sem barra","instrucoes":"o plano de execução: objetivo, arquivos envolvidos, passos e critérios de pronto, em Markdown","resumo":"2 a 4 frases para o chefe, em Markdown"}`
         : `${base}
 Faça o trabalho agora. Investigue o projeto no que for útil e escreva a entrega final em Markdown, em português do Brasil, objetiva (até umas 500 palavras, a não ser que o pedido peça mais). Não faça perguntas: assuma o razoável e diga o que assumiu.`;
@@ -373,21 +388,32 @@ Faça o trabalho agora. Investigue o projeto no que for útil e escreva a entreg
         };
         this.plans.set(job.id, plan);
         job.result = planText(plan);
-        await this.execute(projectId, job, agent, plan);
+        // Implementação só com a decisão do chefe. Pedido vindo de um relatório que ele mandou
+        // implementar já está aprovado; um pedido novo para aqui, como plano.
+        if (job.approved) {
+          await this.execute(projectId, job, agent, plan);
+          job.stage = "codigo";
+        } else job.stage = "plano";
       } else job.result = text.trim() || "(entrega vazia)";
-      job.activity = "";
-      job.speech = undefined;
-      const reviewer = this.reviewer(s);
-      if (!reviewer || reviewer.id === agent.id) await this.finish(projectId, job);
-      else {
-        job.status = "revisao";
-        job.activity = `Aguardando ${reviewer.name}`;
-        note(job, agent.name, "revisao", `Entregou para ${reviewer.name} revisar.`);
-      }
+      await this.afterWork(projectId, job, agent);
     } catch (error) {
       this.fail(job, error);
     }
     this.emit(s);
+  }
+
+  // Fim do trabalho do agente: vai para a revisão, ou direto para a mesa do chefe.
+  private async afterWork(projectId: string, job: OfficeJob, agent: OfficeAgent) {
+    const s = this.state(projectId);
+    job.activity = "";
+    job.speech = undefined;
+    const reviewer = this.reviewer(s);
+    if (!reviewer || reviewer.id === agent.id) await this.finish(projectId, job);
+    else {
+      job.status = "revisao";
+      job.activity = `Aguardando ${reviewer.name}`;
+      note(job, agent.name, "revisao", `Entregou para ${reviewer.name} revisar.`);
+    }
   }
 
   private async review(projectId: string, job: OfficeJob, reviewer: OfficeAgent) {
@@ -558,6 +584,60 @@ Ao terminar, escreva um resumo curto do que mudou e do que ficou faltando.`;
     return this.state(projectId);
   }
 
+  // Relatório entregue → trabalho de código: vai direto para quem entrega tarefas de código,
+  // com o relatório inteiro como contexto, sem passar pela decisão de quem faz.
+  implement(projectId: string, jobId: string) {
+    const s = this.state(projectId);
+    const source = s.jobs.find((j) => j.id === jobId);
+    if (!source || source.status !== "entregue") throw new Error("Só dá para implementar uma entrega pronta.");
+    if (source.taskId) throw new Error("Essa entrega já é uma tarefa de código.");
+    // Plano do agente de código: o mesmo trabalho volta para a fila, agora aprovado.
+    if (source.stage === "plano" && this.plans.has(source.id)) {
+      source.approved = true;
+      source.status = "fila";
+      source.read = false;
+      source.finishedAt = undefined;
+      note(source, "Chefe", "pedido", "Aprovou o plano: pode implementar.");
+      this.emit(s);
+      this.pump(projectId);
+      return s;
+    }
+    if (source.followUp && s.jobs.some((j) => j.id === source.followUp))
+      throw new Error("A implementação desse relatório já foi pedida.");
+    const coder = s.layout.agents.find((a) => a.mode === "task");
+    if (!coder) throw new Error("Ninguém na equipe entrega código. Configure um agente para entregar tarefas de código.");
+    const request = `Implemente as recomendações de "${source.title}", de ${source.agentName}.`;
+    const job: OfficeJob = {
+      id: randomUUID(),
+      agentId: coder.id,
+      agentName: coder.name,
+      title: `Implementar: ${source.title}`.slice(0, 120),
+      request,
+      status: "fila",
+      activity: "",
+      result: "",
+      notes: [],
+      read: false,
+      createdAt: new Date().toISOString(),
+      basedOn: source.id,
+      approved: true,
+    };
+    this.contexts.set(
+      job.id,
+      `Chefe: ${request}\n\nRelatório de ${source.agentName}${source.reviewedBy ? ` (revisado por ${source.reviewedBy})` : ""}:\n${source.result.slice(0, 20000)}`,
+    );
+    note(job, "Chefe", "pedido", `${request} (a partir do relatório de ${source.agentName})`);
+    source.followUp = job.id;
+    note(source, "Chefe", "pedido", `Pediu a ${coder.name} para implementar.`);
+    const chat = (s.chats[coder.id] ??= []);
+    chat.push({ who: "sistema", text: `Tarefa criada a partir do relatório de ${source.agentName}: ${source.title}` });
+    s.jobs.unshift(job);
+    this.trim(s);
+    this.emit(s);
+    this.pump(projectId);
+    return s;
+  }
+
   // Commit pelo Escritório: os arquivos que a tarefa mudou, com o título do pedido.
   async commitJob(projectId: string, jobId: string) {
     const s = this.state(projectId);
@@ -574,23 +654,17 @@ Ao terminar, escreva um resumo curto do que mudou e do que ficou faltando.`;
     return s;
   }
 
-  private async finish(projectId: string, job: OfficeJob) {
-    const plan = this.plans.get(job.id);
-    if (plan && !job.taskId) {
-      try {
-        const task = await this.deps.createTask(this.deps.project(projectId), plan.title, plan.instructions, plan.branch);
-        job.taskId = task.id;
-        note(job, job.agentName, "tarefa", `Criou a tarefa "${task.title || plan.title}"${task.branch ? ` na branch ${task.branch}` : ""}.`);
-      } catch (error) {
-        job.notes = [...job.notes, `Não consegui criar a tarefa no Golfinho: ${(error as Error).message}`];
-        note(job, "Golfinho", "erro", `Não criou a tarefa: ${(error as Error).message}`);
-      }
-    }
+  private async finish(_projectId: string, job: OfficeJob) {
     job.status = "entregue";
     job.activity = "";
     job.speech = undefined;
     job.finishedAt = new Date().toISOString();
-    note(job, job.reviewedBy ?? job.agentName, "fim", "Entregue na mesa do chefe.");
+    note(
+      job,
+      job.reviewedBy ?? job.agentName,
+      "fim",
+      job.stage === "plano" ? "Plano na mesa do chefe, esperando a decisão de implementar." : "Entregue na mesa do chefe.",
+    );
   }
 
   private fail(job: OfficeJob, error: unknown) {

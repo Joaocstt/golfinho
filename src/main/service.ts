@@ -294,6 +294,8 @@ export class Service {
         return this.officeOrThrow().markRead(r.projectId);
       case "officeDecide":
         return this.officeOrThrow().decidePermission(r.projectId, r.jobId, r.behavior, r.always ?? false);
+      case "officeImplement":
+        return this.officeOrThrow().implement(r.projectId, r.jobId);
       case "officeCommit":
         return this.officeOrThrow().commitJob(r.projectId, r.jobId);
       case "officeSaveLayout":

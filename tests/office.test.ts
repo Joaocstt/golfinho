@@ -51,6 +51,12 @@ const runDeps = () => ({
   commit: async (...args: unknown[]) => void run.committed.push(args),
 });
 let states: OfficeState[];
+// O chefe aprova, na mesa dele, o plano que acabou de chegar.
+const approve = async () => {
+  const plan = office.state(project.id).jobs[0];
+  office.implement(project.id, plan.id);
+  await settle();
+};
 let created: { title: string; prompt: string; hint: string }[];
 let saved: Map<string, unknown>;
 beforeEach(() => {
@@ -154,7 +160,9 @@ it("pedido de código: o agente planeja, executa a tarefa pelo chat, e a revisor
   ];
   await office.ask(project.id, "bruno", "Corrige o bug do login");
   await settle();
-  expect(created).toEqual([{ title: "Corrigir login", prompt: "Ajustar o auth", hint: "corrigir-login" }]);
+  await approve();
+  // A tarefa nasce com o plano que a revisora conferiu na mesa do chefe.
+  expect(created).toEqual([{ title: "Corrigir login", prompt: "Login corrigido e testado.", hint: "corrigir-login" }]);
   expect(run.sent[0].text).toContain("Execute o plano acima agora");
   expect(run.sent[0].text).toContain("Não faça commit nem push");
   expect(run.ended).toEqual([{ taskId: "22222222-2222-4222-8222-222222222222", ok: true }]);
@@ -177,6 +185,7 @@ it("pedido de permissão aparece no Escritório e a resposta do chefe vai para o
   office.saveLayout(project.id, { ...defaultLayout(), reviewer: null });
   await office.ask(project.id, "bruno", "Roda os testes");
   await settle();
+  await approve();
   const job = office.state(project.id).jobs[0];
   expect(job.status).toBe("fazendo");
   expect(job.approval).toEqual({ id: "ap1", tool: "Bash", text: "Rodando: npm test", canAlways: true });
@@ -198,6 +207,7 @@ it("execução que dá erro devolve a tarefa como falha e marca o trabalho", asy
   run.chat = () => [{ type: "status", state: "error", message: "A execução terminou com erro." }];
   await office.ask(project.id, "bruno", "Faz X");
   await settle();
+  await approve();
   expect(run.ended[0]).toMatchObject({ ok: false });
   expect(office.state(project.id).jobs[0]).toMatchObject({ status: "erro" });
 });
@@ -211,6 +221,7 @@ it("commit pelo Escritório leva os arquivos alterados e o título do pedido", a
   office.saveLayout(project.id, { ...defaultLayout(), reviewer: null });
   await office.ask(project.id, "bruno", "Corrige o login");
   await settle();
+  await approve();
   const job = office.state(project.id).jobs[0];
   await office.commitJob(project.id, job.id);
   expect(run.committed[0]).toEqual([
@@ -298,6 +309,7 @@ it("cada trabalho guarda o passo a passo para o telão", async () => {
   };
   await office.ask(project.id, "bruno", "Corrige o login");
   await settle();
+  await approve();
   const job = office.state(project.id).jobs[0];
   const kinds = job.log?.map((e) => e.kind) ?? [];
   expect(kinds[0]).toBe("pedido");
@@ -345,4 +357,48 @@ it("numa rajada de ações, a tela recebe poucos estados, e sempre o último", a
   expect(states.length).toBeLessThan(10);
   expect(states.at(-1)?.jobs[0]).toMatchObject({ status: "entregue", result: "Pronto" });
   expect(office.state(project.id).jobs[0].log?.filter((e) => e.kind === "ferramenta")).toHaveLength(40);
+});
+
+it("pedido de código nunca vira código sem o chefe mandar: o plano vai para a mesa", async () => {
+  sdk.answer = (prompt) => {
+    if (prompt.includes("Decida o que fazer")) return [result('{"acao":"aceitar","fala":"Ok","titulo":"Corrigir login"}')];
+    if (prompt.includes("para conferir")) return [result('{"notas":["Plano ok"],"versao_final":"Plano revisado"}')];
+    return [result('{"titulo":"Corrigir login","branch":"login","instrucoes":"Plano","resumo":"r"}')];
+  };
+  await office.ask(project.id, "bruno", "Corrige o login");
+  await settle();
+  const job = office.state(project.id).jobs[0];
+  expect(job).toMatchObject({ status: "entregue", stage: "plano" });
+  expect(job.approved).toBeFalsy();
+  expect(created).toEqual([]);
+  expect(run.sent).toEqual([]);
+  // Na mesa, o chefe manda implementar: aí sim a tarefa é criada e executada, com o plano revisado.
+  office.implement(project.id, job.id);
+  await settle();
+  expect(created).toEqual([{ title: "Corrigir login", prompt: "Plano revisado", hint: "login" }]);
+  expect(run.sent).toHaveLength(1);
+  expect(office.state(project.id).jobs[0]).toMatchObject({ status: "entregue", stage: "codigo", approved: true });
+});
+
+it("relatório vira código só quando o chefe manda implementar", async () => {
+  sdk.answer = (prompt) => {
+    if (prompt.includes("Decida o que fazer")) return [result('{"acao":"aceitar","fala":"Ok","titulo":"Avaliar layout"}')];
+    if (prompt.includes("Investigue o projeto (sem alterar nada) e monte um plano"))
+      return [result('{"titulo":"Ajustar layout","branch":"layout","instrucoes":"Ajustar","resumo":"r"}')];
+    return [result("Relatório: o botão está com pouco contraste.")];
+  };
+  office.saveLayout(project.id, { ...defaultLayout(), reviewer: null });
+  await office.ask(project.id, "carla", "Avalia o layout");
+  await settle();
+  const report = office.state(project.id).jobs[0];
+  expect(report).toMatchObject({ status: "entregue", agentId: "carla" });
+  expect(created).toEqual([]);
+  office.implement(project.id, report.id);
+  await settle();
+  const code = office.state(project.id).jobs[0];
+  expect(code).toMatchObject({ agentId: "bruno", basedOn: report.id, approved: true, stage: "codigo", status: "entregue" });
+  expect(office.state(project.id).jobs.find((j) => j.id === report.id)?.followUp).toBe(code.id);
+  // O agente de código recebeu o relatório inteiro como contexto.
+  expect(sdk.calls.some((c) => String(c.prompt).includes("o botão está com pouco contraste"))).toBe(true);
+  expect(() => office.implement(project.id, report.id)).toThrow(/já foi pedida/);
 });

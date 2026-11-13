@@ -7115,3 +7115,212 @@ select {
   width: auto;
   transform: none;
 }
+
+/* Escritório: mesa do chefe (lista à esquerda, entrega aberta à direita). */
+.desk {
+  display: grid;
+  grid-template-columns: minmax(200px, 260px) minmax(0, 1fr);
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
+}
+.desk-empty {
+  padding: 24px;
+}
+.desk-list {
+  margin: 0;
+  padding: 8px;
+  overflow-y: auto;
+  border-right: 1px solid var(--border);
+  list-style: none;
+}
+.desk-list button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  width: 100%;
+  margin-bottom: 4px;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: none;
+  color: var(--fg);
+  text-align: left;
+  cursor: pointer;
+}
+.desk-list button:hover {
+  background: var(--hover);
+}
+.desk-list button.active {
+  border-color: var(--border-strong);
+  background: var(--surface-3);
+}
+.desk-list button.unread strong::after {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-left: 6px;
+  border-radius: 50%;
+  background: var(--brand);
+  vertical-align: middle;
+}
+.desk-list strong {
+  color: var(--fg-strong);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  line-height: 1.3;
+}
+.desk-list small {
+  color: var(--fg-subtle);
+  font-size: var(--text-xs);
+}
+.desk-kind {
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+.desk-kind.relatorio {
+  background: rgb(127 178 229 / 0.15);
+  color: #7fb2e5;
+}
+.desk-kind.plano {
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+.desk-kind.codigo {
+  background: var(--success-soft);
+  color: var(--success);
+}
+.desk-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  padding: 16px 20px 20px;
+  overflow-y: auto;
+}
+.desk-detail header h3 {
+  margin: 6px 0 2px;
+  color: var(--fg-strong);
+  font-size: var(--text-xl);
+}
+.desk-detail header p {
+  margin: 0;
+}
+.desk-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--fg-faint);
+  font-size: var(--text-xs);
+}
+.desk-steps li {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.desk-steps li span {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  font-size: 10px;
+}
+.desk-steps li.done {
+  color: var(--fg-muted);
+}
+.desk-steps li.done span {
+  border-color: transparent;
+  background: var(--success-soft);
+  color: var(--success);
+}
+.desk-steps li.current {
+  color: var(--fg-strong);
+  font-weight: 600;
+}
+.desk-steps li.current span {
+  border-color: var(--brand);
+  color: var(--brand);
+}
+.desk-situation {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  background: var(--surface-3);
+  color: var(--fg);
+  font-size: var(--text-sm);
+}
+.desk-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.desk-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.desk-activity {
+  margin: 0;
+  color: var(--fg-muted);
+  font-size: var(--text-sm);
+}
+.desk-box {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  font-size: var(--text-sm);
+}
+.desk-box h4,
+.desk-result h4 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 6px;
+  color: var(--fg-muted);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+.desk-box p {
+  margin: 0 0 4px;
+}
+.desk-box ul {
+  margin: 0;
+  padding-left: 18px;
+}
+.desk-box.review {
+  border-color: var(--warning-soft);
+  background: var(--warning-soft);
+}
+.desk-box code,
+.desk-files code {
+  font-family: var(--mono);
+  font-size: var(--text-xs);
+}
+.desk-result details summary {
+  margin-top: 6px;
+  color: var(--brand);
+  cursor: pointer;
+}
+@media (max-width: 900px) {
+  .desk {
+    grid-template-columns: 1fr;
+  }
+  .desk-list {
+    max-height: 30vh;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+}
