@@ -70,9 +70,8 @@ const request = <T,>(r: Request) => window.golfinho.request(r) as Promise<T>;
 function savedTab(taskId: string) {
   try {
     const value = localStorage.getItem(`golfinho.task.${taskId}.tab`);
-    // A conversa é a tela principal da tarefa; as ferramentas abrem ao lado dela.
-    return value && TABS.includes(value) ? value : "Chat";
-  } catch { return "Chat"; }
+    return value && TABS.includes(value) ? value : "Terminal";
+  } catch { return "Terminal"; }
 }
 export const TAB_ICONS: Record<string, React.ComponentType<{ size?: number }>> = {
   Terminal: TerminalSquare,
@@ -298,21 +297,10 @@ export const TaskWorkspace = forwardRef<TaskWorkspaceHandle, Props>(function Tas
       ? { gridTemplateColumns: `${splitRatio}fr 6px ${1 - splitRatio}fr` }
       : { gridTemplateRows: `${splitRatio}fr 6px ${1 - splitRatio}fr` };
   }
-  // Selecionar uma aba. Com o Chat aberto, a ferramenta abre ao lado dele, como um painel
-  // lateral; fora disso, se ela estava no outro painel, os dois trocam de lugar.
+  // Selecionar uma aba: se ela estava no outro painel, os dois trocam de lugar.
   function selectTab(name: string) {
-    if (tab === "Chat" && name !== "Chat") {
-      setSplitDir("right");
-      setSecondTab(name);
-      return;
-    }
     if (name === secondTab) setSecondTab(tab);
     setTab(name);
-  }
-  // Clique na aba: a ferramenta que já está ao lado do Chat fecha o painel.
-  function clickTab(name: string) {
-    if (tab === "Chat" && secondTab === name) setSecondTab(null);
-    else selectTab(name);
   }
   function shown(name: string) {
     return tab === name || secondTab === name;
@@ -572,7 +560,7 @@ export const TaskWorkspace = forwardRef<TaskWorkspaceHandle, Props>(function Tas
                           onDragStart={(e) => dragStart(e, key)}
                           onDragEnd={dragEnd}
                           {...reorder}
-                          onClick={() => navigate(() => clickTab(key))}
+                          onClick={() => navigate(() => selectTab(key))}
                         >
                           <Icon size={13} />
                           {key}
@@ -590,7 +578,7 @@ export const TaskWorkspace = forwardRef<TaskWorkspaceHandle, Props>(function Tas
                         draggable
                         onDragStart={(e) => dragStart(e, key)}
                         onDragEnd={dragEnd}
-                        onClick={() => navigate(() => clickTab(key))}
+                        onClick={() => navigate(() => selectTab(key))}
                         title="Arraste para reordenar"
                       >
                         {s.provider ? <AgentIcon provider={s.provider} /> : <Terminal size={13} />}

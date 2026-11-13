@@ -4,9 +4,7 @@ import App from "./App";
 import "@fontsource-variable/geist";
 import "./style.css";
 import { applyUiScale, readUiScale } from "./uiScale";
-import { applyUiTheme, readUiTheme } from "./uiTheme";
 applyUiScale(readUiScale());
-applyUiTheme(readUiTheme());
 createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <App />
