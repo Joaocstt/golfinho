@@ -80,7 +80,6 @@ else {
         if (event.type === "status" && event.state === "idle") service.remember(taskId);
         // Tarefa executada pelo Escritório: o andamento vira falas e ações na sala.
         office?.onChat(taskId, event);
-        service.onChatEvent(taskId, event);
       }, {
         append: (taskId, event) => store!.chatAppend(taskId, event),
         list: (taskId) => store!.chatEvents(taskId),

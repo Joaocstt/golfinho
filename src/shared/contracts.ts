@@ -271,7 +271,6 @@ export type Request =
   | { action: "shellResize"; shellId: string; cols: number; rows: number }
   | { action: "shellClose"; shellId: string }
   | { action: "chatSend"; taskId: string; text: string; images?: string[] }
-  | { action: "chatStart"; taskId: string; text: string }
   | { action: "chatPickImages" }
   | { action: "chatImportImages"; paths: string[] }
   | { action: "chatImage"; path: string }

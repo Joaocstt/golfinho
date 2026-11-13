@@ -92,7 +92,7 @@ const baseCarregada = async () => {
 describe("interface de tarefas", () => {
   it("cria uma tarefa com os valores fornecidos", async () => {
     const request = setup();
-    await screen.findAllByText("Projeto real");
+    await screen.findByText("Projeto real");
     fireEvent.click(screen.getByRole("button", { name: "Nova tarefa" }));
     // O formulário não tem mais título nem instruções: o título vira o nome da branch.
     fireEvent.change(screen.getByLabelText("Branch da tarefa"), {
@@ -114,7 +114,7 @@ describe("interface de tarefas", () => {
   });
   it("escolhe o agente pelos botões com ícone, com Codex como padrão", async () => {
     const request = setup();
-    await screen.findAllByText("Projeto real");
+    await screen.findByText("Projeto real");
     fireEvent.click(screen.getByRole("button", { name: "Nova tarefa" }));
     const group = screen.getByRole("radiogroup", { name: "Agente" });
     expect(within(group).getByRole("radio", { checked: true }).textContent).toContain("Codex");
@@ -132,7 +132,7 @@ describe("interface de tarefas", () => {
   });
   it("oferece a branch base lida do repositório, com a atual pré-selecionada", async () => {
     const request = setup();
-    await screen.findAllByText("Projeto real");
+    await screen.findByText("Projeto real");
     fireEvent.click(screen.getByRole("button", { name: "Nova tarefa" }));
     expect(request).toHaveBeenCalledWith({ action: "branches", projectId: "p" });
     const base = await baseCarregada();
@@ -153,7 +153,7 @@ describe("interface de tarefas", () => {
   });
   it("valida o nome da branch e cria a tarefa numa branch que já existe", async () => {
     const request = setup();
-    await screen.findAllByText("Projeto real");
+    await screen.findByText("Projeto real");
     fireEvent.click(screen.getByRole("button", { name: "Nova tarefa" }));
     await baseCarregada();
     const create = screen.getByRole("button", { name: "Criar tarefa" }) as HTMLButtonElement;
@@ -176,7 +176,7 @@ describe("interface de tarefas", () => {
   });
   it("mostra erros do backend", async () => {
     setup([], true);
-    await screen.findAllByText("Projeto real");
+    await screen.findByText("Projeto real");
     fireEvent.click(screen.getByRole("button", { name: "Nova tarefa" }));
     fireEvent.change(screen.getByLabelText("Branch da tarefa"), {
       target: { value: "golfinho/login" },
@@ -441,7 +441,7 @@ it("fechar uma tarefa da divisão mantém a outra e protege o editor não salvo"
 });
 it("respeita limites do backend nos formulários", async () => {
   setup();
-  await screen.findAllByText("Projeto real");
+  await screen.findByText("Projeto real");
   fireEvent.click(screen.getByRole("button", { name: "Nova tarefa" }));
   expect(screen.getByLabelText("Branch da tarefa").getAttribute("placeholder")).toBe(
     "golfinho/minha-tarefa",
@@ -453,7 +453,7 @@ it("respeita limites do backend nos formulários", async () => {
 });
 it("configurações em abas: edita, mostra o rascunho e salva tudo junto", async () => {
   const request = setup();
-  await screen.findAllByText("Projeto real");
+  await screen.findByText("Projeto real");
   fireEvent.click(screen.getByRole("button", { name: "Configurações" }));
   const dialog = screen.getByRole("dialog", { name: "Configurações" });
   const save = within(dialog).getByRole("button", { name: "Salvar configurações" }) as HTMLButtonElement;
@@ -507,7 +507,7 @@ it("permite tentar novamente quando o workspace não carrega", async () => {
   window.golfinho = { request, getPathForFile: () => '', update:{status:async()=>({state:'unsupported'}),check:async()=>{},download:async()=>{},install:async()=>{},subscribe:()=>()=>{}},youtube:{show:async()=>{},hide:async()=>{},command:async()=>{},subscribe:()=>()=>{}}, subscribe: () => () => {} };
   render(<App />);
   fireEvent.click(await screen.findByRole("button", { name: "Tentar novamente" }));
-  expect(await screen.findAllByText("Projeto real")).toBeTruthy();
+  expect(await screen.findByText("Projeto real")).toBeTruthy();
 });
 
 it("invalida revisão em mudança do backend", async () => {
@@ -655,7 +655,7 @@ it("filtra tarefas e navega pelas abas do workspace", async () => {
 });
 it("redimensiona navegação e oculta inspetor", async () => {
   setup();
-  await screen.findAllByText("Projeto real");
+  await screen.findByText("Projeto real");
   const separator = screen.getByRole("separator", { name: "Largura da navegação" });
   fireEvent.keyDown(separator, { key: "ArrowRight" });
   expect(separator.getAttribute("aria-valuenow")).toBe("280");
@@ -761,42 +761,4 @@ it("o separador da troca mostra o contexto passado ao agente, recolhido", async 
   expect(details).toBeTruthy();
   expect(details.open).toBe(false);
   expect(details.querySelector("pre")?.textContent).toContain("Pedido original:");
-});
-describe("tela inicial", () => {
-  it("o pedido vira uma tarefa com branch nova e a conversa começa", async () => {
-    const request = setup();
-    const box = await screen.findByLabelText("Pedido para a nova tarefa");
-    fireEvent.change(box, { target: { value: "Corrige o login com token expirado\ne adiciona um teste" } });
-    fireEvent.click(screen.getByRole("button", { name: "Começar tarefa" }));
-    await waitFor(() =>
-      expect(request).toHaveBeenCalledWith({
-        action: "createTask",
-        input: expect.objectContaining({
-          projectId: "p",
-          title: "Corrige o login com token expirado",
-          prompt: "Corrige o login com token expirado\ne adiciona um teste",
-          provider: "codex",
-          base: "develop",
-          remote: "origin",
-          branch: expect.stringMatching(/^golfinho\/corrige-o-login-com-token-expirado-[a-z0-9]{1,4}$/),
-        }),
-      }),
-    );
-    await waitFor(() =>
-      expect(request).toHaveBeenCalledWith({
-        action: "chatStart",
-        taskId: "new",
-        text: "Corrige o login com token expirado\ne adiciona um teste",
-      }),
-    );
-  });
-  it("Enter envia e Shift+Enter quebra a linha", async () => {
-    const request = setup();
-    const box = await screen.findByLabelText("Pedido para a nova tarefa");
-    fireEvent.change(box, { target: { value: "Revisa o README" } });
-    fireEvent.keyDown(box, { key: "Enter", shiftKey: true });
-    expect(request).not.toHaveBeenCalledWith(expect.objectContaining({ action: "createTask" }));
-    fireEvent.keyDown(box, { key: "Enter" });
-    await waitFor(() => expect(request).toHaveBeenCalledWith(expect.objectContaining({ action: "createTask" })));
-  });
 });
