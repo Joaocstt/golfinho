@@ -46,7 +46,8 @@ export function npmShimTarget(path: string): { file: string; args: string[] } | 
   const line = text.split(/\r?\n/).find((l) => l.includes("%*") && /%dp0%/i.test(l));
   const found = line && [...line.matchAll(/"%dp0%\\?([^"]+)"/gi)].at(-1)?.[1];
   if (!found) return null;
-  const target = join(dirname(path), found);
+  // O atalho usa barras invertidas; separadas, o caminho vale em qualquer sistema.
+  const target = join(dirname(path), ...found.split(/[\\/]+/).filter(Boolean));
   if (!existsSync(target)) return null;
   if (/\.exe$/i.test(target)) return { file: target, args: [] };
   if (!/\.(c|m)?js$/i.test(target)) return null;

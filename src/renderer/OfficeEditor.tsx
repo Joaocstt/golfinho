@@ -56,6 +56,7 @@ export function OfficeEditor({
   const set = (patch: Partial<OfficeAgent>) => agent && onChange(updateAgent(layout, agent.id, patch));
   const button = (t: Tool, label: string, icon?: React.ReactNode) => (
     <button
+      key={JSON.stringify(t)}
       type="button"
       className={same(tool, t) ? "active" : ""}
       aria-pressed={same(tool, t)}

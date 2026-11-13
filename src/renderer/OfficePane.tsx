@@ -1102,7 +1102,8 @@ export function OfficePane({
 
 // Cada atualização chega como objeto novo. Se a sala não mudou, reaproveita o layout anterior:
 // é ele que diz à cena 3D e à grade de colisão quando precisam ser refeitas.
-function keepLayout(prev: OfficeState | null, next: OfficeState): OfficeState {
+function keepLayout(prev: OfficeState | null, next: OfficeState | null): OfficeState | null {
+  if (!next) return prev;
   if (!prev || prev.projectId !== next.projectId || prev.layout === next.layout) return next;
   return JSON.stringify(prev.layout) === JSON.stringify(next.layout) ? { ...next, layout: prev.layout } : next;
 }
