@@ -7337,7 +7337,6 @@ select {
   overflow: hidden;
   background: #0d0e12;
   color: #f3f1ea;
-  animation: intro-in 0.5s ease-out both;
 }
 .intro.leaving {
   animation: intro-out 0.45s ease-in both;

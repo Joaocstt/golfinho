@@ -209,7 +209,8 @@ else {
         minHeight: 700,
         title: "Golfinho",
         icon,
-        backgroundColor: "#0b1220",
+        // A mesma cor da abertura do app: nada de flash de outra cor antes da página carregar.
+        backgroundColor: "#0d0e12",
         // No desenvolvimento, mostre a janela durante o carregamento para que falhas no
         // primeiro paint não deixem o app aberto em segundo plano sem nenhuma janela visível.
         show: Boolean(process.env.ELECTRON_RENDERER_URL),
