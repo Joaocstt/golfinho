@@ -52,7 +52,7 @@ import { drawBubble, drawDesk, drawEditorOverlay, drawFurniture, drawLabel, draw
 import { OfficeEditor, type Tool } from "./OfficeEditor";
 import { OfficeScene, type AgentView } from "./office3d";
 import { OfficeMonitor } from "./OfficeMonitor";
-import { OfficeDeliveries, onDesk } from "./OfficeDeliveries";
+import { JobControls, OfficeDeliveries, onDesk, roundLabel } from "./OfficeDeliveries";
 import { useConfirm } from "./ui";
 
 const request = <T,>(r: Request) => window.golfinho.request(r) as Promise<T>;
@@ -74,13 +74,14 @@ interface Sprite {
 }
 
 export function statusLabel(job: OfficeJob): string {
-  if (job.status === "fila") return "na fila";
+  if (job.status === "fila") return job.fixRequest ? `voltou da revisão para correção (${roundLabel(job)})` : "na fila";
   if (job.status === "fazendo" && job.approval) return `${job.agentName} esperando sua aprovação`;
+  if (job.status === "fazendo" && job.fixRequest) return `${job.agentName} ${roundLabel(job)}`;
   if (job.status === "fazendo") return job.taskId ? `${job.agentName} executando a tarefa` : `${job.agentName} trabalhando`;
   if (job.status === "revisao") return job.activity || "em revisão";
   if (job.status === "entregue" && job.stage === "plano" && !job.approved) return "plano na sua mesa, esperando você";
   if (job.status === "entregue") return job.taskId ? (job.committed ? "commit feito" : "implementado, falta o commit") : "na sua mesa";
-  return "deu erro";
+  return job.cancelled ? "cancelado" : "deu erro";
 }
 
 // Escritório: a pessoa é o chefe, anda até a mesa de alguém e faz um pedido. A equipe trabalha
@@ -956,6 +957,7 @@ export function OfficePane({
                       {j.agentName} · {statusLabel(j)}
                     </span>
                     {j.status === "fazendo" && j.activity && <em>{j.activity}</em>}
+                    {office && <JobControls projectId={office.projectId} job={j} compact />}
                   </li>
                 ))}
               </ul>

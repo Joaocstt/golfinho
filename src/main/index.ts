@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, clipboard, nativeImage, shell, screen } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, clipboard, nativeImage, Notification, shell, screen } from "electron";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { mergePath, readLoginPath } from "./loginPath";
@@ -196,6 +196,21 @@ else {
         },
         commit: async (taskId, paths, message) => {
           await service.request({ action: "commitFiles", taskId, paths, message, push: false });
+        },
+        interrupt: async (taskId) => {
+          await service.request({ action: "chatInterrupt", taskId });
+        },
+        // Aviso do sistema só com a janela fora de foco: com ela à vista, o Escritório já mostra.
+        notify: (title, body) => {
+          if (!Notification.isSupported() || !window || window.isDestroyed() || window.isFocused()) return;
+          const n = new Notification({ title, body, icon });
+          n.on("click", () => {
+            if (!window || window.isDestroyed()) return;
+            if (window.isMinimized()) window.restore();
+            window.show();
+            window.focus();
+          });
+          n.show();
         },
       });
       service.useOffice(office);

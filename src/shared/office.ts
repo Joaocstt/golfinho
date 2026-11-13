@@ -87,6 +87,12 @@ export interface OfficeJob {
   stage?: "plano" | "codigo";
   /** O chefe mandou implementar (na mesa dele). Sem isso, nada de código é feito. */
   approved?: boolean;
+  /** Voltas de correção pedidas pela revisora (no máximo OFFICE_MAX_ROUNDS). */
+  rounds?: number;
+  /** O que a revisora pediu para corrigir, esperando o agente de código. */
+  fixRequest?: string;
+  /** O chefe cancelou. */
+  cancelled?: boolean;
   /** Relatório que originou este trabalho de código. */
   basedOn?: string;
   /** Trabalho de código pedido a partir deste relatório. */
@@ -125,5 +131,6 @@ export interface OfficeDecision {
   jobId?: string;
 }
 
+export const OFFICE_MAX_ROUNDS = 2;
 export const officeAgent = (layout: OfficeLayout, id: string) => layout.agents.find((a) => a.id === id);
 export const officeTools = (a: OfficeAgent) => ["Read", "Glob", "Grep", ...(a.web ? ["WebSearch", "WebFetch"] : [])];

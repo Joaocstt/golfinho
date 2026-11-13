@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { query, type PermissionResult } from "@anthropic-ai/claude-agent-sdk";
 import type { Project, Task } from "../shared/contracts";
 import {
+  OFFICE_MAX_ROUNDS,
   officeAgent,
   officeTools,
   type OfficeAgent,
@@ -34,6 +35,10 @@ export interface OfficeDeps {
   decide(taskId: string, approvalId: string, behavior: "allow" | "deny", always: boolean): Promise<void>;
   /** Commit dos arquivos da tarefa, sem publicar. */
   commit(taskId: string, paths: string[], message: string): Promise<void>;
+  /** Para o turno do agente no chat da tarefa (cancelar). */
+  interrupt(taskId: string): Promise<void>;
+  /** Aviso do sistema (a janela fora de foco decide se aparece). */
+  notify(title: string, body: string): void;
   emit(state: OfficeState): void;
   executable(): string | undefined;
   /** Escritório salvo do projeto (sala e histórico), ou null. */
@@ -120,6 +125,8 @@ export class Office {
   private plans = new Map<string, Plan>();
   private contexts = new Map<string, string>();
   private controllers = new Set<AbortController>();
+  /** Consulta em andamento de cada trabalho, para o cancelar parar na hora. */
+  private jobControllers = new Map<string, AbortController>();
   private saveTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private stopped = false;
   constructor(private readonly deps: OfficeDeps) {}
@@ -366,6 +373,7 @@ Faça o trabalho agora. Investigue o projeto no que for útil e escreva a entreg
         tools: officeTools(agent),
         model: MODEL[agent.model],
         maxTurns: 40,
+        jobId: job.id,
         onTool: (name, input, raw) => {
           job.activity = describeTool(name, input);
           note(job, agent.name, "ferramenta", job.activity, `${name} ${raw}`);
@@ -452,7 +460,12 @@ ${
         ? `Leia os arquivos alterados e confira se o plano foi cumprido e se há erros. Em "versao_final", escreva para o chefe o que foi feito, o que você conferiu e o que ainda falta ou preocupa, em Markdown.`
         : "Revise com olhar crítico: corrija o que estiver errado ou não bater com o projeto e complete o que faltar, mantendo o formato e um tamanho parecido."
     }
-Responda só com JSON: {"notas":["até 3 observações curtas sobre o que você corrigiu, aprovou ou encontrou"],"versao_final":"o texto final completo, em Markdown"}`;
+${
+      executed
+        ? `Se algo precisar de mudança no código (erro, plano não cumprido, teste quebrado), responda "aprovado": false e liste em "correcoes" o que ${job.agentName} deve corrigir, de forma objetiva. Se estiver bom, "aprovado": true e "correcoes": [].
+Responda só com JSON: {"aprovado":true,"correcoes":["..."],"notas":["até 3 observações curtas"],"versao_final":"o texto final completo, em Markdown"}`
+        : `Responda só com JSON: {"notas":["até 3 observações curtas sobre o que você corrigiu, aprovou ou encontrou"],"versao_final":"o texto final completo, em Markdown"}`
+    }`;
     try {
       const data = parseJson(
         await this.run(prompt, {
@@ -460,6 +473,7 @@ Responda só com JSON: {"notas":["até 3 observações curtas sobre o que você 
           tools: officeTools(reviewer),
           model: MODEL[reviewer.model],
           maxTurns: 25,
+          jobId: job.id,
           onTool: (name, input, raw) => {
             const what = describeTool(name, input);
             job.activity = `${reviewer.name}: ${what}`;
@@ -477,6 +491,23 @@ Responda só com JSON: {"notas":["até 3 observações curtas sobre o que você 
       );
       const final = str(data?.versao_final);
       job.notes = Array.isArray(data?.notas) ? data.notas.map(String).filter(Boolean).slice(0, 3) : [];
+      // Código com problema: volta para quem fez, até o limite de voltas.
+      const fixes = Array.isArray(data?.correcoes) ? data.correcoes.map(String).filter(Boolean).slice(0, 8) : [];
+      if (executed && data?.aprovado === false && fixes.length) {
+        if ((job.rounds ?? 0) < OFFICE_MAX_ROUNDS) {
+          job.rounds = (job.rounds ?? 0) + 1;
+          job.fixRequest = fixes.map((f) => `- ${f}`).join("\n");
+          job.status = "fila";
+          job.activity = "";
+          job.speech = undefined;
+          note(job, reviewer.name, "revisao", `Devolveu para ${job.agentName} corrigir (volta ${job.rounds} de ${OFFICE_MAX_ROUNDS}): ${fixes.join(" · ")}`);
+          this.reviewing.delete(job.id);
+          this.emit(s);
+          this.pump(projectId);
+          return;
+        }
+        job.notes = [`Ainda pendente depois de ${OFFICE_MAX_ROUNDS} voltas: ${fixes.join(" · ")}`, ...job.notes].slice(0, 4);
+      }
       if (final) {
         job.reviewedBy = reviewer.name;
         if (executed) job.result = final;
@@ -486,6 +517,12 @@ Responda só com JSON: {"notas":["até 3 observações curtas sobre o que você 
         } else job.result = final;
       } else job.notes = [`A revisão não veio no formato esperado; segue a versão de ${job.agentName}.`];
     } catch (error) {
+      if (job.cancelled) {
+        this.reviewing.delete(job.id);
+        this.fail(job, error);
+        this.emit(s);
+        return;
+      }
       job.notes = [`Revisão indisponível (${(error as Error).message}); segue a versão de ${job.agentName}.`];
     } finally {
       this.reviewing.delete(job.id);
@@ -500,22 +537,39 @@ Responda só com JSON: {"notas":["até 3 observações curtas sobre o que você 
   // Escritório; o chefe aprova por lá. Ao terminar, guarda os arquivos alterados.
   private async execute(projectId: string, job: OfficeJob, agent: OfficeAgent, plan: Plan) {
     const s = this.state(projectId);
-    const task = await this.deps.createTask(this.deps.project(projectId), plan.title, plan.instructions, plan.branch);
-    job.taskId = task.id;
-    note(job, agent.name, "tarefa", `Criou a tarefa "${task.title || plan.title}"${task.branch ? ` na branch ${task.branch}` : ""} e começou a executar.`);
-    job.activity = "Preparando a branch";
-    job.speech = "Plano pronto. Agora vou fazer as alterações.";
+    // Tarefa já criada (nova tentativa ou correção pedida pela revisora): mesma branch, mesma conversa.
+    const resumed = Boolean(job.taskId);
+    const task = job.taskId
+      ? { id: job.taskId }
+      : await this.deps.createTask(this.deps.project(projectId), plan.title, plan.instructions, plan.branch);
+    if (!resumed) {
+      job.taskId = task.id;
+      const created = task as Task;
+      note(job, agent.name, "tarefa", `Criou a tarefa "${created.title || plan.title}"${created.branch ? ` na branch ${created.branch}` : ""} e começou a executar.`);
+    }
+    const fixing = job.fixRequest;
+    job.activity = fixing ? "Corrigindo o que a revisão pediu" : "Preparando a branch";
+    job.speech = fixing ? "A revisão pediu ajustes. Vou corrigir." : resumed ? "Vou retomar de onde parei." : "Plano pronto. Agora vou fazer as alterações.";
     this.emit(s);
     const finished = new Promise<{ ok: boolean; message?: string }>((done) =>
       this.runs.set(task.id, { projectId, job, agent, summary: "", done }),
     );
-    const text = `${plan.instructions}
-
----
-Você é ${agent.name}, ${agent.role}. Execute o plano acima agora, nesta pasta (a branch da tarefa já está ativa).
-Antes de cada ferramenta, escreva UMA frase curta em primeira pessoa, em português, dizendo o que vai fazer (ex.: "Vou ajustar a validação do token."), sem caminhos completos.
+    const rules = `Antes de cada ferramenta, escreva UMA frase curta em primeira pessoa, em português, dizendo o que vai fazer (ex.: "Vou ajustar a validação do token."), sem caminhos completos.
 Rode os testes do projeto se existirem. Não faça commit nem push: o chefe decide depois.
 Ao terminar, escreva um resumo curto do que mudou e do que ficou faltando.`;
+    const text = fixing
+      ? `A revisão pediu estas correções no que você implementou nesta branch:
+${fixing}
+
+Corrija agora, nesta mesma pasta.
+${rules}`
+      : `${plan.instructions}
+
+---
+Você é ${agent.name}, ${agent.role}. Execute o plano acima agora, nesta pasta (a branch da tarefa já está ativa).${
+          resumed ? "\nParte disso pode já ter sido feita numa tentativa anterior: confira o que existe e continue." : ""
+        }
+${rules}`;
     try {
       await this.deps.runTask(task.id, text);
     } catch (error) {
@@ -526,6 +580,7 @@ Ao terminar, escreva um resumo curto do que mudou e do que ficou faltando.`;
     const run = this.runs.get(task.id);
     this.runs.delete(task.id);
     job.approval = undefined;
+    job.fixRequest = undefined;
     if (run?.summary) job.result = `${plan.summary ? `${plan.summary}\n\n` : ""}${run.summary}`;
     try {
       const changes = await this.deps.changes(task.id);
@@ -567,6 +622,7 @@ Ao terminar, escreva um resumo curto do que mudou e do que ficou faltando.`;
       const text = describeTool(event.toolName, chatToolInput(event.summary));
       job.approval = { id: event.id, tool: event.toolName, text, canAlways: event.canAlwaysAllow };
       job.speech = `Chefe, posso? ${text}`;
+      this.deps.notify(`${agent.name} pede permissão`, text);
       note(job, agent.name, "fala", `Pediu permissão: ${text}`, `${event.toolName} ${event.summary}`);
     } else if (event.type === "approval_resolved") {
       if (job.approval?.id === event.id) job.approval = undefined;
@@ -660,6 +716,10 @@ Ao terminar, escreva um resumo curto do que mudou e do que ficou faltando.`;
     job.activity = "";
     job.speech = undefined;
     job.finishedAt = new Date().toISOString();
+    this.deps.notify(
+      job.stage === "plano" ? "Plano na sua mesa" : "Entrega na sua mesa",
+      `${job.title}, por ${job.agentName}${job.stage === "plano" ? ". Decida se implementa." : ""}`,
+    );
     note(
       job,
       job.reviewedBy ?? job.agentName,
@@ -671,9 +731,50 @@ Ao terminar, escreva um resumo curto do que mudou e do que ficou faltando.`;
   private fail(job: OfficeJob, error: unknown) {
     job.status = "erro";
     job.activity = "";
-    job.error = (error as Error).message || "Falha desconhecida.";
+    job.speech = undefined;
+    job.approval = undefined;
+    job.error = job.cancelled ? "Cancelado pelo chefe." : (error as Error).message || "Falha desconhecida.";
     job.finishedAt = new Date().toISOString();
-    note(job, job.agentName, "erro", job.error);
+    note(job, job.cancelled ? "Chefe" : job.agentName, "erro", job.error);
+    if (!job.cancelled) this.deps.notify(`Deu erro: ${job.title}`, job.error);
+  }
+
+  // Cancelar: na fila sai na hora; em andamento, a consulta (ou o turno no chat) é interrompida
+  // e o trabalho fica como cancelado, pronto para "Tentar de novo".
+  async cancel(projectId: string, jobId: string) {
+    const s = this.state(projectId);
+    const job = s.jobs.find((j) => j.id === jobId);
+    if (!job || !["fila", "fazendo", "revisao"].includes(job.status)) throw new Error("Esse trabalho não está em andamento.");
+    job.cancelled = true;
+    note(job, "Chefe", "pedido", "Cancelou o trabalho.");
+    const running = this.jobControllers.get(job.id);
+    const chat = job.taskId && this.runs.has(job.taskId);
+    if (job.status === "fila" || (job.status === "revisao" && !this.reviewing.has(job.id))) {
+      this.fail(job, new Error("cancelado"));
+    } else if (chat) {
+      await this.deps.interrupt(job.taskId!).catch(() => undefined);
+      // O fim do turno chega pelo chat e encerra a execução como cancelada.
+    } else running?.abort();
+    this.emit(s);
+    return s;
+  }
+
+  // Tentar de novo: volta para a fila. Plano aprovado e tarefa já criada são aproveitados.
+  retry(projectId: string, jobId: string) {
+    const s = this.state(projectId);
+    const job = s.jobs.find((j) => j.id === jobId);
+    if (!job || job.status !== "erro") throw new Error("Só dá para tentar de novo um trabalho que parou.");
+    if (!s.layout.agents.some((a) => a.id === job.agentId)) throw new Error(`${job.agentName} não está mais na equipe.`);
+    job.status = "fila";
+    job.error = undefined;
+    job.cancelled = undefined;
+    job.read = false;
+    job.finishedAt = undefined;
+    job.activity = "";
+    note(job, "Chefe", "pedido", "Pediu para tentar de novo.");
+    this.emit(s);
+    this.pump(projectId);
+    return s;
   }
 
   // Envio para a tela agrupado: numa rajada de ferramentas, sai no máximo um estado a cada
@@ -728,11 +829,14 @@ Ao terminar, escreva um resumo curto do que mudou e do que ficou faltando.`;
       onTool?: (name: string, input: Record<string, unknown>, raw: string) => void;
       /** Texto que o agente escreve entre as ferramentas (a narração). */
       onText?: (text: string) => void;
+      /** Trabalho dono da consulta: cancelar o trabalho aborta a consulta. */
+      jobId?: string;
     },
   ): Promise<string> {
     if (this.stopped) throw new Error("O Golfinho está encerrando.");
     const controller = new AbortController();
     this.controllers.add(controller);
+    if (o.jobId) this.jobControllers.set(o.jobId, controller);
     try {
       const stream = query({
         prompt,
@@ -769,6 +873,7 @@ Ao terminar, escreva um resumo curto do que mudou e do que ficou faltando.`;
       return result;
     } finally {
       this.controllers.delete(controller);
+      if (o.jobId && this.jobControllers.get(o.jobId) === controller) this.jobControllers.delete(o.jobId);
     }
   }
 }

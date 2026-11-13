@@ -7611,3 +7611,29 @@ select {
   15%, 85% { opacity: 1; transform: none; }
   100% { opacity: 0.25; }
 }
+
+/* Cancelar / tentar de novo nos trabalhos do Escritório */
+.job-controls {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.job-controls button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.job-controls.compact button {
+  padding: 2px 8px;
+  font-size: 11px;
+}
+.office-jobs .job-controls {
+  margin-top: 4px;
+}
+.office-monitor-job > .job-controls {
+  padding: 0 12px 8px 34px;
+}
+.job-controls .danger {
+  color: var(--danger);
+}

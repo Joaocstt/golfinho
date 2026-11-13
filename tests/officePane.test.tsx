@@ -163,3 +163,27 @@ it("na mesa, plano espera a decisão do chefe e o botão Implementar manda fazer
   fireEvent.click(within(dialog).getByRole("button", { name: /Implementar/ }));
   await waitFor(() => expect(request).toHaveBeenCalledWith({ action: "officeImplement", projectId: project.id, jobId: "j1" }));
 });
+
+it("trabalho em andamento tem Cancelar; o cancelado tem Tentar de novo", async () => {
+  const at = new Date().toISOString();
+  const { request } = setup({
+    jobs: [
+      {
+        id: "j1", agentId: "bruno", agentName: "Bruno", title: "Corrigir login", request: "corrige", status: "fazendo",
+        activity: "Editando", result: "", notes: [], read: false, createdAt: at, approved: true, rounds: 1, fixRequest: "- Falta o teste",
+      },
+      {
+        id: "j2", agentId: "davi", agentName: "Davi", title: "Pesquisa", request: "pesquisa", status: "erro", activity: "", result: "",
+        notes: [], read: false, createdAt: at, error: "Cancelado pelo chefe.", cancelled: true,
+      },
+    ],
+  });
+  await screen.findByText("Corrigir login");
+  expect(screen.getByText(/Bruno corrigindo o que a revisão pediu \(volta 1 de 2\)/)).toBeTruthy();
+  expect(screen.getByText(/Davi · cancelado/)).toBeTruthy();
+  const jobs = document.querySelector(".office-jobs")!;
+  fireEvent.click(within(jobs as HTMLElement).getByRole("button", { name: /Cancelar/ }));
+  await waitFor(() => expect(request).toHaveBeenCalledWith({ action: "officeCancel", projectId: project.id, jobId: "j1" }));
+  fireEvent.click(within(jobs as HTMLElement).getByRole("button", { name: /Tentar de novo/ }));
+  await waitFor(() => expect(request).toHaveBeenCalledWith({ action: "officeRetry", projectId: project.id, jobId: "j2" }));
+});

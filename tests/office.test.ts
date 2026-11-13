@@ -11,6 +11,11 @@ vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
     sdk.calls.push(params);
     const messages = sdk.answer(params.prompt);
     return (async function* () {
+      // "HANG": a consulta só termina quando é cancelada.
+      if ((messages as unknown) === "HANG")
+        await new Promise((_, reject) =>
+          params.options.abortController.signal.addEventListener("abort", () => reject(new Error("aborted"))),
+        );
       for (const m of messages) yield m;
     })();
   },
@@ -34,6 +39,8 @@ const run = {
   ended: [] as { taskId: string; ok: boolean }[],
   decided: [] as unknown[],
   committed: [] as unknown[],
+  interrupted: [] as string[],
+  notified: [] as string[],
   changes: {} as Record<string, string>,
   chat: (_taskId: string): ChatEvent[] => [{ type: "status", state: "idle" }],
 };
@@ -49,6 +56,11 @@ const runDeps = () => ({
   changes: async () => run.changes,
   decide: async (...args: unknown[]) => void run.decided.push(args),
   commit: async (...args: unknown[]) => void run.committed.push(args),
+  interrupt: async (taskId: string) => {
+    run.interrupted.push(taskId);
+    setTimeout(() => office.onChat(taskId, { type: "status", state: "idle", message: "Interrompido." }), 0);
+  },
+  notify: (title: string, body: string) => void run.notified.push(`${title}: ${body}`),
 });
 let states: OfficeState[];
 // O chefe aprova, na mesa dele, o plano que acabou de chegar.
@@ -68,6 +80,8 @@ beforeEach(() => {
   run.ended = [];
   run.decided = [];
   run.committed = [];
+  run.interrupted = [];
+  run.notified = [];
   run.changes = {};
   run.chat = () => [{ type: "status", state: "idle" }];
   office = new Office({
@@ -401,4 +415,110 @@ it("relatório vira código só quando o chefe manda implementar", async () => {
   // O agente de código recebeu o relatório inteiro como contexto.
   expect(sdk.calls.some((c) => String(c.prompt).includes("o botão está com pouco contraste"))).toBe(true);
   expect(() => office.implement(project.id, report.id)).toThrow(/já foi pedida/);
+});
+
+const decideAccept = (title: string) => [result(`{"acao":"aceitar","fala":"Ok","titulo":"${title}"}`)];
+
+it("cancelar na fila tira na hora; tentar de novo põe de volta e o trabalho sai", async () => {
+  let hang = true;
+  sdk.answer = (prompt) =>
+    prompt.includes("Decida o que fazer") ? decideAccept("Relatório") : hang ? ("HANG" as never) : [result("Pronto")];
+  office.saveLayout(project.id, { ...defaultLayout(), reviewer: null });
+  await office.ask(project.id, "davi", "Primeiro");
+  await office.ask(project.id, "davi", "Segundo");
+  await settle();
+  const [second, first] = office.state(project.id).jobs;
+  expect(first.status).toBe("fazendo");
+  expect(second.status).toBe("fila");
+  await office.cancel(project.id, second.id);
+  expect(office.state(project.id).jobs[0]).toMatchObject({ status: "erro", error: "Cancelado pelo chefe." });
+  // O que está rodando para no meio da consulta.
+  await office.cancel(project.id, first.id);
+  await settle();
+  expect(office.state(project.id).jobs[1]).toMatchObject({ status: "erro", error: "Cancelado pelo chefe." });
+  expect(run.notified.some((n) => n.startsWith("Deu erro"))).toBe(false);
+  hang = false;
+  office.retry(project.id, first.id);
+  await settle();
+  expect(office.state(project.id).jobs[1]).toMatchObject({ status: "entregue", result: "Pronto" });
+  expect(run.notified).toContain("Entrega na sua mesa: Relatório, por Davi");
+  expect(() => office.retry(project.id, first.id)).toThrow(/parou/);
+});
+
+it("cancelar no meio da implementação interrompe o chat; tentar de novo reaproveita plano e tarefa", async () => {
+  sdk.answer = (prompt) =>
+    prompt.includes("Decida o que fazer")
+      ? decideAccept("Corrigir login")
+      : [result('{"titulo":"Corrigir login","branch":"login","instrucoes":"Plano","resumo":"r"}')];
+  run.chat = () => [];
+  office.saveLayout(project.id, { ...defaultLayout(), reviewer: null });
+  await office.ask(project.id, "bruno", "Corrige o login");
+  await settle();
+  await approve();
+  const job = office.state(project.id).jobs[0];
+  expect(job.status).toBe("fazendo");
+  await office.cancel(project.id, job.id);
+  await settle();
+  expect(run.interrupted).toEqual(["22222222-2222-4222-8222-222222222222"]);
+  expect(office.state(project.id).jobs[0]).toMatchObject({ status: "erro", error: "Cancelado pelo chefe." });
+  run.chat = () => [{ type: "status", state: "idle" }];
+  const plans = sdk.calls.length;
+  office.retry(project.id, job.id);
+  await settle();
+  // Nem planeja de novo, nem cria outra tarefa: retoma na mesma branch.
+  expect(sdk.calls.length).toBe(plans);
+  expect(created).toHaveLength(1);
+  expect(run.sent.at(-1)?.text).toContain("tentativa anterior");
+  expect(office.state(project.id).jobs[0].status).toBe("entregue");
+});
+
+it("revisora devolve o código para correção, até 2 voltas; depois entrega com a pendência", async () => {
+  sdk.answer = (prompt) => {
+    if (prompt.includes("Decida o que fazer")) return decideAccept("Corrigir login");
+    if (prompt.includes("para conferir")) {
+      if (prompt.includes("as instruções de uma tarefa")) return [result('{"notas":["ok"],"versao_final":"Plano"}')];
+      return [result('{"aprovado":false,"correcoes":["Falta o teste do token expirado"],"notas":["Faltou teste"],"versao_final":"Quase"}')];
+    }
+    return [result('{"titulo":"Corrigir login","branch":"login","instrucoes":"Plano","resumo":"r"}')];
+  };
+  run.changes = { "src/auth.ts": "modified" };
+  await office.ask(project.id, "bruno", "Corrige o login");
+  await settle();
+  await approve();
+  await settle();
+  const job = office.state(project.id).jobs[0];
+  // Execução inicial + 2 voltas de correção, todas na mesma tarefa.
+  expect(run.sent).toHaveLength(3);
+  expect(created).toHaveLength(1);
+  expect(run.sent[1].text).toContain("Falta o teste do token expirado");
+  expect(job).toMatchObject({ status: "entregue", rounds: 2 });
+  expect(job.notes[0]).toMatch(/Ainda pendente depois de 2 voltas/);
+  expect(job.log?.filter((e) => e.text.startsWith("Devolveu para Bruno"))).toHaveLength(2);
+});
+
+it("aprovada na revisão, a entrega não volta para correção", async () => {
+  sdk.answer = (prompt) => {
+    if (prompt.includes("Decida o que fazer")) return decideAccept("Corrigir login");
+    if (prompt.includes("para conferir")) return [result('{"aprovado":true,"correcoes":[],"notas":["Tudo certo"],"versao_final":"Feito"}')];
+    return [result('{"titulo":"Corrigir login","branch":"login","instrucoes":"Plano","resumo":"r"}')];
+  };
+  run.changes = { "src/auth.ts": "modified" };
+  await office.ask(project.id, "bruno", "Corrige o login");
+  await settle();
+  await approve();
+  expect(run.sent).toHaveLength(1);
+  expect(office.state(project.id).jobs[0]).toMatchObject({ status: "entregue", notes: ["Tudo certo"] });
+});
+
+it("pedido de permissão do agente gera aviso", async () => {
+  sdk.answer = (prompt) =>
+    prompt.includes("Decida o que fazer")
+      ? decideAccept("Rodar testes")
+      : [result('{"titulo":"Rodar testes","branch":"t","instrucoes":"Rodar","resumo":"r"}')];
+  run.chat = () => [{ type: "approval", id: "ap1", toolName: "Bash", summary: "npm test", canAlwaysAllow: true }];
+  office.saveLayout(project.id, { ...defaultLayout(), reviewer: null });
+  await office.ask(project.id, "bruno", "Roda os testes");
+  await settle();
+  await approve();
+  expect(run.notified).toContain("Bruno pede permissão: Rodando: npm test");
 });

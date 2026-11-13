@@ -4,6 +4,7 @@ import remarkGfm from "remark-gfm";
 import { ChevronDown, ChevronRight, ExternalLink, FileDiff, GitBranch } from "lucide-react";
 import type { Changes, Request, Task } from "../shared/contracts";
 import type { OfficeJob, OfficeLogEntry, OfficeState } from "../shared/office";
+import { JobControls, roundLabel } from "./OfficeDeliveries";
 
 const request = <T,>(r: Request) => window.golfinho.request(r) as Promise<T>;
 
@@ -158,6 +159,7 @@ export function OfficeMonitor({
               <JobRow
                 key={j.id}
                 job={j}
+                projectId={office.projectId}
                 now={now}
                 task={tasks.find((t) => t.id === j.taskId)}
                 open={open === j.id}
@@ -195,6 +197,7 @@ export function OfficeMonitor({
 
 function JobRow({
   job,
+  projectId,
   task,
   now,
   open,
@@ -203,6 +206,7 @@ function JobRow({
   onDecide,
 }: {
   job: OfficeJob;
+  projectId: string;
   task: Task | undefined;
   now: number;
   open: boolean;
@@ -237,8 +241,9 @@ function JobRow({
             {job.startedAt ? ` · ${duration(job, now)}` : ""}
           </span>
         </span>
-        <span className={`office-pill ${job.status}`}>{JOB_STATUS[job.status]}</span>
+        <span className={`office-pill ${job.status}`}>{job.cancelled && job.status === "erro" ? "Cancelado" : JOB_STATUS[job.status]}</span>
       </button>
+      <JobControls projectId={projectId} job={job} compact />
       {open && (
         <div className="office-monitor-detail">
           <p className="office-quote">“{job.request}”</p>
@@ -247,6 +252,7 @@ function JobRow({
             <span>📄 {read.size} arquivos ou buscas no projeto</span>
             {web > 0 && <span>🌐 {web} pesquisas na web</span>}
             {job.reviewedBy && <span>🔍 revisado por {job.reviewedBy}</span>}
+            {roundLabel(job) && <span>🔁 {roundLabel(job)}</span>}
           </div>
 
           {job.approval && job.status === "fazendo" && (
