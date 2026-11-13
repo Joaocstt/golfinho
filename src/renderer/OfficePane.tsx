@@ -942,6 +942,7 @@ export function OfficePane({
                   <button type="button" onClick={() => open({ kind: "agent", agent: a })}>
                     <i style={{ background: a.color }} />
                     {a.name} · {a.role}
+                    {a.provider === "codex" && <small>Codex</small>}
                     {layout.reviewer === a.id && <small>revisa</small>}
                   </button>
                 </li>

@@ -49,9 +49,17 @@ export function describeTool(name: string, input: Record<string, unknown>): stri
     const file = str(input.file_path) || str(input.path);
     return file ? `Escrevendo ${shortPath(file)}` : "Escrevendo um arquivo";
   }
-  if (name === "Bash") {
-    const command = str(input.command);
+  // "Comando" e "Alterar arquivos" são os nomes que o chat da Codex usa.
+  if (name === "Bash" || name === "Comando") {
+    // A Codex embrulha o comando no shell: powershell -Command '...', bash -lc '...'.
+    const raw = str(input.command);
+    const command = (/(?:-Command|-lc|-c)\s+(['"])([\s\S]*)\1\s*$/.exec(raw)?.[2] ?? raw).trim();
     return command ? `Rodando: ${clip(command, 50)}` : "Rodando um comando";
+  }
+  if (name === "Alterar arquivos") {
+    const files = str(input.path).split(/,\s*/).filter(Boolean);
+    if (!files.length || files[0] === "arquivos") return "Editando arquivos";
+    return files.length === 1 ? `Editando ${shortPath(files[0])}` : `Editando ${shortPath(files[0])} e mais ${files.length - 1}`;
   }
   if (name === "TodoWrite") return "Organizando os próximos passos";
   if (name === "Task") return "Chamando um ajudante";

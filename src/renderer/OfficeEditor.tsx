@@ -1,6 +1,6 @@
 import React from "react";
 import { Armchair, Eraser, MousePointer2, Monitor, Paintbrush, Trash2 } from "lucide-react";
-import type { FurnitureKind, OfficeAgent, OfficeLayout, TileKind } from "../shared/office";
+import { OFFICE_PROVIDERS, type FurnitureKind, type OfficeAgent, type OfficeLayout, type OfficeProvider, type TileKind } from "../shared/office";
 import {
   FURNITURE_LABEL,
   MAX_AGENTS,
@@ -199,14 +199,50 @@ export function OfficeEditor({
             </select>
           </label>
           <label>
-            Modelo
-            <select id="office-agent-model" value={agent.model} onChange={(e) => set({ model: e.target.value as OfficeAgent["model"] })}>
-              <option value="padrao">Padrão da CLI</option>
-              <option value="haiku">Haiku (rápido)</option>
-              <option value="sonnet">Sonnet</option>
-              <option value="opus">Opus (mais capaz)</option>
+            Motor
+            <select
+              id="office-agent-provider"
+              value={agent.provider ?? "claude"}
+              onChange={(e) => {
+                const provider = e.target.value as OfficeProvider;
+                // Haiku, Sonnet e Opus são do Claude: na Codex vale o modelo padrão dela.
+                set(provider === "codex" ? { provider, model: "padrao" } : { provider });
+              }}
+            >
+              <option value="claude">Claude</option>
+              <option value="codex">Codex</option>
             </select>
           </label>
+          {layout.agents.length > 1 && (
+            <button
+              type="button"
+              className="office-link"
+              onClick={() => {
+                const provider = agent.provider ?? "claude";
+                onChange({
+                  ...layout,
+                  agents: layout.agents.map((a) =>
+                    provider === "codex" ? { ...a, provider, model: "padrao" } : { ...a, provider },
+                  ),
+                });
+              }}
+            >
+              Usar {OFFICE_PROVIDERS[agent.provider ?? "claude"]} na equipe toda
+            </button>
+          )}
+          {(agent.provider ?? "claude") === "claude" ? (
+            <label>
+              Modelo
+              <select id="office-agent-model" value={agent.model} onChange={(e) => set({ model: e.target.value as OfficeAgent["model"] })}>
+                <option value="padrao">Padrão da CLI</option>
+                <option value="haiku">Haiku (rápido)</option>
+                <option value="sonnet">Sonnet</option>
+                <option value="opus">Opus (mais capaz)</option>
+              </select>
+            </label>
+          ) : (
+            <p className="office-muted">Usa o modelo configurado na Codex. Lê o projeto sem alterar nada; o código sai numa tarefa da Codex.</p>
+          )}
           <label className="office-check">
             <input id="office-agent-web" type="checkbox" checked={agent.web} onChange={(e) => set({ web: e.target.checked })} />
             Pode pesquisar na web

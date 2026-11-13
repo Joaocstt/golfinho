@@ -69,6 +69,7 @@ const officeLayout = z
             mode: z.enum(["deliver", "task"]),
             web: z.boolean(),
             model: z.enum(["padrao", "haiku", "sonnet", "opus"]),
+            provider: z.enum(["claude", "codex"]).optional(),
             color,
             hair: color,
             desk: z.object({ col: cell, row: cell }).strict(),

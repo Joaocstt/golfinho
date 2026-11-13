@@ -156,7 +156,7 @@ else {
         project: (id) => store!.project(id),
         memory: (projectId, text) =>
           store!.settings().memory?.enabled === false ? null : prepareMemory(store!, projectId, text, false).text,
-        createTask: async (p, title, prompt, hint) => {
+        createTask: async (p, title, prompt, hint, provider) => {
           const folder = isFolderProject(p);
           const slug =
             hint.toLowerCase().normalize("NFD").replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) ||
@@ -168,7 +168,7 @@ else {
               projectId: p.id,
               title,
               prompt: prompt.slice(0, 16000),
-              provider: "claude",
+              provider,
               branch: folder ? "" : `golfinho/escritorio-${slug}-${randomUUID().slice(0, 4)}`,
               base: folder ? "" : await git.current(p.path),
               remote: remotes[0] ?? "",
@@ -177,7 +177,7 @@ else {
           })) as Task;
         },
         emit: (state) => signal({ kind: "office", state }),
-        executable: () => store!.settings().executables.claude,
+        executable: (provider) => store!.settings().executables[provider],
         load: (projectId) => store!.office(projectId),
         save: (projectId, state) => store!.saveOffice(projectId, state),
         runTask: async (taskId, text) => {

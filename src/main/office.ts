@@ -3,6 +3,8 @@ import { query, type PermissionResult } from "@anthropic-ai/claude-agent-sdk";
 import type { Project, Task } from "../shared/contracts";
 import {
   OFFICE_MAX_ROUNDS,
+  OFFICE_PROVIDERS,
+  agentProvider,
   officeAgent,
   officeTools,
   type OfficeAgent,
@@ -11,11 +13,13 @@ import {
   type OfficeLayout,
   type OfficeLogEntry,
   type OfficeMessage,
+  type OfficeProvider,
   type OfficeState,
 } from "../shared/office";
 import { defaultLayout, layoutProblems } from "../shared/officeLayout";
 import { summarize, wslSpawn } from "./chat";
 import { sdkExecutableOption } from "./sdkBinary";
+import { codexExec } from "./codexExec";
 import { chatToolInput, describeTool, speechFrom } from "../shared/officeSpeech";
 import type { ChatEvent } from "../shared/contracts";
 
@@ -24,7 +28,7 @@ export interface OfficeDeps {
   /** Pacote da memória do projeto para o pedido; null quando desligada ou vazia. */
   memory(projectId: string, text: string): string | null;
   /** Cria a tarefa do Golfinho (rascunho) que o agente de código preparou. */
-  createTask(project: Project, title: string, prompt: string, branchHint: string): Promise<Task>;
+  createTask(project: Project, title: string, prompt: string, branchHint: string, provider: OfficeProvider): Promise<Task>;
   /** Prepara a branch e manda as instruções pelo chat da tarefa; o andamento chega por onChat. */
   runTask(taskId: string, text: string): Promise<void>;
   /** Fim da execução: a tarefa vai para revisão (ou falha) e a pasta fica livre. */
@@ -40,7 +44,8 @@ export interface OfficeDeps {
   /** Aviso do sistema (a janela fora de foco decide se aparece). */
   notify(title: string, body: string): void;
   emit(state: OfficeState): void;
-  executable(): string | undefined;
+  /** Caminho configurado da CLI (Claude ou Codex). */
+  executable(provider: OfficeProvider): string | undefined;
   /** Escritório salvo do projeto (sala e histórico), ou null. */
   load(projectId: string): unknown;
   save(projectId: string, state: OfficeState): void;
@@ -281,7 +286,7 @@ Conversa:
 ${conversation(agent, chat)}
 
 Responda só com JSON: {"acao":"aceitar|encaminhar|esclarecer","para":"id ou null","fala":"resposta ao chefe em português do Brasil, 1 ou 2 frases curtas, com a sua personalidade","titulo":"título curto da tarefa, só se aceitar"}`;
-    const data = parseJson(await this.run(prompt, { cwd: project.path, tools: [], model: "haiku", maxTurns: 1 }));
+    const data = parseJson(await this.run(prompt, { cwd: project.path, tools: [], model: "haiku", maxTurns: 1, provider: agentProvider(agent) }));
     const reply = str(data?.fala);
     const action = str(data?.acao);
     if (!data || !reply) throw new Error("resposta fora do formato");
@@ -372,6 +377,7 @@ Faça o trabalho agora. Investigue o projeto no que for útil e escreva a entreg
         cwd: project.path,
         tools: officeTools(agent),
         model: MODEL[agent.model],
+        provider: agentProvider(agent),
         maxTurns: 40,
         jobId: job.id,
         onTool: (name, input, raw) => {
@@ -472,6 +478,7 @@ Responda só com JSON: {"aprovado":true,"correcoes":["..."],"notas":["até 3 obs
           cwd: project.path,
           tools: officeTools(reviewer),
           model: MODEL[reviewer.model],
+          provider: agentProvider(reviewer),
           maxTurns: 25,
           jobId: job.id,
           onTool: (name, input, raw) => {
@@ -541,7 +548,7 @@ Responda só com JSON: {"aprovado":true,"correcoes":["..."],"notas":["até 3 obs
     const resumed = Boolean(job.taskId);
     const task = job.taskId
       ? { id: job.taskId }
-      : await this.deps.createTask(this.deps.project(projectId), plan.title, plan.instructions, plan.branch);
+      : await this.deps.createTask(this.deps.project(projectId), plan.title, plan.instructions, plan.branch, agentProvider(agent));
     if (!resumed) {
       job.taskId = task.id;
       const created = task as Task;
@@ -826,6 +833,8 @@ ${rules}`;
       tools: string[];
       model?: string;
       maxTurns: number;
+      /** CLI que responde; sem dizer, o Claude. */
+      provider?: OfficeProvider;
       onTool?: (name: string, input: Record<string, unknown>, raw: string) => void;
       /** Texto que o agente escreve entre as ferramentas (a narração). */
       onText?: (text: string) => void;
@@ -838,6 +847,19 @@ ${rules}`;
     this.controllers.add(controller);
     if (o.jobId) this.jobControllers.set(o.jobId, controller);
     try {
+      if (o.provider === "codex")
+        // A Codex não tem lista de ferramentas: lê o projeto pelo terminal num sandbox só leitura,
+        // e a web só entra para quem pode pesquisar. Os nomes de modelo do Claude não valem nela.
+        return await codexExec(prompt, {
+          cwd: o.cwd,
+          executable: this.deps.executable("codex"),
+          web: o.tools.includes("WebSearch"),
+          signal: controller.signal,
+          onTool: o.onTool,
+          onText: o.onText,
+        }).catch((error: Error) => {
+          throw controller.signal.aborted ? error : new Error(`${OFFICE_PROVIDERS.codex}: ${error.message}`);
+        });
       const stream = query({
         prompt,
         options: {
@@ -851,7 +873,7 @@ ${rules}`;
           canUseTool: deny,
           abortController: controller,
           ...sdkExecutableOption(),
-          ...wslSpawn(o.cwd, this.deps.executable()),
+          ...wslSpawn(o.cwd, this.deps.executable("claude")),
         },
       });
       let result: string | null = null;

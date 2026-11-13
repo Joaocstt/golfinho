@@ -7637,3 +7637,13 @@ select {
 .job-controls .danger {
   color: var(--danger);
 }
+.office-link {
+  align-self: flex-start;
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--accent, #6aa7ff);
+  font-size: 12px;
+  cursor: pointer;
+  text-decoration: underline;
+}

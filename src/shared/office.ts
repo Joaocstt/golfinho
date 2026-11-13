@@ -5,6 +5,10 @@
 
 export type OfficeAgentId = string;
 export type OfficeModel = "padrao" | "haiku" | "sonnet" | "opus";
+/** CLI que o agente usa para pensar e trabalhar. */
+export type OfficeProvider = "claude" | "codex";
+export const OFFICE_PROVIDERS: Record<OfficeProvider, string> = { claude: "Claude", codex: "Codex" };
+export const agentProvider = (a: Pick<OfficeAgent, "provider">): OfficeProvider => a.provider ?? "claude";
 
 export interface OfficeAgent {
   /** Letras minúsculas, números e hífen. Estável: o histórico aponta para ele. */
@@ -22,8 +26,10 @@ export interface OfficeAgent {
   mode: "deliver" | "task";
   /** Pode pesquisar na web, além de ler o projeto. */
   web: boolean;
-  /** "padrao" usa o modelo padrão da CLI. */
+  /** "padrao" usa o modelo padrão da CLI. Os outros valem só para o Claude. */
   model: OfficeModel;
+  /** Claude (padrão) ou Codex. */
+  provider?: OfficeProvider;
   color: string;
   hair: string;
   /** Canto superior esquerdo da mesa (3 x 2 células). */

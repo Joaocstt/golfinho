@@ -20,6 +20,17 @@ vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
     })();
   },
 }));
+const codex = vi.hoisted(() => ({
+  calls: [] as { prompt: string; o: any }[],
+  answer: (_prompt: string): string => "",
+}));
+vi.mock("../src/main/codexExec", () => ({
+  codexExec: async (prompt: string, o: any) => {
+    codex.calls.push({ prompt, o });
+    o.onTool?.("Bash", { command: "rg login" }, "rg login");
+    return codex.answer(prompt);
+  },
+}));
 import { Office, parseJson } from "../src/main/office";
 import { defaultLayout } from "../src/shared/officeLayout";
 
@@ -70,9 +81,11 @@ const approve = async () => {
   await settle();
 };
 let created: { title: string; prompt: string; hint: string }[];
+let createdProviders: string[] = [];
 let saved: Map<string, unknown>;
 beforeEach(() => {
   sdk.calls.length = 0;
+  createdProviders = [];
   states = [];
   created = [];
   saved = new Map();
@@ -90,8 +103,9 @@ beforeEach(() => {
       return project;
     },
     memory: () => "## Memória do projeto\n- usa Electron",
-    createTask: async (_p, title, prompt, hint) => {
+    createTask: async (_p, title, prompt, hint, provider) => {
       created.push({ title, prompt, hint });
+      createdProviders.push(provider);
       return { id: "22222222-2222-4222-8222-222222222222" } as Task;
     },
     emit: (s) => states.push(s),
@@ -521,4 +535,31 @@ it("pedido de permissão do agente gera aviso", async () => {
   await settle();
   await approve();
   expect(run.notified).toContain("Bruno pede permissão: Rodando: npm test");
+});
+
+it("agente na Codex: pensa e trabalha pela Codex, e a implementação vira tarefa da Codex", async () => {
+  codex.calls.length = 0;
+  codex.answer = (prompt) =>
+    prompt.includes("Decida o que fazer")
+      ? '{"acao":"aceitar","fala":"Bora","titulo":"Corrigir login"}'
+      : '{"titulo":"Corrigir login","branch":"login","instrucoes":"Plano","resumo":"r"}';
+  const layout = defaultLayout();
+  office.saveLayout(project.id, {
+    ...layout,
+    reviewer: null,
+    agents: layout.agents.map((a) => (a.id === "bruno" ? { ...a, provider: "codex" as const } : a)),
+  });
+  await office.ask(project.id, "bruno", "Corrige o login");
+  await settle();
+  // Nada foi para o Claude: decidir e planejar saíram da Codex, sem os modelos do Claude.
+  expect(sdk.calls).toHaveLength(0);
+  expect(codex.calls).toHaveLength(2);
+  expect(codex.calls[0].o).toMatchObject({ cwd: project.path, web: false });
+  expect(codex.calls[0].o.model).toBeUndefined();
+  const job = office.state(project.id).jobs[0];
+  expect(job).toMatchObject({ status: "entregue", stage: "plano" });
+  expect(job.log?.some((e) => e.kind === "ferramenta")).toBe(true);
+  await approve();
+  expect(createdProviders).toEqual(["codex"]);
+  expect(office.state(project.id).jobs[0].status).toBe("entregue");
 });

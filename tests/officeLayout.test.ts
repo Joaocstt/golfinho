@@ -88,3 +88,8 @@ it("as ações viram frases curtas, sem caminho completo", () => {
   expect(speechFrom("**Vou** conferir os testes agora. E depois...")).toBe("Vou conferir os testes agora.");
   expect(speechFrom('{"titulo":"x"}')).toBe("");
 });
+
+it("descreve os passos do chat da Codex sem o embrulho do shell", () => {
+  expect(describeTool("Comando", { command: `"C:\WINDOWS\powershell.exe" -Command 'npm test'` })).toBe("Rodando: npm test");
+  expect(describeTool("Alterar arquivos", { path: "src/a.ts, src/b.ts" })).toBe("Editando a.ts (src) e mais 1");
+});
