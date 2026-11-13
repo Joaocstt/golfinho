@@ -56,7 +56,6 @@
     monospace;
   /* Nomes antigos, apontando para os novos. */
   --background: var(--page);
-  --surface: var(--surface-1);
   --branch: var(--surface-2);
   --branch-accent: var(--surface-3);
   --accent: var(--surface-3);
