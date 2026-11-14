@@ -348,6 +348,9 @@ export class Store {
       setup: parsed.setup && typeof parsed.setup === "object" ? parsed.setup : {},
       ssh: Array.isArray(parsed.ssh) ? parsed.ssh : [],
       ...(parsed.memory ? { memory: parsed.memory } : {}),
+      ...(parsed.office && typeof parsed.office === "object"
+        ? { office: { enabled: parsed.office.enabled === true, tutorial: parsed.office.tutorial === true } }
+        : {}),
     };
   }
   saveSettings(s: Settings) {

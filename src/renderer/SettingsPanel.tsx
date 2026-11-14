@@ -53,6 +53,7 @@ export function SettingsPanel({
   const [uiScale, setUiScale] = useState(readUiScale);
   const dirty = useMemo(() => JSON.stringify(normalize(draft)) !== JSON.stringify(normalize(settings)), [draft, settings]);
   const memoryOn = draft.memory?.enabled !== false;
+  const officeOn = draft.office?.enabled === true;
 
   function go(next: Section) {
     setSection(next);
@@ -236,6 +237,35 @@ export function SettingsPanel({
               })}
             </>
           )}
+          {section === "geral" && (
+            <div className="settings-card">
+              <div className="settings-row">
+                <div className="settings-label">
+                  <strong id="office-switch-label">Usar o Escritório</strong>
+                  <small>A equipe de agentes em 3D, ligada ao chat das tarefas. Desligado, nada roda nem aparece na sala.</small>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={officeOn}
+                  aria-labelledby="office-switch-label"
+                  className={"settings-switch" + (officeOn ? " on" : "")}
+                  onClick={() => setDraft({ ...draft, office: { enabled: !officeOn, tutorial: true } })}
+                >
+                  <span />
+                </button>
+              </div>
+              <div className="settings-row">
+                <div className="settings-label">
+                  <strong>Tutorial do Escritório</strong>
+                  <small>Mostra de novo a explicação e a montagem da equipe na próxima vez que você abrir o Escritório.</small>
+                </div>
+                <button type="button" onClick={() => setDraft({ ...draft, office: { enabled: officeOn, tutorial: false } })}>
+                  Ver de novo
+                </button>
+              </div>
+            </div>
+          )}
           {section === "memoria" && (
             <>
               <SectionHead
@@ -343,5 +373,6 @@ function normalize(s: Settings): Settings {
         .filter(([, command]) => command),
     ),
     memory: { enabled: s.memory?.enabled !== false },
+    ...(s.office ? { office: s.office } : {}),
   };
 }

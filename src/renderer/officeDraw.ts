@@ -192,6 +192,14 @@ export function drawFurniture(ctx: Ctx, f: Furniture, o: { project: string; deli
     ctx.fillStyle = "#cfe8ff";
     ctx.font = "10px system-ui";
     ctx.fillText(o.summary ?? "", x + 80, y + 28);
+  } else if (f.kind === "reuniao") {
+    // Mesa comprida no meio e as cadeiras dos dois lados.
+    for (let i = 0; i < 4; i++) {
+      rr(ctx, x + 10 + i * CELL, y + 4, 20, 14, 4, "#3a4b63");
+      rr(ctx, x + 10 + i * CELL, y + 3 * CELL - 18, 20, 14, 4, "#3a4b63");
+    }
+    rr(ctx, x + 6, y + 22, 4 * CELL - 12, 3 * CELL - 44, 6, "#5a3a26");
+    rr(ctx, x + 70, y + 50, 26, 18, 2, "#d9d9d9");
   } else if (f.kind === "bebedouro") {
     rr(ctx, x + 10, y + 16, 20, 22, 3, "#dfe7ea");
     rr(ctx, x + 12, y + 2, 16, 16, 6, "#7cc6ef");

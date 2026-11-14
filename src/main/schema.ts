@@ -32,12 +32,18 @@ const settings = z
       .max(100)
       .default([]),
     memory: z.object({ enabled: z.boolean() }).strict().optional(),
+    office: z.object({ enabled: z.boolean(), tutorial: z.boolean() }).strict().optional(),
   })
   .strict();
 // Sala do Escritório: o formato aqui, as regras (sobreposição, caminhos) em layoutProblems.
 const officeId = z.string().regex(/^[a-z0-9-]{1,40}$/, "Identificador de agente inválido.");
 const cell = z.number().int().min(0).max(63);
 const color = z.string().regex(/^#[0-9a-fA-F]{6}$/, "Cor inválida.");
+// Personagem e mesa 3D: campos curtos (texto, número, sim/não). Quem desenha valida cada um e
+// cai no padrão quando não reconhece; aqui só se garante que é pequeno e sem estrutura aninhada.
+const officeStyle = z
+  .record(z.string().regex(/^[a-zA-Z]{1,24}$/), z.union([z.string().max(40), z.number().finite(), z.boolean()]))
+  .refine((v) => Object.keys(v).length <= 40, "Estilo com campos demais.");
 const officeLayout = z
   .object({
     cols: z.number().int().min(10).max(40),
@@ -48,7 +54,7 @@ const officeLayout = z
         z
           .object({
             id: z.string().regex(/^[a-z0-9-]{1,40}$/),
-            kind: z.enum(["planta", "quadro", "chefe", "sofa", "estante", "bebedouro", "telao"]),
+            kind: z.enum(["planta", "quadro", "chefe", "sofa", "estante", "bebedouro", "telao", "reuniao"]),
             col: cell,
             row: cell,
           })
@@ -70,6 +76,8 @@ const officeLayout = z
             web: z.boolean(),
             model: z.enum(["padrao", "haiku", "sonnet", "opus"]),
             provider: z.enum(["claude", "codex"]).optional(),
+            look: officeStyle.optional(),
+            deskStyle: officeStyle.optional(),
             color,
             hair: color,
             desk: z.object({ col: cell, row: cell }).strict(),
@@ -79,6 +87,7 @@ const officeLayout = z
       .min(1)
       .max(8),
     reviewer: officeId.nullable(),
+    bossLook: officeStyle.optional(),
   })
   .strict();
 const memoryKind = z.enum(["decisao", "convencao", "armadilha", "contexto", "tarefa"]);
@@ -102,6 +111,14 @@ export const requestSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("officeCommit"), projectId: id, jobId: id }).strict(),
   z.object({ action: z.literal("officeImplement"), projectId: id, jobId: id }).strict(),
   z.object({ action: z.literal("officeCancel"), projectId: id, jobId: id }).strict(),
+  z
+    .object({
+      action: z.literal("officeMeeting"),
+      projectId: id,
+      agentIds: z.array(officeId).min(2, "Chame pelo menos duas pessoas.").max(4, "No máximo quatro pessoas por reunião."),
+      text: z.string().trim().min(1, "Diga o assunto da reunião.").max(4000),
+    })
+    .strict(),
   z.object({ action: z.literal("officeRetry"), projectId: id, jobId: id }).strict(),
   z.object({ action: z.literal("officeSaveLayout"), projectId: id, layout: officeLayout }).strict(),
   z

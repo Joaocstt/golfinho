@@ -30,6 +30,10 @@ export interface OfficeAgent {
   model: OfficeModel;
   /** Claude (padrão) ou Codex. */
   provider?: OfficeProvider;
+  /** Personagem 3D (corpo, cabelo, roupa, acessórios, pet), no formato do Golfinho Call. Sem ele, um a partir da cor. */
+  look?: Record<string, unknown>;
+  /** Setup da mesa (monitores, LEDs, teclado, cadeira, PC, enfeites), no formato do Golfinho Call. */
+  deskStyle?: Record<string, unknown>;
   color: string;
   hair: string;
   /** Canto superior esquerdo da mesa (3 x 2 células). */
@@ -37,7 +41,7 @@ export interface OfficeAgent {
 }
 
 export type TileKind = "piso" | "tapete" | "azulejo" | "parede" | "janela";
-export type FurnitureKind = "planta" | "quadro" | "chefe" | "sofa" | "estante" | "bebedouro" | "telao";
+export type FurnitureKind = "planta" | "quadro" | "chefe" | "sofa" | "estante" | "bebedouro" | "telao" | "reuniao";
 
 export interface Furniture {
   id: string;
@@ -55,6 +59,8 @@ export interface OfficeLayout {
   agents: OfficeAgent[];
   /** Quem revisa as entregas dos outros; null entrega direto. */
   reviewer: OfficeAgentId | null;
+  /** Personagem 3D do chefe (a pessoa). */
+  bossLook?: Record<string, unknown>;
 }
 
 export interface OfficeMessage {
@@ -66,6 +72,11 @@ export type OfficeJobStatus = "fila" | "fazendo" | "revisao" | "entregue" | "err
 
 export interface OfficeJob {
   id: string;
+  /** "chat": pedido feito no chat de uma tarefa do Golfinho; o Escritório só acompanha (não vai à mesa do chefe). */
+  origin?: "chat";
+  /** Saída do último comando que o agente rodou na tarefa (o fim dela), para a tela ampliada. */
+  output?: string;
+  outputError?: boolean;
   agentId: OfficeAgentId;
   /** Nome na época do pedido: o agente pode ser renomeado ou sair da equipe depois. */
   agentName: string;
@@ -128,6 +139,25 @@ export interface OfficeState {
   /** Agentes decidindo uma resposta agora. */
   thinking: OfficeAgentId[];
   jobs: OfficeJob[];
+  /** A última reunião (a que está acontecendo, ou a que acabou). */
+  meeting?: OfficeMeeting | null;
+}
+
+// Reunião: o chefe leva um pedido grande para alguns agentes. Eles discutem (as falas aparecem
+// em balões na mesa de reunião) e saem com o trabalho dividido: um pedido para cada um, que
+// segue o caminho normal (plano de código ainda passa pela mesa do chefe).
+export interface OfficeMeeting {
+  id: string;
+  agentIds: OfficeAgentId[];
+  request: string;
+  status: "discutindo" | "pronta" | "erro";
+  /** A conversa, na ordem: quem falou e o quê. */
+  lines: { agentId: OfficeAgentId; text: string }[];
+  summary: string;
+  /** O que cada um saiu fazendo, com o trabalho criado. */
+  tasks: { agentId: OfficeAgentId; title: string; jobId: string }[];
+  error?: string;
+  createdAt: string;
 }
 
 export interface OfficeDecision {

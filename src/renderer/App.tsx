@@ -50,6 +50,8 @@ import { SshPanel } from "./SshPanel";
 import { HelpPane } from "./HelpPane";
 import { MemoryPane } from "./MemoryPane";
 import { OfficePane } from "./OfficePane";
+import { OfficeTutorial } from "./OfficeTutorial";
+import { OfficeOff } from "./OfficeOff";
 import { SettingsPanel } from "./SettingsPanel";
 import { TaskForm } from "./TaskForm";
 import { ConfirmProvider, useConfirm } from "./ui";
@@ -989,7 +991,18 @@ function Workspace() {
               onOpenTask={openTask}
             />
           )}
-          {officeView && snapshot && (
+          {officeView && snapshot && !snapshot.settings.office?.tutorial && (
+            <OfficeTutorial
+              projects={snapshot.projects}
+              initialProject={project}
+              settings={snapshot.settings}
+              onClose={() => setOfficeView(false)}
+            />
+          )}
+          {officeView && snapshot && snapshot.settings.office?.tutorial && !snapshot.settings.office.enabled && (
+            <OfficeOff settings={snapshot.settings} />
+          )}
+          {officeView && snapshot && snapshot.settings.office?.tutorial && snapshot.settings.office.enabled && (
             <OfficePane projects={snapshot.projects} tasks={snapshot.tasks} initialProject={project} onOpenTask={openTask} />
           )}
           {sshView && snapshot && (

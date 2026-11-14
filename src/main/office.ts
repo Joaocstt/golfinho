@@ -12,6 +12,7 @@ import {
   type OfficeJob,
   type OfficeLayout,
   type OfficeLogEntry,
+  type OfficeMeeting,
   type OfficeMessage,
   type OfficeProvider,
   type OfficeState,
@@ -43,6 +44,10 @@ export interface OfficeDeps {
   interrupt(taskId: string): Promise<void>;
   /** Aviso do sistema (a janela fora de foco decide se aparece). */
   notify(title: string, body: string): void;
+  /** Tarefa do Golfinho pelo id (para espelhar no Escritório o chat dela); null se não existe. */
+  task(taskId: string): Task | null;
+  /** O Escritório está em uso: só então o chat das tarefas aparece na sala. */
+  enabled(): boolean;
   emit(state: OfficeState): void;
   /** Caminho configurado da CLI (Claude ou Codex). */
   executable(provider: OfficeProvider): string | undefined;
@@ -66,6 +71,7 @@ const MODEL: Record<OfficeAgent["model"], string | undefined> = {
 const KEEP_JOBS = 60;
 const KEEP_MESSAGES = 80;
 const KEEP_LOG = 200;
+const OUTPUT_LIMIT = 4000;
 
 // Histórico do trabalho para o telão: cada passo com hora e quem fez.
 function note(job: OfficeJob, who: string, kind: OfficeLogEntry["kind"], text: string, detail?: string) {
@@ -122,9 +128,20 @@ interface Run {
   done: (r: { ok: boolean; message?: string }) => void;
 }
 
+// Chat de uma tarefa que o Escritório não começou: um agente "atende" enquanto o turno anda.
+interface Mirror {
+  projectId: string;
+  job: OfficeJob;
+  agent: OfficeAgent;
+  summary: string;
+  /** O agente estava livre e ficou ocupado com o chat (volta a pegar trabalho quando acabar). */
+  holds: boolean;
+}
+
 export class Office {
   private states = new Map<string, OfficeState>();
   private runs = new Map<string, Run>();
+  private mirrors = new Map<string, Mirror>();
   private busy = new Set<string>();
   private reviewing = new Set<string>();
   private plans = new Map<string, Plan>();
@@ -158,7 +175,12 @@ export class Office {
     } catch {}
     const jobs = Array.isArray(saved.jobs) ? saved.jobs : [];
     for (const job of jobs)
-      if (job.status === "fila" || job.status === "fazendo" || job.status === "revisao") {
+      if (job.origin === "chat" && job.status === "fazendo") {
+        job.status = "entregue";
+        job.activity = "";
+        job.approval = undefined;
+        job.read = true;
+      } else if (job.status === "fila" || job.status === "fazendo" || job.status === "revisao") {
         job.status = "erro";
         job.activity = "";
         job.error = "Interrompido quando o Golfinho fechou. Peça de novo.";
@@ -166,7 +188,9 @@ export class Office {
       }
     for (const [id, plan] of Object.entries(saved.plans ?? {})) this.plans.set(id, plan);
     for (const [id, text] of Object.entries(saved.contexts ?? {})) this.contexts.set(id, text);
-    return { projectId, layout, chats: saved.chats && typeof saved.chats === "object" ? saved.chats : {}, thinking: [], jobs };
+    const meeting = saved.meeting && typeof saved.meeting === "object" ? saved.meeting : null;
+    if (meeting?.status === "discutindo") Object.assign(meeting, { status: "erro", error: "Interrompida quando o Golfinho fechou." });
+    return { projectId, layout, chats: saved.chats && typeof saved.chats === "object" ? saved.chats : {}, thinking: [], jobs, meeting };
   }
 
   saveLayout(projectId: string, layout: OfficeLayout): OfficeState {
@@ -253,6 +277,101 @@ export class Office {
     this.pump(projectId);
     const { title: _title, ...answer } = decision;
     return answer;
+  }
+
+  // Reunião: os agentes escolhidos discutem o pedido (uma consulta que lê o projeto e devolve a
+  // conversa, o resumo e o que cada um faz). Cada parte vira um trabalho normal na fila de quem
+  // ficou com ela: relatórios voltam para a mesa do chefe; código ainda sai como plano.
+  async meeting(projectId: string, agentIds: string[], text: string): Promise<OfficeState> {
+    const project = this.deps.project(projectId);
+    const s = this.state(projectId);
+    if (s.meeting?.status === "discutindo") throw new Error("Já tem uma reunião acontecendo.");
+    const team = [...new Set(agentIds)].map((id) => officeAgent(s.layout, id));
+    if (team.some((a) => !a)) throw new Error("Alguém chamado para a reunião não está na equipe.");
+    const people = team as OfficeAgent[];
+    if (people.length < 2) throw new Error("Chame pelo menos duas pessoas.");
+    const meeting: OfficeMeeting = {
+      id: randomUUID(),
+      agentIds: people.map((a) => a.id),
+      request: text,
+      status: "discutindo",
+      lines: [],
+      summary: "",
+      tasks: [],
+      createdAt: new Date().toISOString(),
+    };
+    s.meeting = meeting;
+    this.emit(s);
+    void this.discuss(projectId, project, people, meeting);
+    return s;
+  }
+
+  private async discuss(projectId: string, project: Project, people: OfficeAgent[], meeting: OfficeMeeting) {
+    const s = this.state(projectId);
+    const memory = this.deps.memory(projectId, meeting.request);
+    const prompt = `Você conduz uma reunião rápida da equipe do Escritório do Golfinho, no projeto "${project.name}" (pasta ${project.path}).
+${memory ? `\nMemória do projeto:\n${memory}\n` : ""}
+Na reunião:
+${people.map((a) => `- id "${a.id}": ${a.name}, ${a.role}. Cuida de: ${a.scope}. ${a.mode === "task" ? "Entrega código (vira plano para o chefe aprovar)." : "Entrega texto (pesquisa, relatório, design, revisão)."} Personalidade: ${a.personality || "profissional"}.`).join("\n")}
+
+O chefe trouxe este pedido:
+${meeting.request}
+
+Olhe o projeto no que for útil (sem alterar nada). Depois escreva a conversa da reunião: 4 a 8 falas curtas e naturais, em português do Brasil, cada pessoa falando da parte dela, combinando quem faz o quê. Por fim, divida o trabalho: uma parte para cada pessoa que tiver algo a fazer (pode ficar alguém sem tarefa), com um pedido claro e completo, como se o chefe pedisse direto a ela.
+Responda só com JSON: {"conversa":[{"id":"id de quem fala","fala":"..."}],"resumo":"2 a 3 frases para o chefe","tarefas":[{"id":"id de quem faz","titulo":"até 60 caracteres","pedido":"o pedido completo para essa pessoa"}]}`;
+    try {
+      const lead = people.find((a) => a.mode === "task") ?? people[0];
+      const data = parseJson(
+        await this.run(prompt, {
+          cwd: project.path,
+          tools: ["Read", "Glob", "Grep"],
+          model: MODEL[lead.model],
+          provider: agentProvider(lead),
+          maxTurns: 16,
+        }),
+      );
+      const ids = new Set(people.map((a) => a.id));
+      const lines = (Array.isArray(data?.conversa) ? data!.conversa : [])
+        .map((l: { id?: unknown; fala?: unknown }) => ({ agentId: str(l?.id), text: str(l?.fala) }))
+        .filter((l: { agentId: string; text: string }) => ids.has(l.agentId) && l.text)
+        .slice(0, 10);
+      const parts = (Array.isArray(data?.tarefas) ? data!.tarefas : [])
+        .map((t: { id?: unknown; titulo?: unknown; pedido?: unknown }) => ({ agentId: str(t?.id), title: str(t?.titulo).slice(0, 80), request: str(t?.pedido) }))
+        .filter((t: { agentId: string; request: string }) => ids.has(t.agentId) && t.request);
+      if (!lines.length && !parts.length) throw new Error("a reunião não chegou a um plano");
+      meeting.lines = lines;
+      meeting.summary = str(data?.resumo);
+      const context = `Reunião sobre: ${meeting.request}\nResumo: ${meeting.summary}\n${lines
+        .map((l: { agentId: string; text: string }) => `${officeAgent(s.layout, l.agentId)?.name ?? l.agentId}: ${l.text}`)
+        .join("\n")}`;
+      for (const part of parts) {
+        const agent = officeAgent(s.layout, part.agentId)!;
+        const job: OfficeJob = {
+          id: randomUUID(),
+          agentId: agent.id,
+          agentName: agent.name,
+          title: part.title || part.request.slice(0, 80),
+          request: part.request,
+          status: "fila",
+          activity: "",
+          result: "",
+          notes: [],
+          read: false,
+          createdAt: new Date().toISOString(),
+        };
+        this.contexts.set(job.id, context);
+        note(job, "Chefe", "pedido", `Da reunião: ${part.request}`);
+        s.jobs.unshift(job);
+        meeting.tasks.push({ agentId: agent.id, title: job.title, jobId: job.id });
+      }
+      meeting.status = "pronta";
+      this.trim(s);
+    } catch (error) {
+      meeting.status = "erro";
+      meeting.error = (error as Error).message;
+    }
+    if (s.meeting?.id === meeting.id) this.emit(s);
+    this.pump(projectId);
   }
 
   private trim(s: OfficeState) {
@@ -608,13 +727,26 @@ ${rules}`;
   /** Eventos do chat das tarefas: os da tarefa em execução viram falas, ações e aprovações. */
   onChat(taskId: string, event: ChatEvent) {
     const run = this.runs.get(taskId);
-    if (!run) return;
+    if (!run) return this.mirrorChat(taskId, event);
     const { job, agent } = run;
     const s = this.states.get(run.projectId);
+    const said = this.chatStep(job, agent, event);
+    if (said !== null) run.summary = said || run.summary;
+    if (event.type === "status" && event.state !== "running") {
+      if (event.state === "idle") run.done({ ok: event.message !== "Interrompido." , message: event.message });
+      else run.done({ ok: false, message: event.message ?? "a execução terminou com erro" });
+    }
+    if (s) this.emit(s);
+  }
+
+  // Falas, ações e pedidos de permissão do agente no chat; devolve o texto que ele escreveu
+  // (para o resumo final), "" se não escreveu nada novo, ou null se o evento não é fala.
+  private chatStep(job: OfficeJob, agent: OfficeAgent, event: ChatEvent): string | null {
+    let text: string | null = null;
     if (event.type === "assistant") {
       for (const block of event.blocks) {
         if (block.kind === "text") {
-          run.summary = block.text.trim() || run.summary;
+          text = block.text.trim();
           const said = speechFrom(block.text);
           if (said && said !== job.speech) {
             job.speech = said;
@@ -626,17 +758,123 @@ ${rules}`;
         }
       }
     } else if (event.type === "approval") {
-      const text = describeTool(event.toolName, chatToolInput(event.summary));
-      job.approval = { id: event.id, tool: event.toolName, text, canAlways: event.canAlwaysAllow };
-      job.speech = `Chefe, posso? ${text}`;
-      this.deps.notify(`${agent.name} pede permissão`, text);
-      note(job, agent.name, "fala", `Pediu permissão: ${text}`, `${event.toolName} ${event.summary}`);
+      const what = describeTool(event.toolName, chatToolInput(event.summary));
+      job.approval = { id: event.id, tool: event.toolName, text: what, canAlways: event.canAlwaysAllow };
+      job.speech = `Chefe, posso? ${what}`;
+      this.deps.notify(`${agent.name} pede permissão`, what);
+      note(job, agent.name, "fala", `Pediu permissão: ${what}`, `${event.toolName} ${event.summary}`);
     } else if (event.type === "approval_resolved") {
       if (job.approval?.id === event.id) job.approval = undefined;
       note(job, "Chefe", "revisao", event.behavior === "allow" ? "Permitiu." : "Negou.");
-    } else if (event.type === "status" && event.state !== "running") {
-      if (event.state === "idle") run.done({ ok: event.message !== "Interrompido." , message: event.message });
-      else run.done({ ok: false, message: event.message ?? "a execução terminou com erro" });
+    } else if (event.type === "tool_result" && event.text.trim()) {
+      // O fim da saída: é onde aparecem o resultado dos testes e os erros.
+      job.output = event.text.length > OUTPUT_LIMIT ? `…${event.text.slice(-OUTPUT_LIMIT)}` : event.text;
+      job.outputError = event.isError;
+    }
+    return text;
+  }
+
+  // Quem atende um chat: de preferência quem entrega código com o mesmo motor da tarefa e está
+  // livre; senão qualquer um livre com o mesmo motor; senão quem estiver livre. Todos ocupados:
+  // o de código mesmo, sem tirar o trabalho dele.
+  private chatAgent(s: OfficeState, task: Task): { agent: OfficeAgent; free: boolean } | null {
+    const provider = task.provider === "codex" ? "codex" : "claude";
+    const team = s.layout.agents;
+    const order = [
+      ...team.filter((a) => a.mode === "task" && agentProvider(a) === provider),
+      ...team.filter((a) => agentProvider(a) === provider),
+      ...team.filter((a) => a.mode === "task"),
+      ...team,
+    ];
+    const free = (a: OfficeAgent) =>
+      !this.busy.has(`${s.projectId}:${a.id}`) && ![...this.mirrors.values()].some((m) => m.projectId === s.projectId && m.agent.id === a.id);
+    const pick = order.find(free);
+    if (pick) return { agent: pick, free: true };
+    return order[0] ? { agent: order[0], free: false } : null;
+  }
+
+  // Pedido feito direto no chat de uma tarefa: o Escritório acompanha (um agente senta e trabalha
+  // na sala, com as falas e ações do chat), mas a conversa e as decisões continuam no chat.
+  private mirrorChat(taskId: string, event: ChatEvent) {
+    let m = this.mirrors.get(taskId);
+    if (!m) {
+      const starts = event.type === "user" || (event.type === "status" && event.state === "running");
+      if (!starts || this.stopped || !this.deps.enabled()) return;
+      const task = this.deps.task(taskId);
+      if (!task) return;
+      // Só onde já existe um escritório (aberto ou salvo): o chat não cria salas sozinho.
+      let s = this.states.get(task.projectId);
+      if (!s) {
+        try {
+          if (!this.deps.load(task.projectId)) return;
+          s = this.state(task.projectId);
+        } catch {
+          return;
+        }
+      }
+      const who = this.chatAgent(s, task);
+      if (!who) return;
+      const text = event.type === "user" ? event.text : "";
+      let job = s.jobs.find((j) => j.origin === "chat" && j.taskId === taskId);
+      if (job) {
+        s.jobs.splice(s.jobs.indexOf(job), 1);
+        Object.assign(job, { agentId: who.agent.id, agentName: who.agent.name, status: "fazendo", error: undefined, finishedAt: undefined, read: true });
+        if (text) job.request = text;
+      } else {
+        job = {
+          id: randomUUID(),
+          origin: "chat",
+          agentId: who.agent.id,
+          agentName: who.agent.name,
+          title: (task.title || task.prompt || "Tarefa do chat").slice(0, 120),
+          request: text || task.prompt || "",
+          status: "fazendo",
+          activity: "",
+          result: "",
+          notes: [],
+          taskId,
+          read: true,
+          createdAt: new Date().toISOString(),
+        };
+      }
+      job.activity = "Lendo o pedido do chat";
+      job.speech = undefined;
+      job.startedAt = new Date().toISOString();
+      s.jobs.unshift(job);
+      if (s.jobs.length > KEEP_JOBS) s.jobs.length = KEEP_JOBS;
+      if (text) note(job, "Chefe", "pedido", `No chat: ${text}`);
+      note(job, who.agent.name, "inicio", `${who.agent.name} atendeu o pedido do chat.`);
+      if (who.free) this.busy.add(`${s.projectId}:${who.agent.id}`);
+      m = { projectId: s.projectId, job, agent: who.agent, summary: "", holds: who.free };
+      this.mirrors.set(taskId, m);
+      if (event.type === "user") return this.emit(s);
+    }
+    const s = this.states.get(m.projectId);
+    const { job, agent } = m;
+    if (event.type === "user") {
+      job.request = event.text;
+      note(job, "Chefe", "pedido", `No chat: ${event.text}`);
+    }
+    const said = this.chatStep(job, agent, event);
+    if (said) m.summary = said;
+    if (event.type === "status" && event.state !== "running") {
+      this.mirrors.delete(taskId);
+      job.approval = undefined;
+      job.speech = undefined;
+      job.activity = "";
+      if (m.summary) job.result = m.summary;
+      if (job.cancelled) this.fail(job, new Error("cancelado"));
+      else if (event.state === "error") this.fail(job, new Error(event.message ?? "o chat terminou com erro"));
+      else {
+        job.status = "entregue";
+        job.finishedAt = new Date().toISOString();
+        note(job, agent.name, "fim", event.message === "Interrompido." ? "Parou no chat." : "Respondeu no chat.");
+      }
+      job.cancelled = undefined;
+      if (m.holds) {
+        this.busy.delete(`${m.projectId}:${agent.id}`);
+        this.pump(m.projectId);
+      }
     }
     if (s) this.emit(s);
   }
@@ -755,7 +993,7 @@ ${rules}`;
     job.cancelled = true;
     note(job, "Chefe", "pedido", "Cancelou o trabalho.");
     const running = this.jobControllers.get(job.id);
-    const chat = job.taskId && this.runs.has(job.taskId);
+    const chat = job.taskId && (this.runs.has(job.taskId) || this.mirrors.has(job.taskId));
     if (job.status === "fila" || (job.status === "revisao" && !this.reviewing.has(job.id))) {
       this.fail(job, new Error("cancelado"));
     } else if (chat) {
@@ -771,6 +1009,7 @@ ${rules}`;
     const s = this.state(projectId);
     const job = s.jobs.find((j) => j.id === jobId);
     if (!job || job.status !== "erro") throw new Error("Só dá para tentar de novo um trabalho que parou.");
+    if (job.origin === "chat") throw new Error("Esse pedido foi feito no chat: mande de novo por lá.");
     if (!s.layout.agents.some((a) => a.id === job.agentId)) throw new Error(`${job.agentName} não está mais na equipe.`);
     job.status = "fila";
     job.error = undefined;

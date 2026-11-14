@@ -25,6 +25,7 @@ export const FURNITURE_LABEL: Record<FurnitureKind, string> = {
   estante: "Estante",
   bebedouro: "Bebedouro",
   telao: "Telão",
+  reuniao: "Mesa de reunião",
 };
 export const FOOTPRINT: Record<FurnitureKind | "mesa", { w: number; h: number }> = {
   planta: { w: 1, h: 1 },
@@ -34,6 +35,7 @@ export const FOOTPRINT: Record<FurnitureKind | "mesa", { w: number; h: number }>
   estante: { w: 2, h: 1 },
   bebedouro: { w: 1, h: 1 },
   telao: { w: 4, h: 1 },
+  reuniao: { w: 4, h: 3 },
   mesa: { w: 3, h: 2 },
 };
 /** Só pode haver um de cada, e eles não saem da sala. */
@@ -98,6 +100,19 @@ export const boardSpot = (f: Furniture): Cell => ({ col: f.col + 1, row: f.row +
 /** Onde se olha o telão: logo abaixo, no meio. */
 export const screenSpot = (f: Furniture): Cell => ({ col: f.col + 2, row: f.row + 1 });
 export const screens = (l: OfficeLayout) => l.furniture.filter((f) => f.kind === "telao");
+export const meetingTable = (l: OfficeLayout) => l.furniture.find((f) => f.kind === "reuniao");
+/** Onde o chefe para para chamar uma reunião: no meio, logo abaixo da mesa. */
+export const meetingSpot = (f: Furniture): Cell => ({ col: f.col + 1, row: f.row + 3 });
+/**
+ * Os 8 lugares da mesa de reunião (4 em cima, 4 embaixo), em células: onde a pessoa senta, para
+ * onde olha (0 = para baixo na sala, PI = para cima) e por qual célula livre ela chega.
+ */
+export function meetingSeats(f: Furniture): { x: number; y: number; facing: number; approach: Cell }[] {
+  const seats = [];
+  for (let i = 0; i < 4; i++) seats.push({ x: f.col + 0.5 + i, y: f.row + 0.55, facing: 0, approach: { col: f.col + i, row: f.row - 1 } });
+  for (let i = 0; i < 4; i++) seats.push({ x: f.col + 0.5 + i, y: f.row + 2.45, facing: Math.PI, approach: { col: f.col + i, row: f.row + 3 } });
+  return seats;
+}
 
 /** Por onde o agente sai da cadeira: pelos lados da mesa, ou pela frente. */
 export function deskExit(l: OfficeLayout, a: OfficeAgent, grid = walkable(l)): Cell | null {
@@ -200,6 +215,7 @@ export function layoutProblems(l: OfficeLayout): string[] {
   const spots: [string, Cell][] = [
     ["o quadro do projeto", boardSpot(board(l)!)],
     ...l.agents.map((a): [string, Cell] => [`a mesa d${a.article} ${a.name}`, deskFront(a)]),
+    ...l.furniture.filter((f) => f.kind === "reuniao").map((f): [string, Cell] => ["a mesa de reunião", meetingSpot(f)]),
   ];
   for (const [what, spot] of spots)
     if (!findPath(l, start, spot, grid)) out.push(`O chefe não consegue chegar n${what.startsWith("o ") ? "o" : "a"} ${what.slice(2)}.`);
@@ -360,7 +376,11 @@ export const TEMPLATES: { id: string; label: string; hint: string; build: () => 
     id: "startup",
     label: "Startup",
     hint: "Pesquisa, código, design, textos e revisão.",
-    build: () => ({ cols: COLS, rows: ROWS, tiles: room(), furniture: corners(), agents: [ANA, BRUNO, CARLA, DAVI, EVA], reviewer: "eva" }),
+    build: () => ({
+      cols: COLS, rows: ROWS, tiles: room(),
+      furniture: [...corners(), { id: "reuniao-1", kind: "reuniao", col: 10, row: 8 }],
+      agents: [ANA, BRUNO, CARLA, DAVI, EVA], reviewer: "eva",
+    }),
   },
   {
     id: "dev",
@@ -368,7 +388,12 @@ export const TEMPLATES: { id: string; label: string; hint: string; build: () => 
     hint: "Um programador e uma revisora.",
     build: () => ({
       cols: COLS, rows: ROWS, tiles: room(),
-      furniture: [...corners(), { id: "sofa-1", kind: "sofa", col: 3, row: 10 }, { id: "bebedouro-1", kind: "bebedouro", col: 21, row: 10 }],
+      furniture: [
+        ...corners(),
+        { id: "sofa-1", kind: "sofa", col: 3, row: 10 },
+        { id: "bebedouro-1", kind: "bebedouro", col: 21, row: 10 },
+        { id: "reuniao-1", kind: "reuniao", col: 10, row: 8 },
+      ],
       agents: [{ ...BRUNO, desk: { col: 7, row: 3 } }, { ...EVA, desk: { col: 15, row: 3 } }],
       reviewer: "eva",
     }),
@@ -379,10 +404,61 @@ export const TEMPLATES: { id: string; label: string; hint: string; build: () => 
     hint: "Pesquisa, design e textos, com revisão.",
     build: () => ({
       cols: COLS, rows: ROWS, tiles: room(),
-      furniture: [...corners(), { id: "estante-1", kind: "estante", col: 21, row: 10 }],
+      furniture: [...corners(), { id: "estante-1", kind: "estante", col: 21, row: 10 }, { id: "reuniao-1", kind: "reuniao", col: 3, row: 9 }],
       agents: [ANA, { ...CARLA, desk: { col: 11, row: 3 } }, { ...DAVI, desk: { col: 19, row: 3 } }, { ...EVA, desk: { col: 11, row: 9 } }],
       reviewer: "eva",
     }),
   },
 ];
 export const defaultLayout = () => TEMPLATES[0].build();
+
+// ---------------- Tutorial de primeiro acesso ----------------
+
+/** No tutorial a equipe começa pequena: até 4 agentes (dá para crescer depois, no editor). */
+export const TUTORIAL_MAX_AGENTS = 4;
+
+/** Especialidades prontas para escolher no tutorial: o resto (área, escopo, jeito) vem delas. */
+export const ROLE_PRESETS: { id: string; label: string; hint: string; base: OfficeAgent }[] = [
+  { id: "pesquisa", label: "Pesquisa", hint: "Pesquisa, mercado, concorrentes e relatórios", base: ANA },
+  { id: "codigo", label: "Código", hint: "Planeja e implementa no projeto (com a sua aprovação)", base: BRUNO },
+  { id: "design", label: "Design", hint: "Interface, telas, cores e experiência", base: CARLA },
+  { id: "textos", label: "Textos", hint: "Textos, documentação e comunicação", base: DAVI },
+  { id: "revisao", label: "Revisão", hint: "Revisa as entregas antes de chegarem a você", base: EVA },
+];
+
+/** Lugares sugeridos para as mesas, na ordem: cabem na sala do tutorial sem esbarrar em nada. */
+export const SUGGESTED_DESKS: Cell[] = [
+  { col: 3, row: 3 },
+  { col: 11, row: 3 },
+  { col: 19, row: 3 },
+  { col: 4, row: 9 },
+];
+
+/** A sala do tutorial: a do modelo Startup, com os móveis, mas ainda sem ninguém. */
+export function tutorialRoom(): OfficeLayout {
+  return { ...TEMPLATES[0].build(), agents: [], reviewer: null };
+}
+
+/** Identificador estável para um agente novo, a partir do nome (sem repetir os da sala). */
+export function agentIdFor(l: OfficeLayout, name: string): string {
+  const base =
+    name
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 30) || "agente";
+  let id = base;
+  for (let i = 2; l.agents.some((a) => a.id === id); i++) id = `${base}-${i}`;
+  return id;
+}
+
+/** Primeiro lugar sugerido (ou qualquer um) onde cabe mais uma mesa. */
+export function freeDeskSpot(l: OfficeLayout, ignore?: string): Cell | null {
+  const ref = ignore ? ({ type: "agent", id: ignore } as ItemRef) : undefined;
+  const found = SUGGESTED_DESKS.find((c) => fits(l, "mesa", c, ref));
+  if (found) return found;
+  for (let row = 0; row < l.rows; row++)
+    for (let col = 0; col < l.cols; col++) if (fits(l, "mesa", { col, row }, ref)) return { col, row };
+  return null;
+}

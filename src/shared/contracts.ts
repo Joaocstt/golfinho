@@ -109,6 +109,11 @@ export interface Settings {
   setup: Record<string, string>;
   /** Memória do projeto. Sem o campo, vale como ligada. */
   memory?: { enabled: boolean };
+  /**
+   * Escritório 3D: se está em uso (sempre ligado ao chat das tarefas) e se o tutorial de primeiro
+   * acesso já foi feito. Sem o campo, o tutorial aparece ao abrir o Escritório.
+   */
+  office?: { enabled: boolean; tutorial: boolean };
 }
 export type MemoryKind = "decisao" | "convencao" | "armadilha" | "contexto" | "tarefa";
 export type MemoryOrigin = "usuario" | "agente" | "automatica";
@@ -303,6 +308,7 @@ export type Request =
   | { action: "officeCommit"; projectId: string; jobId: string }
   | { action: "officeImplement"; projectId: string; jobId: string }
   | { action: "officeCancel"; projectId: string; jobId: string }
+  | { action: "officeMeeting"; projectId: string; agentIds: string[]; text: string }
   | { action: "officeRetry"; projectId: string; jobId: string };
 export interface TerminalReplay {
   data: string;

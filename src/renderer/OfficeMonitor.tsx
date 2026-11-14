@@ -241,7 +241,10 @@ function JobRow({
             {job.startedAt ? ` · ${duration(job, now)}` : ""}
           </span>
         </span>
-        <span className={`office-pill ${job.status}`}>{job.cancelled && job.status === "erro" ? "Cancelado" : JOB_STATUS[job.status]}</span>
+        {job.origin === "chat" && <span className="office-pill chat">pelo chat</span>}
+        <span className={`office-pill ${job.status}`}>
+          {job.cancelled && job.status === "erro" ? "Cancelado" : job.origin === "chat" && job.status === "entregue" ? "Respondido" : JOB_STATUS[job.status]}
+        </span>
       </button>
       <JobControls projectId={projectId} job={job} compact />
       {open && (

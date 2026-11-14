@@ -294,6 +294,8 @@ export class Service {
         return this.officeOrThrow().markRead(r.projectId);
       case "officeDecide":
         return this.officeOrThrow().decidePermission(r.projectId, r.jobId, r.behavior, r.always ?? false);
+      case "officeMeeting":
+        return this.officeOrThrow().meeting(r.projectId, r.agentIds, r.text);
       case "officeCancel":
         return this.officeOrThrow().cancel(r.projectId, r.jobId);
       case "officeRetry":

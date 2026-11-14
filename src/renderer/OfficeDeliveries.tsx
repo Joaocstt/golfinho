@@ -21,11 +21,11 @@ export function roundLabel(j: OfficeJob): string {
 }
 
 /** Cancelar o que está na fila ou em andamento; tentar de novo o que parou. */
-export function JobControls({ projectId, job, compact }: { projectId: string; job: OfficeJob; compact?: boolean }) {
+export function JobControls({ projectId, job, compact, icons }: { projectId: string; job: OfficeJob; compact?: boolean; icons?: boolean }) {
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
   const canCancel = busy(job);
-  const canRetry = job.status === "erro";
+  const canRetry = job.status === "erro" && job.origin !== "chat";
   if (!canCancel && !canRetry) return null;
   async function act(r: Request) {
     setSending(true);
@@ -39,32 +39,34 @@ export function JobControls({ projectId, job, compact }: { projectId: string; jo
     }
   }
   return (
-    <span className={`job-controls${compact ? " compact" : ""}`}>
+    <span className={`job-controls${compact ? " compact" : ""}${icons ? " icons" : ""}`}>
       {canCancel && (
         <button
           type="button"
           className="danger"
           disabled={sending}
-          title="Para o trabalho agora; dá para tentar de novo depois"
+          title="Cancelar: para o trabalho agora (dá para tentar de novo depois)"
+          aria-label="Cancelar"
           onClick={(e) => {
             e.stopPropagation();
             void act({ action: "officeCancel", projectId, jobId: job.id });
           }}
         >
-          <Square size={11} /> Cancelar
+          <Square size={11} /> {!icons && "Cancelar"}
         </button>
       )}
       {canRetry && (
         <button
           type="button"
           disabled={sending}
-          title={job.taskId ? "Retoma na mesma tarefa e branch" : "Faz o mesmo pedido de novo"}
+          title={job.taskId ? "Tentar de novo: retoma na mesma tarefa e branch" : "Tentar de novo: faz o mesmo pedido de novo"}
+          aria-label="Tentar de novo"
           onClick={(e) => {
             e.stopPropagation();
             void act({ action: "officeRetry", projectId, jobId: job.id });
           }}
         >
-          <RotateCcw size={11} /> Tentar de novo
+          <RotateCcw size={11} /> {!icons && "Tentar de novo"}
         </button>
       )}
       {error && <small className="office-error">{error}</small>}
@@ -74,7 +76,8 @@ export function JobControls({ projectId, job, compact }: { projectId: string; jo
 
 /** O que aparece na mesa: o que chegou nela, e o que o chefe mandou implementar e ainda está sendo feito. */
 export function onDesk(jobs: OfficeJob[]) {
-  return jobs.filter((j) => j.status === "entregue" || j.status === "erro" || (j.approved && busy(j)));
+  // O que foi pedido no chat de uma tarefa fica no chat: não é entrega para a mesa.
+  return jobs.filter((j) => j.origin !== "chat" && (j.status === "entregue" || j.status === "erro" || (j.approved && busy(j))));
 }
 
 // Em que ponto a entrega está, em palavras, e o que o chefe pode fazer agora.

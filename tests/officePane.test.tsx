@@ -9,6 +9,8 @@ import { defaultLayout } from "../src/shared/officeLayout";
 import { ConfirmProvider } from "../src/renderer/ui";
 
 afterEach(cleanup);
+// O chat rola até a última mensagem; o jsdom não tem essa função.
+Element.prototype.scrollIntoView ??= () => undefined;
 const project: Project = { id: "11111111-1111-4111-8111-111111111111", name: "Golfinho", path: "C:/repo", remotes: [] };
 
 function setup(state: Partial<OfficeState> = {}) {
@@ -69,15 +71,21 @@ it("mostra o andamento ao vivo e a entrega com o link da tarefa", async () => {
   expect(screen.getByText(/implementado, falta o commit/)).toBeTruthy();
 });
 
-it("o modo de edição mostra as ferramentas e salva a sala", async () => {
+it("editar abre a equipe do projeto: salva a equipe, ou segue para o editor da sala", async () => {
   const { request } = setup();
   await screen.findByText(/Nenhum pedido ainda/);
   fireEvent.click(screen.getByRole("button", { name: /Editar escritório/ }));
-  expect(screen.getByRole("button", { name: "Nova mesa (agente)" })).toBeTruthy();
-  fireEvent.click(screen.getByRole("button", { name: "Salvar escritório" }));
+  const team = await screen.findByRole("dialog", { name: "Equipe do Escritório" });
+  expect(within(team).getByText(/cada projeto tem o seu/)).toBeTruthy();
+  fireEvent.click(within(team).getByRole("button", { name: "Salvar a equipe" }));
   await waitFor(() =>
     expect(request).toHaveBeenCalledWith(expect.objectContaining({ action: "officeSaveLayout", projectId: project.id })),
   );
+  fireEvent.click(screen.getByRole("button", { name: /Editar escritório/ }));
+  fireEvent.click(within(await screen.findByRole("dialog", { name: "Equipe do Escritório" })).getByRole("button", { name: /Editar a sala/ }));
+  expect(screen.getByRole("button", { name: "Nova mesa (agente)" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Salvar escritório" }));
+  await waitFor(() => expect(request.mock.calls.filter((c) => c[0].action === "officeSaveLayout")).toHaveLength(2));
 });
 
 it("o telão mostra cada agente agora e o passo a passo de cada trabalho", async () => {
@@ -179,11 +187,68 @@ it("trabalho em andamento tem Cancelar; o cancelado tem Tentar de novo", async (
     ],
   });
   await screen.findByText("Corrigir login");
-  expect(screen.getByText(/Bruno corrigindo o que a revisão pediu \(volta 1 de 2\)/)).toBeTruthy();
-  expect(screen.getByText(/Davi · cancelado/)).toBeTruthy();
-  const jobs = document.querySelector(".office-jobs")!;
+  // Na lista: etiqueta curta e o que ele está fazendo agora.
+  expect(screen.getByText("corrigindo")).toBeTruthy();
+  expect(screen.getByText("Editando")).toBeTruthy();
+  expect(screen.getByText("cancelado")).toBeTruthy();
+  const jobs = document.querySelector(".side")!;
   fireEvent.click(within(jobs as HTMLElement).getByRole("button", { name: /Cancelar/ }));
   await waitFor(() => expect(request).toHaveBeenCalledWith({ action: "officeCancel", projectId: project.id, jobId: "j1" }));
   fireEvent.click(within(jobs as HTMLElement).getByRole("button", { name: /Tentar de novo/ }));
   await waitFor(() => expect(request).toHaveBeenCalledWith({ action: "officeRetry", projectId: project.id, jobId: "j2" }));
+});
+
+it("reunião pelo painel: escolhe quem participa e manda o pedido", async () => {
+  const { request } = setup();
+  await waitFor(() => expect(request).toHaveBeenCalledWith({ action: "officeState", projectId: project.id }));
+  fireEvent.click(await screen.findByRole("button", { name: /Reunião: dividir/ }));
+  const dialog = await screen.findByRole("dialog", { name: "Reunião" });
+  fireEvent.change(within(dialog).getByLabelText("Assunto da reunião"), { target: { value: "Modo offline" } });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Começar a reunião" }));
+  await waitFor(() =>
+    expect(request).toHaveBeenCalledWith({ action: "officeMeeting", projectId: project.id, agentIds: ["bruno", "ana", "carla"], text: "Modo offline" }),
+  );
+});
+
+it("na mesa de quem está trabalhando, abre a tela dele com o passo a passo e a saída", async () => {
+  const at = new Date().toISOString();
+  setup({
+    jobs: [
+      {
+        id: "j1", agentId: "bruno", agentName: "Bruno", title: "Corrigir login", request: "corrige", status: "fazendo", activity: "Rodando: npm test",
+        result: "", notes: [], read: false, createdAt: at, output: "3 testes passaram", log: [{ at, who: "Bruno", kind: "ferramenta", text: "Rodando: npm test" }],
+      },
+    ],
+  });
+  fireEvent.click(await screen.findByRole("button", { name: /Bruno · Programador/ }));
+  const dialog = await screen.findByRole("dialog", { name: "Bruno · Programador" });
+  expect(within(dialog).getByRole("tab", { name: /Tela do Bruno/ }).getAttribute("aria-selected")).toBe("true");
+  expect(within(dialog).getByText("3 testes passaram")).toBeTruthy();
+  fireEvent.click(within(dialog).getByRole("tab", { name: "Conversa" }));
+  expect(within(dialog).getByLabelText("Pedido")).toBeTruthy();
+});
+
+it("na mesa do chefe, C abre o chat da tarefa (só o chat do Golfinho)", async () => {
+  const at = new Date().toISOString();
+  const task = {
+    id: "33333333-3333-4333-8333-333333333333", projectId: project.id, title: "Ajustar o login", prompt: "Ajusta", provider: "claude",
+    branch: "", base: "", remote: "", status: "draft", createdAt: at, updatedAt: at, branchCreated: false, published: false,
+    error: null, timeoutMinutes: 60, reviewSummary: "", baseCommit: null,
+  };
+  const listeners = new Set<(s: Signal) => void>();
+  const office: OfficeState = { projectId: project.id, layout: defaultLayout(), chats: {}, thinking: [], jobs: [] };
+  const request = vi.fn(async (r: Request) => (r.action === "officeState" ? office : r.action === "chatHistory" ? [] : null));
+  (window as any).golfinho = { request, subscribe: (l: any) => (listeners.add(l), () => listeners.delete(l)) };
+  render(
+    <ConfirmProvider>
+      <OfficePane projects={[project]} tasks={[task as any]} initialProject="" onOpenTask={vi.fn()} />
+    </ConfirmProvider>,
+  );
+  await screen.findByText(/Nenhum pedido ainda/);
+  const room = screen.getByLabelText(/Escritório: ande/);
+  await new Promise((r) => setTimeout(r, 60));
+  fireEvent.keyDown(room, { key: "c" });
+  const dialog = await screen.findByRole("dialog", { name: "Chat da tarefa" });
+  expect(await within(dialog).findByRole("combobox", { name: "Tarefa do chat" }, { timeout: 5000 })).toBeTruthy();
+  expect(within(dialog).getByRole("option", { name: "Ajustar o login" })).toBeTruthy();
 });

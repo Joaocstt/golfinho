@@ -17,6 +17,7 @@ import {
   inside,
   itemAt,
   screenSpot,
+  meetingSpot,
   screens,
   walkable,
   type Cell,
@@ -36,7 +37,14 @@ export interface Room {
 }
 export const makeRoom = (layout: OfficeLayout): Room => ({ layout, grid: walkable(layout) });
 
-export type Target = { kind: "agent"; agent: OfficeAgent } | { kind: "boss" } | { kind: "board" } | { kind: "telao"; id: string };
+export type Target =
+  | { kind: "agent"; agent: OfficeAgent }
+  | { kind: "boss" }
+  | { kind: "board" }
+  | { kind: "telao"; id: string }
+  | { kind: "reuniao"; id: string }
+  /** O PC da mesa do chefe: abre o chat da tarefa (mesmo lugar que a mesa). */
+  | { kind: "bosspc" };
 
 export function collides(room: Room, p: Point, r = RADIUS): boolean {
   if (p.x < r || p.y < r || p.x > W - r || p.y > H - r) return true;
@@ -62,10 +70,14 @@ export function step(room: Room, p: Point, dx: number, dy: number, r = RADIUS): 
 
 export function spot(room: Room, t: Target): Cell {
   if (t.kind === "agent") return deskFront(t.agent);
-  if (t.kind === "boss") return bossSpot(boss(room.layout)!);
+  if (t.kind === "boss" || t.kind === "bosspc") return bossSpot(boss(room.layout)!);
   if (t.kind === "telao") {
     const f = room.layout.furniture.find((x) => x.id === t.id);
     if (f) return screenSpot(f);
+  }
+  if (t.kind === "reuniao") {
+    const f = room.layout.furniture.find((x) => x.id === t.id);
+    if (f) return meetingSpot(f);
   }
   return boardSpot(board(room.layout)!);
 }
@@ -79,6 +91,7 @@ export function targets(room: Room): Target[] {
     { kind: "boss" },
     { kind: "board" },
     ...screens(room.layout).map((f) => ({ kind: "telao" as const, id: f.id })),
+    ...room.layout.furniture.filter((f) => f.kind === "reuniao").map((f) => ({ kind: "reuniao" as const, id: f.id })),
   ];
 }
 
@@ -117,8 +130,8 @@ export function targetAt(room: Room, p: Point): Target | null {
   }) ?? null;
 }
 
-/** Onde o agente fica sentado (os pés, atrás da mesa). */
-export const seatPoint = (a: OfficeAgent): Point => ({ x: a.desk.col * CELL + CELL * 1.5, y: a.desk.row * CELL + 36 });
+/** Onde o agente fica sentado: na cadeira, na linha de baixo da mesa, virado para o monitor. */
+export const seatPoint = (a: OfficeAgent): Point => ({ x: a.desk.col * CELL + CELL * 1.5, y: a.desk.row * CELL + CELL * 1.42 });
 
 /** Ida da cadeira até a célula e a volta, em pontos; null se não houver caminho. */
 export function agentPath(room: Room, a: OfficeAgent, to: Cell): { go: Point[]; back: Point[] } | null {

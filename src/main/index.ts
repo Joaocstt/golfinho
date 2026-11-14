@@ -1,4 +1,6 @@
-import { app, BrowserWindow, dialog, ipcMain, clipboard, nativeImage, Notification, shell, screen } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, clipboard, nativeImage, Notification, protocol, shell, screen } from "electron";
+import { ASSET_SCHEME, assetResponse } from "./officeAssets";
+import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { mergePath, readLoginPath } from "./loginPath";
@@ -45,6 +47,10 @@ const requests = new Set<Promise<unknown>>();
 if (process.env.GOLFINHO_DATA_DIR) app.setPath("userData", process.env.GOLFINHO_DATA_DIR);
 // Antes de qualquer busca de CLI: o app precisa enxergar o PATH do usuário.
 if (process.platform !== "win32") process.env.PATH = mergePath(process.env.PATH, readLoginPath());
+// Modelos 3D do Escritório: o esquema precisa ser registrado antes do app ficar pronto.
+protocol.registerSchemesAsPrivileged([
+  { scheme: ASSET_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } },
+]);
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
   app.on("second-instance", () => {
@@ -59,6 +65,12 @@ else {
         "icon.png",
       );
       if (process.platform === "win32") app.setAppUserModelId("com.golfinho.app");
+      // A pasta que existir: no instalador, ao lado do app; no desenvolvimento, a do projeto. (O
+      // executável de desenvolvimento é renomeado, e aí o Electron se acha empacotado.)
+      const officeAssets =
+        [join(process.resourcesPath, "office-assets"), join(here, "../../resources/office-assets")].find((dir) => existsSync(dir)) ??
+        join(process.resourcesPath, "office-assets");
+      protocol.handle(ASSET_SCHEME, (request) => assetResponse(officeAssets, request.url));
       if (process.platform === "darwin" && !app.isPackaged) app.dock?.setIcon(icon);
       const home = app.getPath("userData");
       mkdirSync(home, { recursive: true, mode: 0o700 });
@@ -197,6 +209,14 @@ else {
         commit: async (taskId, paths, message) => {
           await service.request({ action: "commitFiles", taskId, paths, message, push: false });
         },
+        enabled: () => store!.settings().office?.enabled === true,
+        task: (taskId) => {
+          try {
+            return store!.task(taskId);
+          } catch {
+            return null;
+          }
+        },
         interrupt: async (taskId) => {
           await service.request({ action: "chatInterrupt", taskId });
         },
@@ -237,6 +257,13 @@ else {
         },
       });
       window.setMenuBarVisibility(false);
+      // No desenvolvimento, avisos e erros da interface aparecem também no terminal.
+      if (process.env.ELECTRON_RENDERER_URL)
+        window.webContents.on("console-message", (event) => {
+          const e = event as unknown as { level?: string; message?: string; sourceId?: string; lineNumber?: number };
+          if (e.level === "warning" || e.level === "error")
+            console.log(`[interface ${e.level}] ${e.message ?? ""} (${e.sourceId ?? ""}:${e.lineNumber ?? ""})`);
+        });
       // Links da CLI abrem no navegador padrão; só http e https, nada de outros esquemas.
       window.webContents.setWindowOpenHandler(({ url }) => {
         if (/^https?:\/\//i.test(url)) void shell.openExternal(url);

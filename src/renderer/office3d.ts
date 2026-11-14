@@ -2,19 +2,40 @@
 // e a câmera em terceira pessoa atrás do chefe. A lógica (colisão, caminhos, quem está fazendo o
 // quê) continua em pixels 2D em officeGame; aqui 1 célula de 40 px vira 1 unidade do mundo.
 import * as THREE from "three";
-import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
-import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
-import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
-import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import type { Furniture, OfficeAgent, OfficeLayout } from "../shared/office";
 import { CELL, FOOTPRINT, isWallTile, tileAt } from "../shared/officeLayout";
 import type { Point } from "./officeGame";
+import { AVATAR_OPTIONS, Character, preloadAvatars } from "./office3d/avatar";
+import { PET_OPTIONS, PetFollower, makePet } from "./office3d/pets";
+import { buildDesk, DEFAULT_DESK, MONITOR_H, MONITOR_W, MONITOR_Y, screenGeometry, type DeskModel, type DeskStyle } from "./office3d/desk3d";
+import { makeChair } from "./office3d/chair";
+import { agentDesk, agentLook, bossLook, deskKey, lookKey } from "./office3d/officeLooks";
+import { CALL_THEME as T, cityCanvas, makePlant as callPlant, makeSofa as callSofa, woodCanvas } from "./office3d/room";
 
 const U = (px: number) => px / CELL;
-const SKIN = "#f1c8a0";
+/** Pixels desenhados por quadro, no máximo (~1440x900): medido numa placa integrada, a sala
+ * custa ~23 ms por milhão de pixels; com isso a tela cheia fica perto de 60 quadros por segundo. */
+const PIXEL_BUDGET = 1_000_000;
+/** Abaixo disso a sala fica borrada demais: melhor alguns quadros a menos. */
+const MIN_RATIO = 0.6;
+// Pessoas e mesas do Golfinho Call estão em metros; na sala, 1 célula = 1 unidade. Nessa escala
+// a pessoa tem ~1,45 e a mesa grande (3,4 m) cabe nas 3 células da mesa.
+const S = 0.8;
+// Dentro das 2 linhas da mesa: o tampo em cima (fundo) e a cadeira embaixo, virada para o monitor.
+// Quem chega pela frente (deskFront) fica atrás da pessoa e vê a tela por cima do ombro.
+const DESK_Z = 0.6;
+const CHAIR_Z = DESK_Z + 1.25 * S;
+/** Sentado, o personagem fica um pouco à frente do centro do assento (medido na animação). */
+const SIT_Z = CHAIR_Z - 0.23 * S;
 
-export type PickTarget = { kind: "agent"; id: string } | { kind: "boss" } | { kind: "board" } | { kind: "telao"; id: string };
+export type PickTarget =
+  | { kind: "agent"; id: string }
+  | { kind: "boss" }
+  | { kind: "board" }
+  | { kind: "telao"; id: string }
+  | { kind: "reuniao"; id: string }
+  | { kind: "bosspc" };
 export interface Pick {
   target: PickTarget | null;
   floor: Point | null;
@@ -30,10 +51,23 @@ export interface AgentView {
   screen: "off" | "work" | "think";
   queued: number;
   bubble: string;
+  /** O que o monitor da mesa mostra: o trabalho, as últimas ações e a situação. */
+  desk?: AgentScreen;
+  /** Sentado fora da mesa (no sofá), em pixels da sala; facing 0 = olhando para +z. */
+  sit?: { x: number; y: number; facing: number } | null;
+}
+export interface AgentScreen {
+  state: "livre" | "trabalhando" | "pensando" | "esperando" | "erro";
+  title: string;
+  lines: string[];
+  /** Pedido feito no chat da tarefa (não pelo Escritório). */
+  chat: boolean;
 }
 export interface FrameView {
   t: number;
   dt: number;
+  /** Uma janela cobre a sala: ela anda devagar de propósito (não conta para a qualidade adaptativa). */
+  background?: boolean;
   player: { x: number; y: number; moving: boolean; phase: number };
   agents: AgentView[];
   delivered: number;
@@ -108,281 +142,12 @@ function hitBox(g: THREE.Object3D, w: number, h: number, d: number, y = h / 2, z
   g.add(m);
 }
 
-// ---------------- Pessoa low-poly ----------------
-
-interface Person {
-  root: THREE.Group;
-  body: THREE.Group;
-  legL: THREE.Group;
-  legR: THREE.Group;
-  armL: THREE.Group;
-  armR: THREE.Group;
-  paper: THREE.Mesh;
-  key: string;
-}
-function makePerson(shirt: string, hair: string, o: { suit?: boolean } = {}): Person {
-  const root = new THREE.Group();
-  const body = new THREE.Group();
-  root.add(body);
-  const pants = mat(o.suit ? "#1f2a44" : "#3a3f4b");
-  const shirtM = mat(shirt);
-  const skin = mat(SKIN);
-  const limb = (m: THREE.Material, len: number, r: number) => {
-    const g = new THREE.Group();
-    const part = new THREE.Mesh(new THREE.CapsuleGeometry(r, len - r * 2, 3, 8), m);
-    part.position.y = -len / 2;
-    part.castShadow = true;
-    g.add(part);
-    return g;
-  };
-  const legL = limb(pants, 0.42, 0.07), legR = limb(pants, 0.42, 0.07);
-  legL.position.set(-0.08, 0.44, 0);
-  legR.position.set(0.08, 0.44, 0);
-  const shoeM = mat("#2b2b2b");
-  for (const leg of [legL, legR]) leg.add(box(0.13, 0.06, 0.2, shoeM, 0, -0.42, 0.04));
-  body.add(legL, legR);
-  const torso = roundedBox(0.36, 0.4, 0.22, 0.08, o.suit ? mat("#22305a") : shirtM);
-  torso.position.y = 0.66;
-  body.add(torso);
-  if (o.suit) {
-    body.add(box(0.12, 0.3, 0.01, mat("#f4f4f4"), 0, 0.7, 0.115));
-    body.add(box(0.05, 0.24, 0.012, mat("#c1121f"), 0, 0.68, 0.122));
-  }
-  const armM = o.suit ? mat("#22305a") : shirtM;
-  const armL = limb(armM, 0.36, 0.055), armR = limb(armM, 0.36, 0.055);
-  armL.position.set(-0.235, 0.83, 0);
-  armR.position.set(0.235, 0.83, 0);
-  for (const arm of [armL, armR]) {
-    const hand = new THREE.Mesh(new THREE.SphereGeometry(0.05, 8, 6), skin);
-    hand.position.y = -0.37;
-    hand.castShadow = true;
-    arm.add(hand);
-  }
-  body.add(armL, armR);
-  const neck = cyl(0.05, 0.05, 0.06, skin, 8);
-  neck.position.y = 0.89;
-  body.add(neck);
-  const head = new THREE.Mesh(new THREE.IcosahedronGeometry(0.16, 1), skin);
-  head.position.y = 1.04;
-  head.castShadow = true;
-  body.add(head);
-  const hairM = mat(hair);
-  const cap = new THREE.Mesh(new THREE.SphereGeometry(0.17, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2), hairM);
-  cap.position.y = 1.06;
-  cap.rotation.x = -0.25;
-  cap.castShadow = true;
-  body.add(cap);
-  const back = box(0.3, 0.14, 0.06, hairM, 0, 1.02, -0.12);
-  body.add(back);
-  const eyeM = mat("#1d1d1d");
-  for (const x of [-0.055, 0.055]) {
-    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.022, 6, 4), eyeM);
-    eye.position.set(x, 1.05, 0.148);
-    body.add(eye);
-  }
-  const paper = box(0.2, 0.26, 0.02, mat("#ffffff"), 0, 0.68, 0.2);
-  paper.rotation.x = -0.4;
-  paper.visible = false;
-  body.add(paper);
-  return { root, body, legL, legR, armL, armR, paper, key: `${shirt}|${hair}|${o.suit ? 1 : 0}` };
-}
-function posePerson(p: Person, o: { moving: boolean; phase: number; seated: boolean; carry: boolean; t: number }) {
-  const swing = o.moving ? Math.sin(o.phase) * 0.6 : 0;
-  if (o.seated) {
-    p.legL.rotation.x = p.legR.rotation.x = -1.45;
-    p.body.position.y = 0.02;
-    p.armL.rotation.x = p.armR.rotation.x = -1.1 + Math.sin(o.t * 9) * 0.05;
-  } else {
-    p.body.position.y = o.moving ? Math.abs(Math.sin(o.phase)) * 0.04 : Math.sin(o.t * 2) * 0.008;
-    p.legL.rotation.x = swing;
-    p.legR.rotation.x = -swing;
-    p.armL.rotation.x = o.carry ? -1.2 : -swing * 0.8;
-    p.armR.rotation.x = o.carry ? -1.2 : swing * 0.8;
-  }
-  p.paper.visible = o.carry;
-}
-
 // ---------------- Móveis ----------------
 
 const WOOD = "#9b7451", WOOD_DARK = "#6e4d33", BOSS_WOOD = "#5a3622";
 
-// Setup gamer de cada agente: mesa preta com fita de LED, dois monitores em ângulo (o rosto de
-// quem senta fica à vista entre eles), teclado e mousepad iluminados, gabinete com vidro e fans
-// RGB no chão, headset no suporte. Os materiais de luz são da mesa, para animar a cor.
-interface Desk {
-  group: THREE.Group;
-  papers: THREE.Group;
-  /** Luz RGB que fica trocando de cor (fitas finas) e a versão fraca (teclado, mousepad). */
-  rgb: THREE.MeshStandardMaterial;
-  soft: THREE.MeshStandardMaterial;
-  /** Luz de estado: atrás dos monitores, nas telas e no logo do gabinete. */
-  status: THREE.MeshStandardMaterial;
-  screens: THREE.MeshStandardMaterial;
-  fans: THREE.Object3D[];
-}
 const glow = (color: string, intensity = 2.5) =>
   new THREE.MeshStandardMaterial({ color: "#111111", emissive: new THREE.Color(color), emissiveIntensity: intensity, roughness: 0.4 });
-
-function makeDesk(): Desk {
-  const g = new THREE.Group();
-  const rgb = glow("#ff00aa", 1.6);
-  const soft = glow("#ff00aa", 0.35);
-  const status = glow("#0b1520", 0.4);
-  const screens = new THREE.MeshStandardMaterial({ color: "#0a0f18", emissive: new THREE.Color("#1b2a44"), emissiveIntensity: 0.8, roughness: 0.2 });
-  const carbon = mat("#17181d", { rough: 0.35, metal: 0.2 });
-  const metal = mat("#2a2c33", { rough: 0.35, metal: 0.7 });
-  const plastic = mat("#0e0f12", { rough: 0.45 });
-
-  // Tampo e pés em T, com a fita de LED na borda da frente e embaixo.
-  g.add(box(2.4, 0.06, 0.95, carbon, 0, 0.72, 0));
-  g.add(box(2.4, 0.014, 0.02, rgb, 0, 0.695, 0.48));
-  for (const x of [-1.1, 1.1]) {
-    g.add(box(0.07, 0.68, 0.1, metal, x, 0.35, 0));
-    g.add(box(0.08, 0.04, 0.86, metal, x, 0.02, 0));
-    g.add(box(0.012, 0.6, 0.012, rgb, x + (x > 0 ? -0.04 : 0.04), 0.36, 0.05));
-  }
-  g.add(box(2.1, 0.05, 0.05, metal, 0, 0.62, -0.38));
-
-  // Mousepad grande com borda de LED, teclado com luz por baixo das teclas e mouse.
-  g.add(box(1.32, 0.008, 0.4, mat("#121318", { rough: 0.95 }), 0, 0.755, -0.24));
-  g.add(box(1.32, 0.006, 0.008, soft, 0, 0.758, -0.04));
-  g.add(box(1.32, 0.006, 0.008, soft, 0, 0.758, -0.44));
-  g.add(box(0.58, 0.03, 0.19, plastic, -0.12, 0.775, -0.25));
-  const keys = new THREE.Mesh(new THREE.PlaneGeometry(0.54, 0.15), soft);
-  keys.rotation.x = -Math.PI / 2;
-  keys.position.set(-0.12, 0.792, -0.25);
-  g.add(keys);
-  for (let r = 0; r < 4; r++)
-    g.add(box(0.5, 0.012, 0.025, plastic, -0.12, 0.797, -0.305 + r * 0.037));
-  const mouse = roundedBox(0.06, 0.035, 0.1, 0.015, plastic);
-  mouse.position.set(0.35, 0.775, -0.25);
-  g.add(mouse);
-  g.add(box(0.02, 0.004, 0.03, rgb, 0.35, 0.795, -0.23));
-
-  // Dois monitores em ângulo, virados para quem senta. Atrás, uma fita com a luz de estado.
-  for (const side of [-1, 1]) {
-    const m = new THREE.Group();
-    m.position.set(side * 0.62, 0, 0.08);
-    m.rotation.y = side * -0.38;
-    m.add(box(0.24, 0.014, 0.16, metal, 0, 0.757, 0.02));
-    m.add(box(0.04, 0.26, 0.04, metal, 0, 0.88, 0.06));
-    m.add(roundedBox(0.7, 0.4, 0.035, 0.012, plastic).translateY(1.12));
-    const screen = new THREE.Mesh(new THREE.PlaneGeometry(0.66, 0.36), screens);
-    screen.position.set(0, 1.12, -0.024);
-    screen.rotation.y = Math.PI;
-    m.add(screen);
-    m.add(box(0.5, 0.02, 0.006, status, 0, 1.17, 0.022));
-    m.add(box(0.5, 0.02, 0.006, status, 0, 1.06, 0.022));
-    g.add(m);
-  }
-
-  // Headset no suporte, à esquerda.
-  const stand = new THREE.Group();
-  stand.position.set(-1.0, 0.75, 0.22);
-  stand.add(box(0.14, 0.012, 0.14, metal, 0, 0.006, 0));
-  stand.add(at(cyl(0.012, 0.012, 0.3, metal), 0, 0.15, 0));
-  const band = new THREE.Mesh(new THREE.TorusGeometry(0.09, 0.016, 6, 14, Math.PI), plastic);
-  band.position.y = 0.3;
-  band.castShadow = true;
-  stand.add(band);
-  for (const x of [-0.09, 0.09]) {
-    const cup = cyl(0.045, 0.045, 0.04, plastic, 12);
-    cup.rotation.z = Math.PI / 2;
-    cup.position.set(x, 0.24, 0);
-    stand.add(cup);
-    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.04, 0.006, 4, 14), rgb);
-    ring.rotation.y = Math.PI / 2;
-    ring.position.set(x + (x > 0 ? 0.022 : -0.022), 0.24, 0);
-    stand.add(ring);
-  }
-  g.add(stand);
-
-  // Gabinete no chão, ao lado da mesa, com o vidro virado para a sala.
-  const tower = new THREE.Group();
-  tower.position.set(1.34, 0, 0.12);
-  tower.add(box(0.24, 0.62, 0.5, plastic, 0, 0.33, 0));
-  for (const x of [-0.08, 0.08]) for (const z of [-0.18, 0.18]) tower.add(box(0.04, 0.02, 0.04, metal, x, 0.01, z));
-  const glass = new THREE.Mesh(
-    new THREE.PlaneGeometry(0.46, 0.56),
-    new THREE.MeshPhysicalMaterial({ color: "#1a2030", transparent: true, opacity: 0.35, roughness: 0.05, metalness: 0.1 }),
-  );
-  glass.rotation.y = Math.PI / 2;
-  glass.position.set(0.121, 0.34, 0);
-  tower.add(glass);
-  tower.add(box(0.005, 0.5, 0.42, mat("#06070a"), 0.1, 0.34, 0));
-  const fans: THREE.Object3D[] = [];
-  for (const y of [0.2, 0.36, 0.52]) {
-    const fan = new THREE.Group();
-    fan.position.set(0.1, y, -0.15);
-    const ringMesh = new THREE.Mesh(new THREE.TorusGeometry(0.055, 0.009, 6, 18), rgb);
-    ringMesh.rotation.y = Math.PI / 2;
-    fan.add(ringMesh);
-    for (let i = 0; i < 3; i++) {
-      const blade = box(0.004, 0.08, 0.018, mat("#1c1f27"), 0, 0, 0);
-      blade.rotation.x = (i / 3) * Math.PI;
-      blade.castShadow = false;
-      fan.add(blade);
-    }
-    fan.userData.dynamic = true;
-    tower.add(fan);
-    fans.push(fan);
-  }
-  tower.add(box(0.03, 0.05, 0.24, status, 0.1, 0.3, 0.1));
-  tower.add(box(0.03, 0.03, 0.03, rgb, 0.005, 0.58, 0.26));
-  g.add(tower);
-
-  // Latinha de energético.
-  const can = cyl(0.033, 0.033, 0.12, mat("#2ec4b6", { rough: 0.3, metal: 0.6 }), 12);
-  can.position.set(0.78, 0.81, -0.18);
-  g.add(can);
-
-  const papers = new THREE.Group();
-  papers.userData.dynamic = true;
-  papers.position.set(0.98, 0.76, 0.18);
-  g.add(papers);
-  return { group: g, papers, rgb, soft, status, screens, fans };
-}
-
-// Cadeira gamer, com as faixas na cor do agente.
-function makeChair(accent = "#e63946"): THREE.Group {
-  const g = new THREE.Group();
-  const black = mat("#16171c", { rough: 0.6 });
-  const stripe = mat(accent, { rough: 0.55 });
-  const metal = mat("#2a2c33", { rough: 0.35, metal: 0.7 });
-  g.add(roundedBox(0.54, 0.1, 0.5, 0.04, black).translateY(0.47));
-  g.add(box(0.1, 0.012, 0.44, stripe, -0.16, 0.527, 0));
-  g.add(box(0.1, 0.012, 0.44, stripe, 0.16, 0.527, 0));
-  const back = roundedBox(0.52, 0.82, 0.1, 0.05, black);
-  back.position.set(0, 0.95, -0.25);
-  back.rotation.x = -0.1;
-  g.add(back);
-  for (const x of [-0.2, 0.2]) {
-    const wing = box(0.1, 0.62, 0.1, black, x * 1.25, 0.9, -0.2);
-    wing.rotation.x = -0.1;
-    g.add(wing);
-    const s = box(0.06, 0.7, 0.012, stripe, x * 0.75, 0.95, -0.193);
-    s.rotation.x = -0.1;
-    g.add(s);
-  }
-  const pillow = roundedBox(0.3, 0.12, 0.08, 0.03, stripe);
-  pillow.position.set(0, 1.25, -0.2);
-  g.add(pillow);
-  for (const x of [-0.29, 0.29]) {
-    g.add(box(0.04, 0.2, 0.04, metal, x, 0.6, -0.02));
-    g.add(box(0.08, 0.03, 0.26, black, x, 0.71, 0.0));
-  }
-  g.add(at(cyl(0.035, 0.035, 0.32, metal), 0, 0.27, 0));
-  for (let i = 0; i < 5; i++) {
-    const leg = new THREE.Group();
-    leg.rotation.y = (i / 5) * Math.PI * 2;
-    leg.add(box(0.3, 0.035, 0.05, metal, 0.15, 0.07, 0));
-    const wheel = new THREE.Mesh(new THREE.SphereGeometry(0.03, 8, 6), black);
-    wheel.position.set(0.3, 0.03, 0);
-    leg.add(wheel);
-    g.add(leg);
-  }
-  return g;
-}
 
 function makePlant(): THREE.Group {
   const g = new THREE.Group();
@@ -405,6 +170,34 @@ function makePlant(): THREE.Group {
   }
   return g;
 }
+// Mesa de reunião: tampo de madeira escura com borda e 8 cadeiras do Call, 4 de cada lado,
+// viradas para a mesa. Os lugares batem com meetingSeats (o personagem senta à frente do assento).
+function makeMeetingTable(): THREE.Group {
+  const g = new THREE.Group();
+  const wood = new THREE.MeshStandardMaterial({ color: 0x2b1d14, roughness: 0.55 });
+  const metal = mat("#16181d", { rough: 0.4, metal: 0.6 });
+  g.add(box(3.7, 0.06, 1.25, wood, 0, 0.75, 0));
+  g.add(box(3.72, 0.03, 1.27, mat("#3b2a1f"), 0, 0.715, 0));
+  for (const x of [-1.5, 1.5]) {
+    g.add(box(0.08, 0.7, 0.9, metal, x, 0.36, 0));
+    g.add(box(0.12, 0.03, 1.0, metal, x, 0.015, 0));
+  }
+  // Um notebook e papéis no meio, para a mesa não ficar vazia.
+  g.add(box(0.36, 0.015, 0.26, mat("#d9d9d9"), -0.4, 0.79, 0.1), box(0.34, 0.015, 0.25, mat("#ffffff"), 0.6, 0.79, -0.15));
+  g.add(box(0.42, 0.02, 0.3, mat("#1f2937", { metal: 0.4 }), 0.1, 0.79, 0.12));
+  const SIT = 0.23 * S;
+  for (let i = 0; i < 4; i++)
+    for (const side of [-1, 1]) {
+      const chair = makeChair("#3a4b63");
+      chair.scale.setScalar(S);
+      // Em cima (side -1) a pessoa olha para +z: o encosto fica do outro lado.
+      chair.position.set(-1.5 + i, 0, side * (0.95 + SIT));
+      if (side < 0) chair.rotation.y = Math.PI;
+      g.add(chair);
+    }
+  return g;
+}
+
 function makeSofa(): THREE.Group {
   const g = new THREE.Group();
   const fabric = mat("#6d597a"), dark = mat("#584866");
@@ -516,6 +309,89 @@ function setPapers(stack: THREE.Group, n: number) {
   }
 }
 
+// ---------------- Monitor de cada agente ----------------
+
+const SCREEN_STATE: Record<AgentScreen["state"], { label: string; color: string }> = {
+  livre: { label: "Livre", color: "#64748b" },
+  trabalhando: { label: "Trabalhando", color: "#2dd4bf" },
+  pensando: { label: "Pensando", color: "#a78bfa" },
+  esperando: { label: "Esperando sua aprovação", color: "#f59e0b" },
+  erro: { label: "Deu problema", color: "#ef4444" },
+};
+
+function clipText(x: CanvasRenderingContext2D, text: string, max: number) {
+  if (x.measureText(text).width <= max) return text;
+  let t = text;
+  while (t.length > 1 && x.measureText(t + "…").width > max) t = t.slice(0, -1);
+  return t + "…";
+}
+
+// O que o agente está fazendo, como uma tela de verdade: barra com o estado, o trabalho e as
+// últimas ações em fonte de terminal, com o cursor piscando enquanto trabalha.
+function drawAgentScreen(c: HTMLCanvasElement, name: string, d: AgentScreen, blink: boolean) {
+  const x = c.getContext("2d");
+  if (!x) return;
+  const W = c.width, H = c.height;
+  const st = SCREEN_STATE[d.state];
+  const bg = x.createLinearGradient(0, 0, 0, H);
+  bg.addColorStop(0, "#0e1522");
+  bg.addColorStop(1, "#080b12");
+  x.fillStyle = bg;
+  x.fillRect(0, 0, W, H);
+  x.fillStyle = "#141c2b";
+  x.fillRect(0, 0, W, 40);
+  x.fillStyle = st.color;
+  x.beginPath();
+  x.arc(22, 20, 7, 0, 7);
+  x.fill();
+  x.font = "600 17px system-ui, sans-serif";
+  x.textBaseline = "middle";
+  x.fillStyle = "#e8ebf1";
+  x.fillText(clipText(x, `${name} · ${st.label}`, W - (d.chat ? 150 : 50)), 38, 21);
+  if (d.chat) {
+    x.fillStyle = "rgba(56, 189, 248, 0.18)";
+    x.beginPath();
+    x.roundRect(W - 104, 9, 92, 24, 12);
+    x.fill();
+    x.fillStyle = "#7dd3fc";
+    x.font = "600 13px system-ui, sans-serif";
+    x.textAlign = "center";
+    x.fillText("pelo chat", W - 58, 22);
+    x.textAlign = "left";
+  }
+  if (d.state === "livre" && !d.title) {
+    x.fillStyle = "#475569";
+    x.font = "500 22px system-ui, sans-serif";
+    x.textAlign = "center";
+    x.fillText("Esperando um pedido", W / 2, H / 2 + 14);
+    x.textAlign = "left";
+    return;
+  }
+  x.fillStyle = "#f8fafc";
+  x.font = "600 19px system-ui, sans-serif";
+  x.fillText(clipText(x, d.title, W - 36), 18, 66);
+  if (d.state === "esperando") {
+    x.fillStyle = "rgba(245, 158, 11, 0.16)";
+    x.fillRect(12, 84, W - 24, 30);
+    x.fillStyle = "#fbbf24";
+    x.font = "600 15px system-ui, sans-serif";
+    x.fillText("✋ Esperando você permitir ou negar", 22, 99);
+  }
+  x.font = "14px Consolas, 'Cascadia Mono', monospace";
+  const top = d.state === "esperando" ? 132 : 100;
+  const lines = d.lines.slice(-Math.floor((H - top - 6) / 22));
+  lines.forEach((line, i) => {
+    const last = i === lines.length - 1;
+    x.fillStyle = last ? "#cbd5e1" : "#64748b";
+    const text = clipText(x, `› ${line}`, W - 40);
+    x.fillText(text, 18, top + i * 22);
+    if (last && blink && d.state === "trabalhando") {
+      x.fillStyle = st.color;
+      x.fillRect(22 + x.measureText(text).width, top + i * 22 - 8, 9, 16);
+    }
+  });
+}
+
 // ---------------- Telão ----------------
 
 function drawMonitor(c: HTMLCanvasElement, m: FrameView["monitor"], t: number) {
@@ -590,17 +466,32 @@ export class OfficeScene {
   private room = new THREE.Group();
   private pickables: THREE.Object3D[] = [];
   private floor: THREE.Mesh;
-  private walls: { mesh: THREE.Object3D; x: number; z: number; faded: boolean }[] = [];
-  private desks = new Map<string, Desk>();
-  private composer: EffectComposer;
-  private bloom: UnrealBloomPass;
+  private walls: { mesh: THREE.Object3D; cells: { x: number; z: number }[]; faded: boolean }[] = [];
+  private desks = new Map<string, AgentDesk>();
   private bossPapers: THREE.Group | null = null;
+  private bossScreen: { canvas: HTMLCanvasElement; texture: THREE.CanvasTexture; drawn: string } | null = null;
+  private bossModel: DeskModel | null = null;
   private bossAnchor = new THREE.Vector3();
   private boardFace: THREE.Mesh | null = null;
   private monitors: { canvas: HTMLCanvasElement; texture: THREE.CanvasTexture }[] = [];
   private monitorDrawn = -1;
-  private people = new Map<string, Person>();
-  private player: Person;
+  private people = new Map<string, Actor>();
+  private looks = new WeakMap<OfficeAgent, { look: ReturnType<typeof agentLook>; key: string }>();
+  /** Modo edição: câmera de cima, grade no chão, prévia de onde o item vai e o item escolhido. */
+  private editOn = false;
+  private editCenter = new THREE.Vector3();
+  private editGrid: THREE.LineSegments | null = null;
+  private editGhost = new THREE.Mesh(
+    new THREE.BoxGeometry(1, 1, 1),
+    new THREE.MeshBasicMaterial({ color: 0x2dd4bf, transparent: true, opacity: 0.32, depthWrite: false }),
+  );
+  private editSel = new THREE.LineSegments(
+    new THREE.EdgesGeometry(new THREE.BoxGeometry(1, 1, 1)),
+    new THREE.LineBasicMaterial({ color: 0xfbbf24 }),
+  );
+  private saved = { pitch: 0.92, distance: 8.5 };
+  private player: Actor | null = null;
+  private screensDrawn = -1;
   private guideCone: THREE.Mesh;
   private guideLine: THREE.Line;
   private layout: OfficeLayout | null = null;
@@ -610,6 +501,14 @@ export class OfficeScene {
   private wallFade = mat("#93a4c0").clone();
   /** Câmera: ângulo em volta do chefe, inclinação e distância. */
   private maxRatio = 1;
+  private lastFrame = 0;
+  private fastTime = 0;
+  /** Medição para o desenvolvimento: tempo dentro da cena e o pior quadro do segundo. */
+  private sceneMs = 0;
+  private sceneMax = 0;
+  private worst = 0;
+  /** Escala máxima para o tamanho atual (o teto de pixels). */
+  private cap = 1;
   private ratio = 1;
   private frames = 0;
   private slowTime = 0;
@@ -626,45 +525,41 @@ export class OfficeScene {
     private readonly canvas: HTMLCanvasElement,
     private readonly overlay: HTMLDivElement,
   ) {
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: "high-performance" });
     this.maxRatio = Math.min(window.devicePixelRatio || 1, 1.5);
     this.ratio = this.maxRatio;
     this.renderer.setPixelRatio(this.ratio);
     this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-    // Sombra recalculada só quando algo se mexe, e no máximo a cada dois quadros.
+    // Sombra com borda simples: a suave amostra várias vezes cada pixel da tela.
+    this.renderer.shadowMap.type = THREE.PCFShadowMap;
+    // Sombra recalculada só quando algo se mexe (ver render).
     this.renderer.shadowMap.autoUpdate = false;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.05;
+    this.renderer.toneMappingExposure = T.exposure;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
-    // Brilho (bloom) só no que emite luz: LEDs, fans e telas.
-    this.composer = new EffectComposer(this.renderer);
-    this.composer.addPass(new RenderPass(this.scene, this.camera));
-    this.bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.38, 0.35, 0.95);
-    this.composer.addPass(this.bloom);
-    this.composer.addPass(new OutputPass());
-    this.scene.background = new THREE.Color("#1c2130");
-    this.scene.fog = new THREE.Fog("#1c2130", 22, 48);
+    // Luz e cores do escritório do Golfinho Call: sala escura, luz quente de cima e um recorte
+    // ciano vindo das janelas. Sem pós-processamento: LEDs e telas brilham por material.
+    this.scene.background = new THREE.Color(T.bg);
+    this.scene.fog = new THREE.Fog(T.fog[0], T.fog[1], T.fog[2]);
     this.wallFade.transparent = true;
     this.wallFade.opacity = 0.18;
     this.wallFade.depthWrite = false;
-
-    const hemi = new THREE.HemisphereLight("#e8efff", "#7a6550", 1.1);
-    this.scene.add(hemi);
-    const sun = new THREE.DirectionalLight("#fff0dc", 2.4);
-    sun.position.set(6, 14, 12);
+    this.scene.add(new THREE.HemisphereLight(T.hemi[0], T.hemi[1], T.hemi[2]));
+    const sun = new THREE.DirectionalLight(T.key[0], T.key[1]);
+    sun.position.set(8, 14, 10);
     sun.target.position.set(12.5, 0, 8);
     sun.castShadow = true;
-    sun.shadow.mapSize.set(2048, 2048);
+    // 1024 basta para a sala (a sombra é só o contato no chão); 2048 custa 4x a cada atualização.
+    sun.shadow.mapSize.set(1024, 1024);
     Object.assign(sun.shadow.camera, { left: -18, right: 18, top: 14, bottom: -14, near: 1, far: 40 });
-    sun.shadow.bias = -0.0006;
+    sun.shadow.bias = -0.0004;
     sun.shadow.normalBias = 0.02;
     this.scene.add(sun, sun.target);
-    const fill = new THREE.DirectionalLight("#bcd4ff", 0.5);
-    fill.position.set(22, 8, -4);
-    this.scene.add(fill);
+    const rim = new THREE.DirectionalLight(T.rim[0], T.rim[1]);
+    rim.position.set(-10, 6, -20);
+    this.scene.add(rim);
 
-    const outside = new THREE.Mesh(new THREE.PlaneGeometry(200, 200), mat("#262c3b", { rough: 1 }));
+    const outside = new THREE.Mesh(new THREE.PlaneGeometry(200, 200), new THREE.MeshStandardMaterial({ color: 0x05070a, roughness: 1 }));
     outside.rotation.x = -Math.PI / 2;
     outside.position.y = -0.02;
     outside.receiveShadow = true;
@@ -673,8 +568,15 @@ export class OfficeScene {
     this.floor.rotation.x = -Math.PI / 2;
     this.scene.add(this.floor, this.room);
 
-    this.player = makePerson("#22305a", "#3b2a1a", { suit: true });
-    this.scene.add(this.player.root);
+    this.editGhost.visible = this.editSel.visible = false;
+    this.editGhost.renderOrder = this.editSel.renderOrder = 5;
+    this.scene.add(this.editGhost, this.editSel);
+    // Os modelos dos personagens começam a baixar já: a sala abre sem engasgar.
+    preloadAvatars();
+    // Sombra de verdade só no que é fixo: o mapa é desenhado uma vez por sala. Quem anda tem a
+    // sombra de contato (como no Golfinho Call), e andar não redesenha nada.
+    AVATAR_OPTIONS.castShadow = false;
+    PET_OPTIONS.castShadow = false;
     this.guideCone = new THREE.Mesh(new THREE.ConeGeometry(0.16, 0.34, 4), mat("#ffd166", { emissive: "#b88a10" }));
     this.guideCone.rotation.x = Math.PI;
     this.guideCone.visible = false;
@@ -704,7 +606,28 @@ export class OfficeScene {
     this.walls = [];
     this.monitors = [];
     this.monitorDrawn = -1;
+    for (const d of this.desks.values()) {
+      d.model.dispose();
+      d.screen.texture.dispose();
+    }
     this.desks.clear();
+    this.screensDrawn = -1;
+    this.bossModel?.dispose();
+    this.bossScreen?.texture.dispose();
+    this.bossModel = null;
+    this.bossScreen = null;
+    if (this.editGrid) {
+      this.scene.remove(this.editGrid);
+      this.editGrid.geometry.dispose();
+    }
+    const lines: number[] = [];
+    for (let c = 0; c <= layout.cols; c++) lines.push(c, 0.03, 0, c, 0.03, layout.rows);
+    for (let r = 0; r <= layout.rows; r++) lines.push(0, 0.03, r, layout.cols, 0.03, r);
+    const grid = new THREE.BufferGeometry();
+    grid.setAttribute("position", new THREE.Float32BufferAttribute(lines, 3));
+    this.editGrid = new THREE.LineSegments(grid, new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.12, depthWrite: false }));
+    this.editGrid.visible = this.editOn;
+    this.scene.add(this.editGrid);
     this.floor.scale.set(layout.cols, layout.rows, 1);
     this.floor.position.set(layout.cols / 2, 0, layout.rows / 2);
     this.buildTiles(layout);
@@ -713,10 +636,15 @@ export class OfficeScene {
     this.bake();
     this.renderer.shadowMap.needsUpdate = true;
     for (const [id, p] of this.people)
-      if (!layout.agents.some((a) => a.id === id && p.key === makeKey(a))) {
-        this.scene.remove(p.root);
+      if (!layout.agents.some((a) => a.id === id && p.key === lookKey(agentLook(a)))) {
+        this.dropActor(p);
         this.people.delete(id);
       }
+    const boss = bossLook(layout);
+    if (!this.player || this.player.key !== lookKey(boss)) {
+      if (this.player) this.dropActor(this.player);
+      this.player = this.makeActor(boss, { kind: "boss" });
+    }
   }
 
   // Tudo o que não se mexe vira uma malha por material: de centenas de desenhos por quadro para
@@ -728,6 +656,7 @@ export class OfficeScene {
     const baked: THREE.Mesh[] = [];
     this.room.traverse((o) => {
       if (!(o instanceof THREE.Mesh) || o instanceof THREE.InstancedMesh || Array.isArray(o.material)) return;
+      if ((o.material as THREE.Material).vertexColors || o instanceof THREE.SkinnedMesh) return;
       for (let p: THREE.Object3D | null = o; p && p !== this.room; p = p.parent) if (p.userData.dynamic) return;
       const g = o.geometry.index ? o.geometry.toNonIndexed() : o.geometry.clone();
       g.applyMatrix4(o.matrixWorld);
@@ -755,11 +684,23 @@ export class OfficeScene {
     }
   }
 
+  // Piso de madeira escura numa peça só (a textura corre pela sala inteira); tapete e azulejo
+  // por cima, por célula. Paredes grafite; as janelas mostram a cidade à noite.
   private buildTiles(l: OfficeLayout) {
-    const kinds: Record<string, { y: number; h: number; colors: string[] }> = {
-      f: { y: 0, h: 0.04, colors: ["#c8a77c", "#c19f73", "#cfae83", "#bd9a6e"] },
-      c: { y: 0, h: 0.07, colors: ["#b4846c", "#ae7e66"] },
-      t: { y: 0, h: 0.04, colors: ["#e8eef0", "#dfe7ea"] },
+    const wood = new THREE.CanvasTexture(woodCanvas());
+    wood.wrapS = wood.wrapT = THREE.RepeatWrapping;
+    wood.repeat.set(l.cols / 3, l.rows / 3);
+    wood.colorSpace = THREE.SRGBColorSpace;
+    wood.anisotropy = 8;
+    const floor = new THREE.Mesh(new THREE.PlaneGeometry(l.cols, l.rows), new THREE.MeshStandardMaterial({ map: wood, roughness: 0.78, metalness: 0.05 }));
+    floor.rotation.x = -Math.PI / 2;
+    floor.position.set(l.cols / 2, 0, l.rows / 2);
+    floor.receiveShadow = true;
+    floor.userData.dynamic = true;
+    this.room.add(floor);
+    const kinds: Record<string, { h: number; colors: number[]; rough: number }> = {
+      c: { h: 0.02, colors: [T.rugs[0], 0x183540], rough: 1 },
+      t: { h: 0.015, colors: [0x2a3140, 0x262c39], rough: 0.4 },
     };
     const geo = new THREE.BoxGeometry(0.98, 1, 0.98);
     for (const [code, spec] of Object.entries(kinds)) {
@@ -767,11 +708,11 @@ export class OfficeScene {
       for (let row = 0; row < l.rows; row++)
         for (let col = 0; col < l.cols; col++) if (l.tiles[row * l.cols + col] === code) cells.push([col, row]);
       if (!cells.length) continue;
-      const mesh = new THREE.InstancedMesh(geo, new THREE.MeshStandardMaterial({ roughness: code === "t" ? 0.35 : 0.85 }), cells.length);
+      const mesh = new THREE.InstancedMesh(geo, new THREE.MeshStandardMaterial({ roughness: spec.rough }), cells.length);
       const m = new THREE.Matrix4();
       const color = new THREE.Color();
       cells.forEach(([col, row], i) => {
-        m.compose(new THREE.Vector3(col + 0.5, spec.y + spec.h / 2 - 0.02, row + 0.5), new THREE.Quaternion(), new THREE.Vector3(1, spec.h, 1));
+        m.compose(new THREE.Vector3(col + 0.5, spec.h / 2, row + 0.5), new THREE.Quaternion(), new THREE.Vector3(1, spec.h, 1));
         mesh.setMatrixAt(i, m);
         mesh.setColorAt(i, color.set(spec.colors[(col * 7 + row * 3) % spec.colors.length]));
       });
@@ -779,58 +720,80 @@ export class OfficeScene {
       this.room.add(mesh);
     }
     // Mureta baixa em volta da sala, para ela não terminar no vazio.
-    const rim = mat("#7b8bab");
+    const rim = mat("#1b2230", { rough: 0.9 });
     this.room.add(
       box(l.cols + 0.2, 0.35, 0.1, rim, l.cols / 2, 0.175, l.rows + 0.05),
       box(0.1, 0.35, l.rows, rim, -0.05, 0.175, l.rows / 2),
       box(0.1, 0.35, l.rows, rim, l.cols + 0.05, 0.175, l.rows / 2),
     );
-    // Rodapé sob o piso inteiro, para as frestas não mostrarem o vazio.
-    const base = box(l.cols, 0.02, l.rows, mat("#8c7457"), l.cols / 2, -0.005, l.rows / 2);
-    base.castShadow = false;
-    this.room.add(base);
-    const wallM = mat("#93a4c0", { rough: 0.9 });
-    const trim = mat("#7b8bab");
-    const glass = new THREE.MeshPhysicalMaterial({ color: "#a9d6f5", emissive: "#5f9fd0", emissiveIntensity: 0.5, transparent: true, opacity: 0.55, roughness: 0.05 });
+    const wallM = new THREE.MeshStandardMaterial({ color: T.wall, roughness: 0.92 });
+    const trim = new THREE.MeshStandardMaterial({ color: T.frame, roughness: 0.6 });
+    // A cidade corre pelas janelas: cada vidro mostra 1/8 da imagem (o recorte vai na UV, para
+    // todos os vidros dividirem um material e se juntarem numa malha só).
+    const city = new THREE.CanvasTexture(cityCanvas());
+    city.colorSpace = THREE.SRGBColorSpace;
+    city.wrapS = THREE.RepeatWrapping;
+    const view = new THREE.MeshBasicMaterial({ map: city, toneMapped: false });
+    // Paredes em blocos de 4x4 células, cada bloco juntado numa malha por material: de ~300
+    // desenhos por quadro para algumas dezenas. A parede que tapa o chefe some pelo bloco.
+    const blocks = new Map<string, { group: THREE.Group; cells: { x: number; z: number }[] }>();
     for (let row = 0; row < l.rows; row++)
       for (let col = 0; col < l.cols; col++) {
         const tile = tileAt(l, { col, row });
         if (!isWallTile(tile)) continue;
+        const key = `${Math.floor(col / 4)}:${Math.floor(row / 4)}`;
+        let block = blocks.get(key);
+        if (!block) blocks.set(key, (block = { group: new THREE.Group(), cells: [] }));
         const g = new THREE.Group();
         g.position.set(col + 0.5, 0, row + 0.5);
         if (tile === "parede") {
           g.add(box(1, 2.4, 1, wallM, 0, 1.2, 0));
         } else {
-          g.add(box(1, 0.9, 1, wallM, 0, 0.45, 0));
-          g.add(box(1, 0.4, 1, wallM, 0, 2.2, 0));
-          const pane = new THREE.Mesh(new THREE.BoxGeometry(0.96, 1.1, 0.08), glass);
-          pane.position.set(0, 1.45, 0);
+          g.add(box(1, 0.75, 1, wallM, 0, 0.375, 0));
+          g.add(box(1, 0.35, 1, wallM, 0, 2.225, 0));
+          const glass = new THREE.BoxGeometry(1, 1.3, 0.06);
+          const uv = glass.attributes.uv as THREE.BufferAttribute;
+          const slice = (col + row) % 8;
+          for (let k = 0; k < uv.count; k++) uv.setX(k, (uv.getX(k) + slice) / 8);
+          const pane = new THREE.Mesh(glass, view);
+          pane.position.set(0, 1.4, 0);
           g.add(pane);
-          g.add(box(1, 0.06, 1.04, trim, 0, 0.92, 0));
+          g.add(box(0.06, 1.3, 0.1, trim, 0.47, 1.4, 0), box(1, 0.05, 0.12, trim, 0, 0.77, 0), box(1, 0.05, 0.12, trim, 0, 2.03, 0));
         }
-        g.add(box(1.02, 0.12, 1.02, trim, 0, 0.06, 0));
-        g.userData.dynamic = true;
-        this.room.add(g);
-        this.walls.push({ mesh: g, x: col + 0.5, z: row + 0.5, faded: false });
+        g.add(box(1.02, 0.1, 1.02, trim, 0, 0.05, 0));
+        block.group.add(g);
+        block.cells.push({ x: col + 0.5, z: row + 0.5 });
       }
+    for (const block of blocks.values()) {
+      const merged = mergeByMaterial(block.group);
+      merged.userData.dynamic = true;
+      this.room.add(merged);
+      this.walls.push({ mesh: merged, cells: block.cells, faded: false });
+    }
   }
 
   private buildFurniture(l: OfficeLayout, f: Furniture) {
     const { w, h } = FOOTPRINT[f.kind];
     const cx = f.col + w / 2, cz = f.row + h / 2;
     let g: THREE.Object3D;
-    if (f.kind === "planta") g = makePlant();
-    else if (f.kind === "sofa") g = makeSofa();
+    if (f.kind === "planta") g = callPlant(0.75);
+    else if (f.kind === "sofa") {
+      // O sofá do Call tem o encosto para +z; aqui o encosto fica no fundo (-z), como antes.
+      const sofa = callSofa(T.sofa);
+      sofa.scale.setScalar(S * 0.9);
+      sofa.rotation.y = Math.PI;
+      g = new THREE.Group().add(sofa);
+    }
     else if (f.kind === "estante") g = makeShelf();
     else if (f.kind === "bebedouro") g = makeCooler();
     else if (f.kind === "chefe") {
-      const boss = makeBossDesk();
-      g = boss.group;
-      this.bossPapers = boss.papers;
-      g.userData.target = { kind: "boss" } satisfies PickTarget;
-      hitBox(g, 2.8, 1.1, 1.2);
+      this.buildBossDesk(f);
+      return;
+    } else if (f.kind === "reuniao") {
+      g = makeMeetingTable();
+      g.userData.target = { kind: "reuniao", id: f.id } satisfies PickTarget;
+      hitBox(g, 4, 1, 3, 0.5);
       this.pickables.push(g);
-      this.bossAnchor.set(cx - 0.75, 1.3, cz);
     } else if (f.kind === "telao") {
       const onWall = isWallTile(tileAt(l, { col: f.col, row: f.row }));
       const screen = makeScreen();
@@ -859,30 +822,274 @@ export class OfficeScene {
     this.room.add(g);
   }
 
+  // Mesa do Golfinho Call (o setup que a pessoa montou no editor), com a cadeira e o monitor
+  // principal mostrando o trabalho do agente. Atrás da tela, um brilho na cor da situação.
   private buildDesk(a: OfficeAgent) {
-    const desk = makeDesk();
-    desk.group.position.set(a.desk.col + 1.5, 0, a.desk.row + 1.3);
-    desk.group.userData.target = { kind: "agent", id: a.id } satisfies PickTarget;
-    hitBox(desk.group, 3, 1.4, 2, 0.7, -0.3);
-    this.pickables.push(desk.group);
-    this.room.add(desk.group);
-    const chair = makeChair(a.color);
-    chair.position.set(a.desk.col + 1.5, 0, a.desk.row + 0.45);
-    chair.rotation.y = 0;
-    this.room.add(chair);
-    this.desks.set(a.id, desk);
+    const outer = new THREE.Group();
+    outer.position.set(a.desk.col + 1.5, 0, a.desk.row + DESK_Z);
+    const inner = new THREE.Group();
+    inner.scale.setScalar(S);
+    outer.add(inner);
+    const model = buildDesk(agentDesk(a), a.color, a.name);
+    inner.add(model.group);
+    if (!model.chair) {
+      const chair = makeChair(a.color);
+      chair.position.set(0, 0, 1.25);
+      inner.add(chair);
+    }
+    const canvas = document.createElement("canvas");
+    canvas.width = 512;
+    canvas.height = 288;
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    const screen = new THREE.Mesh(screenGeometry(model.curved, MONITOR_W, MONITOR_H), new THREE.MeshBasicMaterial({ map: texture, toneMapped: false }));
+    screen.position.set(model.mainX, MONITOR_Y, -0.07);
+    inner.add(screen);
+    const glowMesh = new THREE.Mesh(
+      new THREE.PlaneGeometry(MONITOR_W * 2, MONITOR_H * 2.4),
+      new THREE.MeshBasicMaterial({ map: softGlow(), color: 0x2dd4bf, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending }),
+    );
+    glowMesh.position.set(model.mainX, MONITOR_Y, -0.18);
+    glowMesh.userData.dynamic = true;
+    inner.add(glowMesh);
+    const papers = new THREE.Group();
+    papers.userData.dynamic = true;
+    papers.position.set(model.width / 2 - 0.35, 0.8, 0.55);
+    inner.add(papers);
+    outer.userData.target = { kind: "agent", id: a.id } satisfies PickTarget;
+    hitBox(outer, 3, 1.6, 2, 0.8, 0.5);
+    this.pickables.push(outer);
+    this.room.add(outer);
+    this.desks.set(a.id, {
+      model,
+      key: deskKey(agentDesk(a)),
+      screen: { canvas, texture, drawn: "" },
+      glow: glowMesh,
+      papers,
+      seat: new THREE.Vector3(a.desk.col + 1.5, 0, a.desk.row + SIT_Z),
+    });
   }
 
-  private person(a: OfficeAgent): Person {
+  // Mesa do chefe: o setup gamer grande do Call, virado para o lugar do chefe (acima da mesa, na
+  // planta). As entregas empilham no tampo; o PC e os monitores abrem o chat da tarefa.
+  private buildBossDesk(f: Furniture) {
+    const outer = new THREE.Group();
+    outer.position.set(f.col + 1.5, 0, f.row + 1.4);
+    const inner = new THREE.Group();
+    inner.scale.setScalar(S);
+    inner.rotation.y = Math.PI;
+    outer.add(inner);
+    const model = buildDesk(BOSS_DESK, 0xfbbf24, "Chefe");
+    inner.add(model.group);
+    if (!model.chair) {
+      const chair = makeChair("#fbbf24");
+      chair.position.set(0, 0, 1.25);
+      inner.add(chair);
+    }
+    const canvas = document.createElement("canvas");
+    canvas.width = 512;
+    canvas.height = 288;
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    const screen = new THREE.Mesh(screenGeometry(model.curved, MONITOR_W, MONITOR_H), new THREE.MeshBasicMaterial({ map: texture, toneMapped: false }));
+    screen.position.set(model.mainX, MONITOR_Y, -0.07);
+    inner.add(screen);
+    this.bossScreen = { canvas, texture, drawn: "" };
+    const papers = new THREE.Group();
+    papers.userData.dynamic = true;
+    papers.position.set(model.width / 2 - 0.45, 0.8, 0.45);
+    inner.add(papers);
+    this.bossPapers = papers;
+    // A mesa (entregas) e, por cima, o PC e os monitores (o chat): o clique pega o mais perto.
+    outer.userData.target = { kind: "boss" } satisfies PickTarget;
+    hitBox(outer, 3, 0.95, 1.6, 0.48, -0.2);
+    const pc = new THREE.Group();
+    pc.userData.target = { kind: "bosspc" } satisfies PickTarget;
+    hitBox(pc, 2.6, 0.95, 0.5, 1.45 * S + 0.05, 0);
+    pc.position.set(0, 0, 0.05);
+    outer.add(pc);
+    this.pickables.push(pc, outer);
+    this.bossModel = model;
+    this.room.add(outer);
+    this.bossAnchor.set(f.col + 1.5, 1.75, f.row + 1.2);
+  }
+
+  /** O que a tela do chefe mostra: o chat da tarefa que está andando, ou o convite para abrir. */
+  setBossScreen(title: string, line: string, live: boolean) {
+    const sc = this.bossScreen;
+    if (!sc) return;
+    const key = `${title}|${line}|${live}`;
+    if (key === sc.drawn) return;
+    sc.drawn = key;
+    const x = sc.canvas.getContext("2d");
+    if (!x) return;
+    const W = sc.canvas.width, H = sc.canvas.height;
+    const bg = x.createLinearGradient(0, 0, 0, H);
+    bg.addColorStop(0, "#0e1522");
+    bg.addColorStop(1, "#080b12");
+    x.fillStyle = bg;
+    x.fillRect(0, 0, W, H);
+    x.fillStyle = "#141c2b";
+    x.fillRect(0, 0, W, 40);
+    x.fillStyle = live ? "#38bdf8" : "#64748b";
+    x.beginPath();
+    x.arc(22, 20, 7, 0, 7);
+    x.fill();
+    x.font = "600 17px system-ui, sans-serif";
+    x.textBaseline = "middle";
+    x.fillStyle = "#e8ebf1";
+    x.fillText("💬 Chat do Golfinho", 38, 21);
+    x.fillStyle = "#f8fafc";
+    x.font = "600 22px system-ui, sans-serif";
+    x.fillText(clipText(x, title, W - 36), 18, 92);
+    x.fillStyle = "#94a3b8";
+    x.font = "16px system-ui, sans-serif";
+    x.fillText(clipText(x, line, W - 36), 18, 130);
+    x.fillStyle = "#38bdf8";
+    x.font = "600 15px system-ui, sans-serif";
+    x.fillText("Clique no PC para abrir a conversa", 18, H - 30);
+    sc.texture.needsUpdate = true;
+  }
+
+  // Personagem do Call num suporte: o suporte olha para +z com rotação 0, como o resto da sala
+  // (o personagem do Call olha para -z). O pet, se tiver, segue o dono pela sala.
+  private makeActor(look: ReturnType<typeof agentLook>, target: PickTarget): Actor {
+    const holder = new THREE.Group();
+    const character = new Character(look);
+    character.root.rotation.y = Math.PI;
+    holder.add(character.root);
+    holder.scale.setScalar(S);
+    holder.traverse((o) => (o.userData.target = target));
+    const contact = new THREE.Mesh(
+      new THREE.CircleGeometry(0.42, 24),
+      new THREE.MeshBasicMaterial({ map: softGlow(), color: 0x000000, transparent: true, opacity: 0.55, depthWrite: false }),
+    );
+    contact.rotation.x = -Math.PI / 2;
+    contact.position.y = 0.012;
+    holder.add(contact);
+    const paper = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.02, 0.26), mat("#ffffff"));
+    paper.position.set(0, 1.05, 0.32);
+    paper.rotation.x = -0.5;
+    paper.visible = false;
+    holder.add(paper);
+    this.scene.add(holder);
+    const petModel = makePet(look.pet, look.petColor, look.led);
+    let pet: PetFollower | null = null;
+    if (petModel) {
+      petModel.group.scale.setScalar(S);
+      this.scene.add(petModel.group);
+      pet = new PetFollower(petModel);
+      pet.setLed(look.led, look.ledMode);
+    }
+    return { holder, character, key: lookKey(look), seated: false, pet, paper, speed: 0, heading: 0, placed: false };
+  }
+
+  private dropActor(a: Actor) {
+    this.scene.remove(a.holder);
+    a.character.dispose();
+    if (a.pet) {
+      this.scene.remove(a.pet.pet.group);
+      a.pet.pet.dispose();
+    }
+  }
+
+  private actor(a: OfficeAgent): Actor {
     let p = this.people.get(a.id);
-    if (!p || p.key !== makeKey(a)) {
-      if (p) this.scene.remove(p.root);
-      p = makePerson(a.color, a.hair);
-      p.root.traverse((o) => (o.userData.target = { kind: "agent", id: a.id }));
+    // A aparência só muda quando a sala muda (outro objeto de agente): calcula uma vez por objeto.
+    let cached = this.looks.get(a);
+    if (!cached) {
+      const look = agentLook(a);
+      cached = { look, key: lookKey(look) };
+      this.looks.set(a, cached);
+    }
+    const { look } = cached;
+    if (!p || p.key !== cached.key) {
+      if (p) this.dropActor(p);
+      p = this.makeActor(look, { kind: "agent", id: a.id });
       this.people.set(a.id, p);
-      this.scene.add(p.root);
     }
     return p;
+  }
+
+  /** Anda (ou fica parado em pé) até o ponto; devolve a velocidade em unidades por segundo. */
+  private moveActor(p: Actor, x: number, z: number, moving: boolean, dt: number) {
+    const pos = p.holder.position;
+    if (p.seated) {
+      p.seated = false;
+      p.character.setSeated(false);
+    }
+    const dx = x - pos.x, dz = z - pos.z;
+    const dist = Math.hypot(dx, dz);
+    if (moving && dist > 0.001) p.heading = Math.atan2(dx, dz);
+    const speed = p.placed && dt > 0 ? Math.min(8, dist / dt) : 0;
+    p.placed = true;
+    pos.set(x, 0, z);
+    p.holder.rotation.y = lerpAngle(p.holder.rotation.y, p.heading, Math.min(1, dt * 12));
+    p.speed += (speed - p.speed) * Math.min(1, dt * 10);
+  }
+
+  private seatActor(p: Actor, seat: THREE.Vector3) {
+    if (!p.seated) {
+      p.seated = true;
+      p.character.setSeated(true);
+    }
+    p.holder.position.copy(seat);
+    p.holder.rotation.y = p.heading = Math.PI;
+    p.speed = 0;
+    p.placed = true;
+  }
+
+  private animateActor(p: Actor, dt: number, t: number, talking: boolean) {
+    p.character.update(dt, p.speed / S, talking);
+    if (p.pet) {
+      const pos = p.holder.position;
+      // O pet usa a direção do Call (rotação 0 olhando para -z).
+      p.pet.update(dt, t, { x: pos.x, z: pos.z, ry: p.holder.rotation.y + Math.PI, seated: p.seated });
+    }
+  }
+
+  /** Liga ou desliga o modo edição (câmera de cima, centrada na sala). */
+  setEditing(on: boolean) {
+    if (on === this.editOn) return;
+    this.editOn = on;
+    if (this.editGrid) this.editGrid.visible = on;
+    if (on) {
+      this.saved = { pitch: this.pitch, distance: this.distance };
+      const l = this.layout;
+      this.editCenter.set(l ? l.cols / 2 : 12.5, 0, l ? l.rows / 2 : 8);
+      this.pitch = 1.12;
+      this.distance = 19;
+    } else {
+      this.pitch = this.saved.pitch;
+      this.distance = this.saved.distance;
+      this.editGhost.visible = this.editSel.visible = false;
+    }
+  }
+
+  /** Move a câmera da edição pelo chão (unidades da sala), sem sair da sala. */
+  panEdit(dx: number, dz: number) {
+    const l = this.layout;
+    if (!l) return;
+    this.editCenter.x = Math.min(l.cols, Math.max(0, this.editCenter.x + dx));
+    this.editCenter.z = Math.min(l.rows, Math.max(0, this.editCenter.z + dz));
+  }
+
+  /** Prévia de onde o item vai (verde cabe, vermelho não) e o contorno do item escolhido. */
+  editOverlay(o: { ghost: { col: number; row: number; w: number; h: number; ok: boolean; tile: boolean } | null; selected: { col: number; row: number; w: number; h: number } | null }) {
+    const g = o.ghost;
+    this.editGhost.visible = Boolean(g);
+    if (g) {
+      const height = g.tile ? 0.06 : 0.9;
+      this.editGhost.scale.set(g.w - 0.06, height, g.h - 0.06);
+      this.editGhost.position.set(g.col + g.w / 2, height / 2 + 0.02, g.row + g.h / 2);
+      (this.editGhost.material as THREE.MeshBasicMaterial).color.set(g.ok ? 0x2dd4bf : 0xef4444);
+    }
+    const sel = o.selected;
+    this.editSel.visible = Boolean(sel);
+    if (sel) {
+      this.editSel.scale.set(sel.w + 0.08, 1.4, sel.h + 0.08);
+      this.editSel.position.set(sel.col + sel.w / 2, 0.7, sel.row + sel.h / 2);
+    }
   }
 
   /** Direções da câmera no chão, em pixels da sala: para onde W e D levam o chefe. */
@@ -897,14 +1104,25 @@ export class OfficeScene {
     this.pitch = Math.min(1.35, Math.max(0.25, this.pitch + dy * 0.006));
   }
   zoom(delta: number) {
-    this.distance = Math.min(14, Math.max(3.2, this.distance * (delta > 0 ? 1.1 : 0.9)));
+    this.distance = Math.min(this.editOn ? 30 : 14, Math.max(3.2, this.distance * (delta > 0 ? 1.1 : 0.9)));
+  }
+
+  /** Ponto do chão sob o mouse (em pixels da sala), atravessando móveis e pessoas; null fora da sala. */
+  floorPoint(clientX: number, clientY: number): Point | null {
+    const r = this.canvas.getBoundingClientRect();
+    const ndc = new THREE.Vector2(((clientX - r.left) / r.width) * 2 - 1, -((clientY - r.top) / r.height) * 2 + 1);
+    this.raycaster.setFromCamera(ndc, this.camera);
+    const hit = this.raycaster.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), new THREE.Vector3());
+    const l = this.layout;
+    if (!hit || !l || hit.x < 0 || hit.z < 0 || hit.x >= l.cols || hit.z >= l.rows) return null;
+    return { x: hit.x * CELL, y: hit.z * CELL };
   }
 
   pick(clientX: number, clientY: number): Pick {
     const r = this.canvas.getBoundingClientRect();
     const ndc = new THREE.Vector2(((clientX - r.left) / r.width) * 2 - 1, -((clientY - r.top) / r.height) * 2 + 1);
     this.raycaster.setFromCamera(ndc, this.camera);
-    const hits = this.raycaster.intersectObjects([...this.pickables, ...[...this.people.values()].map((p) => p.root)], true);
+    const hits = this.raycaster.intersectObjects([...this.pickables, ...[...this.people.values()].map((p) => p.holder)], true);
     for (const hit of hits) {
       let o: THREE.Object3D | null = hit.object;
       while (o && !o.userData.target) o = o.parent;
@@ -916,61 +1134,82 @@ export class OfficeScene {
 
   render(v: FrameView) {
     if (!this.layout) return;
+    const started = performance.now();
+    try {
+      this.draw(v);
+    } finally {
+      const spent = performance.now() - started;
+      this.sceneMs += spent;
+      this.sceneMax = Math.max(this.sceneMax, spent);
+    }
+  }
+
+  private draw(v: FrameView) {
+    if (!this.layout) return;
     const w = this.canvas.clientWidth, h = this.canvas.clientHeight;
-    this.adapt(v.dt);
+    // Teto de pixels por quadro: em tela cheia a resolução interna baixa para caber nele, e o
+    // quadro custa quase o mesmo que na janela (a diferença de nitidez quase não se nota).
+    if (w && h) {
+      this.cap = Math.max(0.5, Math.min(this.maxRatio, Math.sqrt(PIXEL_BUDGET / (w * h))));
+      if (this.ratio > this.cap) this.ratio = this.cap;
+    }
+    if (v.background) this.lastFrame = 0;
+    else this.adapt(v.player.moving || v.agents.some((a) => a.walking));
     if (w && h && (this.canvas.width !== Math.floor(w * this.ratio) || this.camera.aspect !== w / h)) {
       this.renderer.setPixelRatio(this.ratio);
       this.renderer.setSize(w, h, false);
-      this.composer.setPixelRatio(this.ratio);
-      this.composer.setSize(w, h);
-      // O brilho em meia resolução: ninguém nota, e é a parte mais cara do quadro.
-      this.bloom.setSize(Math.round((w * this.ratio) / 2), Math.round((h * this.ratio) / 2));
       this.camera.aspect = w / h;
       this.camera.updateProjectionMatrix();
     }
     this.frames++;
     // Chefe.
     const px = U(v.player.x), pz = U(v.player.y);
-    const pp = this.player.root.position;
-    if (v.player.moving) {
-      const dx = px - pp.x, dz = pz - pp.z;
-      if (Math.hypot(dx, dz) > 0.001) this.heading = Math.atan2(dx, dz);
+    if (this.player) {
+      this.moveActor(this.player, px, pz, v.player.moving, v.dt);
+      this.animateActor(this.player, v.dt, v.t, false);
     }
-    pp.set(px, 0, pz);
-    this.player.root.rotation.y = lerpAngle(this.player.root.rotation.y, this.heading, Math.min(1, v.dt * 12));
-    posePerson(this.player, { moving: v.player.moving, phase: v.player.phase, seated: false, carry: false, t: v.t });
-    // Agentes: sentados na cadeira, ou andando pela sala.
+    // Agentes: sentados no computador, ou andando pela sala (levando a entrega).
+    const screensTick = Math.floor(v.t * 2);
+    const redraw = screensTick !== this.screensDrawn;
+    if (redraw) this.screensDrawn = screensTick;
     for (const a of v.agents) {
-      const p = this.person(a.agent);
+      const p = this.actor(a.agent);
       const desk = this.desks.get(a.agent.id);
-      if (a.walking) {
-        const nx = U(a.x), nz = U(a.y);
-        const dx = nx - p.root.position.x, dz = nz - p.root.position.z;
-        if (Math.hypot(dx, dz) > 0.001) p.root.rotation.y = Math.atan2(dx, dz);
-        p.root.position.set(nx, 0, nz);
-      } else {
-        p.root.position.set(a.agent.desk.col + 1.5, 0, a.agent.desk.row + 0.5);
-        p.root.rotation.y = 0;
-      }
-      posePerson(p, { moving: a.walking, phase: a.phase * 10, seated: !a.walking, carry: a.carry, t: v.t + a.phase });
+      if (a.sit) {
+        this.seatActor(p, new THREE.Vector3(U(a.sit.x), 0, U(a.sit.y)));
+        p.holder.rotation.y = p.heading = a.sit.facing;
+      } else if (a.walking || !desk) this.moveActor(p, U(a.x), U(a.y), a.walking, v.dt);
+      else this.seatActor(p, desk.seat);
+      p.paper.visible = a.carry && a.walking;
+      const talking = Boolean(a.bubble) && !/^(⚙️|🤔)/u.test(a.bubble);
+      this.animateActor(p, v.dt, v.t + a.phase, talking);
       if (desk) {
-        const hue = (v.t * 0.07 + a.phase * 0.13) % 1;
-        desk.rgb.emissive.setHSL(hue, 1, 0.5);
-        desk.soft.emissive.setHSL(hue, 1, 0.5);
-        const pulse = 0.65 + Math.sin(v.t * 6 + a.phase) * 0.35;
-        desk.status.emissive.set(a.screen === "work" ? "#4cc9f0" : a.screen === "think" ? "#ffd166" : a.agent.color);
-        desk.status.emissiveIntensity = a.screen === "off" ? 0.35 : 1.2 + pulse * 1.0;
-        desk.screens.emissive.set(a.screen === "work" ? "#2b6cb0" : a.screen === "think" ? "#8a6d1a" : "#1b2a44");
-        for (const fan of desk.fans) fan.rotation.x += v.dt * (a.screen === "work" ? 18 : 7);
+        desk.model.update(v.t);
+        const info: AgentScreen = a.desk ?? { state: a.screen === "work" ? "trabalhando" : a.screen === "think" ? "pensando" : "livre", title: "", lines: [], chat: false };
+        const st = SCREEN_STATE[info.state];
+        const glowMat = desk.glow.material as THREE.MeshBasicMaterial;
+        glowMat.color.set(st.color);
+        glowMat.opacity = info.state === "livre" ? 0 : info.state === "esperando" ? 0.35 + Math.sin(v.t * 5) * 0.2 : 0.38;
+        // A tela redesenha só quando muda (ou para o cursor piscar), no máximo duas vezes por segundo.
+        if (redraw) {
+          const blink = info.state === "trabalhando" && screensTick % 2 === 0;
+          const key = JSON.stringify([info, blink, a.agent.name]);
+          if (key !== desk.screen.drawn) {
+            desk.screen.drawn = key;
+            drawAgentScreen(desk.screen.canvas, a.agent.name, info, blink);
+            desk.screen.texture.needsUpdate = true;
+          }
+        }
         setPapers(desk.papers, a.queued);
       }
     }
     if (this.bossPapers) setPapers(this.bossPapers, v.delivered);
+    this.bossModel?.update(v.t);
     // Guia até quem cuida do pedido encaminhado.
     if (v.guide) {
-      const gx = v.guide.desk.col + 1.5, gz = v.guide.desk.row + 0.55;
+      const gx = v.guide.desk.col + 1.5, gz = v.guide.desk.row + SIT_Z;
       this.guideCone.visible = true;
-      this.guideCone.position.set(gx, 1.85 + Math.sin(v.t * 5) * 0.12, gz);
+      this.guideCone.position.set(gx, 2.05 + Math.sin(v.t * 5) * 0.12, gz);
       this.guideCone.rotation.y = v.t * 2;
       const front = new THREE.Vector3(v.guide.desk.col + 1.5, 0.08, v.guide.desk.row + 2.5);
       this.guideLine.geometry.setFromPoints([new THREE.Vector3(px, 0.08, pz), front]);
@@ -981,7 +1220,7 @@ export class OfficeScene {
     // Câmera em terceira pessoa: atrás e acima do chefe, com suavização.
     // Olha um pouco à frente do chefe: dá para ver para onde ele está indo.
     const ahead = this.basis().forward;
-    const target = new THREE.Vector3(px + U(ahead.x * 60), 0.9, pz + U(ahead.y * 60));
+    const target = this.editOn ? this.editCenter.clone() : new THREE.Vector3(px + U(ahead.x * 60), 0.9, pz + U(ahead.y * 60));
     if (!this.placed) {
       this.look.copy(target);
       this.placed = true;
@@ -997,10 +1236,9 @@ export class OfficeScene {
     // Parede entre a câmera e o chefe fica transparente (só mexe quando muda).
     const cx = this.camera.position.x, cz = this.camera.position.z;
     for (const wall of this.walls) {
-      const blocking = segmentDistance(wall.x, wall.z, cx, cz, px, pz) < 0.9 && Math.hypot(wall.x - px, wall.z - pz) > 0.6;
+      const blocking = !this.editOn && wall.cells.some((c) => segmentDistance(c.x, c.z, cx, cz, px, pz) < 0.9 && Math.hypot(c.x - px, c.z - pz) > 0.6);
       if (blocking === wall.faded) continue;
       wall.faded = blocking;
-      this.renderer.shadowMap.needsUpdate = true;
       wall.mesh.traverse((o) => {
         if (!(o instanceof THREE.Mesh) || o.material instanceof THREE.MeshPhysicalMaterial) return;
         if (blocking) {
@@ -1023,30 +1261,53 @@ export class OfficeScene {
       }
     }
     // Sombras: quem se mexe são as pessoas; recalcula a cada dois quadros enquanto alguém anda.
-    if ((v.player.moving || v.agents.some((a) => a.walking)) && this.frames % 2 === 0) this.renderer.shadowMap.needsUpdate = true;
-    this.composer.render();
+    // Sombras fixas: só a primeira passada depois de montar a sala (ver setLayout) e um retoque
+    // de vez em quando, para o que anima na mesa (ventoinhas, aquário).
+    if (this.frames % 600 === 0) this.renderer.shadowMap.needsUpdate = true;
+    this.renderer.render(this.scene, this.camera);
     this.drawLabels(v);
   }
 
   // Qualidade adaptativa: se os quadros passam de ~22 ms por um tempo, baixa um pouco a
   // resolução; se sobra folga, volta a subir até o máximo. O brilho e as sombras ficam.
-  private adapt(dt: number) {
+  private adapt(moving: boolean) {
+    // Tempo real entre quadros (o dt da sala é limitado a 50 ms e esconderia as travadas).
+    const now = performance.now();
+    const dt = this.lastFrame ? Math.min(1, (now - this.lastFrame) / 1000) : 1 / 60;
+    this.lastFrame = now;
     this.sampleTime += dt;
     this.sampleFrames++;
-    if (this.sampleTime < 1.5) return;
+    this.worst = Math.max(this.worst, dt);
+    if (this.sampleTime < 1) return;
     const avg = this.sampleTime / this.sampleFrames;
+    const frames = this.sampleFrames;
     this.sampleTime = 0;
     this.sampleFrames = 0;
-    if (avg > 0.022 && this.ratio > 0.75) {
-      this.slowTime++;
-      if (this.slowTime >= 2) {
-        this.ratio = Math.max(0.75, this.ratio - 0.25);
+    if (import.meta.env.DEV) {
+      const r = this.renderer.info.render;
+      console.warn(
+        `[escritório 3D] ${Math.round(1 / avg)} quadros/s (${(avg * 1000).toFixed(1)} ms) · cena ${(this.sceneMs / frames).toFixed(1)} ms (pior ${this.sceneMax.toFixed(0)}) · pior quadro ${(this.worst * 1000).toFixed(0)} ms · ${this.canvas.width}x${this.canvas.height} (escala ${this.ratio.toFixed(2)}) · ${r.calls} desenhos`,
+      );
+    }
+    this.sceneMs = this.sceneMax = this.worst = 0;
+    // Resolução estável: trocar de nitidez no meio da corrida aparece como a imagem "embaçando".
+    // Só baixa depois de 3 s seguidos lentos (uma travada isolada não é a placa de vídeo) e só
+    // volta a subir com folga por 4 s e com o chefe parado.
+    if (avg > 0.15) {
+      this.slowTime = this.fastTime = 0;
+    } else if (avg > 0.024) {
+      this.fastTime = 0;
+      if (++this.slowTime >= 3 && this.ratio > MIN_RATIO) {
+        this.ratio = Math.max(MIN_RATIO, this.ratio - 0.1);
         this.slowTime = 0;
       }
-    } else if (avg < 0.0145 && this.ratio < this.maxRatio) {
-      this.ratio = Math.min(this.maxRatio, this.ratio + 0.25);
+    } else if (avg < 0.012 && !moving) {
       this.slowTime = 0;
-    } else this.slowTime = 0;
+      if (++this.fastTime >= 4 && this.ratio < this.cap) {
+        this.ratio = Math.min(this.cap, this.ratio + 0.1);
+        this.fastTime = 0;
+      }
+    } else this.slowTime = this.fastTime = 0;
   }
 
   // Nomes, balões, o aviso de entregas e o "[E] Falar com": HTML por cima do canvas.
@@ -1079,11 +1340,11 @@ export class OfficeScene {
     };
     for (const a of v.agents) {
       const p = this.people.get(a.agent.id);
-      place(`name:${a.agent.id}`, "office3d-name", `${a.agent.name} · ${a.agent.role}`, new THREE.Vector3(a.agent.desk.col + 1.5, 0.1, a.agent.desk.row + 1.95));
-      if (a.bubble && p) place(`bubble:${a.agent.id}`, "office3d-bubble", a.bubble, p.root.position.clone().add(new THREE.Vector3(0, a.walking ? 1.5 : 1.25, 0)));
+      place(`name:${a.agent.id}`, "office3d-name", `${a.agent.name} · ${a.agent.role}`, new THREE.Vector3(a.agent.desk.col + 1.5, 0.1, a.agent.desk.row + 1.98));
+      if (a.bubble && p) place(`bubble:${a.agent.id}`, "office3d-bubble", a.bubble, p.holder.position.clone().add(new THREE.Vector3(0, p.seated ? 1.3 : 1.6, 0)));
     }
     if (v.unread) place("unread", "office3d-badge", String(v.unread), this.bossAnchor);
-    if (v.prompt) place("prompt", "office3d-prompt", v.prompt, this.player.root.position.clone().add(new THREE.Vector3(0, 1.55, 0)));
+    if (v.prompt && this.player) place("prompt", "office3d-prompt", v.prompt, this.player.holder.position.clone().add(new THREE.Vector3(0, 1.7, 0)));
     for (const [key, el] of this.labels)
       if (!used.has(key)) {
         el.remove();
@@ -1092,6 +1353,12 @@ export class OfficeScene {
   }
 
   dispose() {
+    for (const p of this.people.values()) this.dropActor(p);
+    if (this.player) this.dropActor(this.player);
+    for (const d of this.desks.values()) {
+      d.model.dispose();
+      d.screen.texture.dispose();
+    }
     for (const el of this.labels.values()) el.remove();
     this.labels.clear();
     this.scene.traverse((o) => {
@@ -1101,7 +1368,88 @@ export class OfficeScene {
   }
 }
 
-const makeKey = (a: OfficeAgent) => `${a.color}|${a.hair}|0`;
+/** Junta as malhas de um grupo numa por material (posições já aplicadas). */
+function mergeByMaterial(group: THREE.Group): THREE.Group {
+  group.updateMatrixWorld(true);
+  const buckets = new Map<THREE.Material, THREE.BufferGeometry[]>();
+  group.traverse((o) => {
+    if (!(o instanceof THREE.Mesh) || Array.isArray(o.material)) return;
+    const g = o.geometry.index ? o.geometry.toNonIndexed() : o.geometry.clone();
+    g.applyMatrix4(o.matrixWorld);
+    for (const name of Object.keys(g.attributes)) if (name !== "position" && name !== "normal" && name !== "uv") g.deleteAttribute(name);
+    const list = buckets.get(o.material) ?? [];
+    list.push(g);
+    buckets.set(o.material, list);
+    o.geometry.dispose();
+  });
+  const out = new THREE.Group();
+  for (const [material, list] of buckets) {
+    const merged = mergeGeometries(list, false);
+    for (const g of list) g.dispose();
+    if (!merged) continue;
+    const mesh = new THREE.Mesh(merged, material);
+    mesh.castShadow = !(material as THREE.Material).transparent && !(material instanceof THREE.MeshBasicMaterial);
+    mesh.receiveShadow = true;
+    out.add(mesh);
+  }
+  return out;
+}
+
+/** O setup do chefe: mesa grande, dois monitores, LED RGB, teclado gamer, PC vitrine e neon. */
+const BOSS_DESK: DeskStyle = {
+  ...DEFAULT_DESK,
+  size: "grande",
+  wood: "preto",
+  monitors: 2,
+  leds: "rgb",
+  ledColor: "#fbbf24",
+  keyboard: "gamer",
+  lamp: false,
+  headphones: true,
+  speakers: true,
+  chair: "gamer",
+  pc: "grande",
+  neon: "onair",
+  trophy: true,
+};
+
+interface AgentDesk {
+  model: DeskModel;
+  key: string;
+  screen: { canvas: HTMLCanvasElement; texture: THREE.CanvasTexture; drawn: string };
+  glow: THREE.Mesh;
+  papers: THREE.Group;
+  /** Onde o personagem fica quando está sentado. */
+  seat: THREE.Vector3;
+}
+interface Actor {
+  holder: THREE.Group;
+  character: Character;
+  key: string;
+  seated: boolean;
+  pet: PetFollower | null;
+  paper: THREE.Mesh;
+  /** Velocidade suavizada (unidades por segundo) e a direção para onde olha. */
+  speed: number;
+  heading: number;
+  placed: boolean;
+}
+
+let glowTexture: THREE.Texture | null = null;
+/** Mancha redonda e suave (o brilho atrás do monitor). */
+function softGlow(): THREE.Texture {
+  if (glowTexture) return glowTexture;
+  const c = document.createElement("canvas");
+  c.width = c.height = 128;
+  const x = c.getContext("2d")!;
+  const g = x.createRadialGradient(64, 64, 0, 64, 64, 64);
+  g.addColorStop(0, "rgba(255,255,255,1)");
+  g.addColorStop(1, "rgba(255,255,255,0)");
+  x.fillStyle = g;
+  x.fillRect(0, 0, 128, 128);
+  glowTexture = new THREE.CanvasTexture(c);
+  return glowTexture;
+}
 function lerpAngle(a: number, b: number, t: number) {
   let d = b - a;
   while (d > Math.PI) d -= Math.PI * 2;

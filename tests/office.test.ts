@@ -52,6 +52,8 @@ const run = {
   committed: [] as unknown[],
   interrupted: [] as string[],
   notified: [] as string[],
+  tasks: {} as Record<string, Task>,
+  enabled: true,
   changes: {} as Record<string, string>,
   chat: (_taskId: string): ChatEvent[] => [{ type: "status", state: "idle" }],
 };
@@ -72,6 +74,8 @@ const runDeps = () => ({
     setTimeout(() => office.onChat(taskId, { type: "status", state: "idle", message: "Interrompido." }), 0);
   },
   notify: (title: string, body: string) => void run.notified.push(`${title}: ${body}`),
+  task: (taskId: string) => run.tasks[taskId] ?? null,
+  enabled: () => run.enabled,
 });
 let states: OfficeState[];
 // O chefe aprova, na mesa dele, o plano que acabou de chegar.
@@ -95,6 +99,8 @@ beforeEach(() => {
   run.committed = [];
   run.interrupted = [];
   run.notified = [];
+  run.tasks = {};
+  run.enabled = true;
   run.changes = {};
   run.chat = () => [{ type: "status", state: "idle" }];
   office = new Office({
@@ -562,4 +568,131 @@ it("agente na Codex: pensa e trabalha pela Codex, e a implementação vira taref
   await approve();
   expect(createdProviders).toEqual(["codex"]);
   expect(office.state(project.id).jobs[0].status).toBe("entregue");
+});
+
+const chatTask = (provider: "claude" | "codex" = "claude") =>
+  ({ id: "33333333-3333-4333-8333-333333333333", projectId: project.id, title: "Ajustar o login", prompt: "Ajusta o login", provider }) as Task;
+
+it("pedido feito no chat da tarefa aparece no Escritório: o agente de código atende e não vai à mesa do chefe", async () => {
+  office.state(project.id);
+  run.tasks[chatTask().id] = chatTask();
+  const id = chatTask().id;
+  office.onChat(id, { type: "user", text: "Corrige o botão de entrar" });
+  office.onChat(id, { type: "status", state: "running" });
+  office.onChat(id, { type: "assistant", blocks: [{ kind: "text", text: "Vou olhar o formulário de login." }, { kind: "tool", name: "Read", summary: "src/Login.tsx" }] });
+  let job = office.state(project.id).jobs[0];
+  expect(job).toMatchObject({ origin: "chat", agentId: "bruno", status: "fazendo", taskId: id, request: "Corrige o botão de entrar", read: true });
+  expect(job.speech).toBe("Vou olhar o formulário de login.");
+  expect(job.activity).toMatch(/Login[.]tsx/);
+  office.onChat(id, { type: "approval", id: "a1", toolName: "Bash", summary: "npm test", canAlwaysAllow: false });
+  expect(office.state(project.id).jobs[0].approval?.text).toBe("Rodando: npm test");
+  expect(run.notified).toContain("Bruno pede permissão: Rodando: npm test");
+  office.onChat(id, { type: "approval_resolved", id: "a1", behavior: "allow" });
+  office.onChat(id, { type: "assistant", blocks: [{ kind: "text", text: "Pronto, o botão voltou a funcionar." }] });
+  office.onChat(id, { type: "status", state: "idle" });
+  job = office.state(project.id).jobs[0];
+  expect(job).toMatchObject({ status: "entregue", result: "Pronto, o botão voltou a funcionar." });
+  expect(job.approval).toBeUndefined();
+  // Não é entrega do Escritório: sem aviso de "na sua mesa".
+  expect(run.notified.some((n) => n.startsWith("Entrega na sua mesa"))).toBe(false);
+  // A próxima mensagem no mesmo chat reabre o mesmo trabalho.
+  office.onChat(id, { type: "user", text: "Agora o de sair" });
+  expect(office.state(project.id).jobs.filter((j) => j.origin === "chat")).toHaveLength(1);
+  expect(office.state(project.id).jobs[0]).toMatchObject({ status: "fazendo", request: "Agora o de sair" });
+});
+
+it("chat de tarefa da Codex é atendido por quem usa a Codex; ocupado com o chat, o agente não pega outro trabalho", async () => {
+  const layout = defaultLayout();
+  office.saveLayout(project.id, {
+    ...layout,
+    reviewer: null,
+    agents: layout.agents.map((a) => (a.id === "davi" ? { ...a, provider: "codex" as const } : a)),
+  });
+  run.tasks[chatTask().id] = chatTask("codex");
+  office.onChat(chatTask().id, { type: "user", text: "Revisa o README" });
+  expect(office.state(project.id).jobs[0]).toMatchObject({ origin: "chat", agentId: "davi" });
+  // O Davi usa a Codex: decidir e trabalhar saem dela.
+  codex.answer = (prompt) => (prompt.includes("Decida o que fazer") ? '{"acao":"aceitar","fala":"Ok","titulo":"Pesquisa"}' : "Feito");
+  await office.ask(project.id, "davi", "Pesquisa concorrentes");
+  await settle();
+  expect(office.state(project.id).jobs.find((j) => j.title === "Pesquisa")).toMatchObject({ status: "fila" });
+  office.onChat(chatTask().id, { type: "status", state: "idle" });
+  await settle();
+  expect(office.state(project.id).jobs.find((j) => j.title === "Pesquisa")?.status).toBe("entregue");
+});
+
+it("cancelar o atendimento do chat interrompe o turno; tentar de novo fica para o chat", async () => {
+  office.state(project.id);
+  run.tasks[chatTask().id] = chatTask();
+  office.onChat(chatTask().id, { type: "user", text: "Faz o deploy" });
+  const job = office.state(project.id).jobs[0];
+  await office.cancel(project.id, job.id);
+  await settle();
+  expect(run.interrupted).toEqual([chatTask().id]);
+  expect(office.state(project.id).jobs[0]).toMatchObject({ status: "erro", error: "Cancelado pelo chefe." });
+  expect(() => office.retry(project.id, job.id)).toThrow(/chat/);
+});
+
+it("chat de projeto sem escritório não cria sala, e chat que o Escritório começou não vira espelho", async () => {
+  run.tasks[chatTask().id] = chatTask();
+  office.onChat(chatTask().id, { type: "user", text: "Oi" });
+  expect(saved.size).toBe(0);
+  expect(states).toHaveLength(0);
+});
+
+it("reunião: a equipe discute e cada um sai com a sua parte na fila", async () => {
+  sdk.answer = (prompt) =>
+    prompt.includes("conduz uma reunião")
+      ? [
+          result(
+            JSON.stringify({
+              conversa: [
+                { id: "ana", fala: "Eu levanto como os concorrentes fazem o modo offline." },
+                { id: "bruno", fala: "E eu vejo o que muda no código." },
+                { id: "intruso", fala: "Não sou da reunião." },
+              ],
+              resumo: "Ana pesquisa, Bruno planeja o código.",
+              tarefas: [
+                { id: "ana", titulo: "Pesquisar modo offline", pedido: "Pesquise como os concorrentes fazem o modo offline." },
+                { id: "bruno", titulo: "Planejar o modo offline", pedido: "Planeje o modo offline no app." },
+              ],
+            }),
+          ),
+        ]
+      : prompt.includes("para conferir")
+        ? [result('{"notas":["ok"],"versao_final":"Feito"}')]
+        : [result('{"titulo":"Modo offline","branch":"offline","instrucoes":"Plano","resumo":"r"}')];
+  await office.meeting(project.id, ["ana", "bruno"], "Quero um modo offline");
+  expect(office.state(project.id).meeting?.status).toBe("discutindo");
+  await expect(office.meeting(project.id, ["ana", "carla"], "Outra")).rejects.toThrow(/acontecendo/);
+  await settle();
+  const m = office.state(project.id).meeting!;
+  expect(m.status).toBe("pronta");
+  expect(m.lines.map((l) => l.agentId)).toEqual(["ana", "bruno"]);
+  expect(m.tasks.map((t) => t.agentId)).toEqual(["ana", "bruno"]);
+  const jobs = office.state(project.id).jobs;
+  const pesquisa = jobs.find((j) => j.id === m.tasks[0].jobId)!;
+  expect(pesquisa.request).toBe("Pesquise como os concorrentes fazem o modo offline.");
+  // O pedido de código ainda sai como plano para o chefe aprovar.
+  const codigo = jobs.find((j) => j.id === m.tasks[1].jobId)!;
+  expect(codigo).toMatchObject({ agentId: "bruno", status: "entregue", stage: "plano" });
+  // A conversa da reunião vai como contexto para quem trabalha.
+  expect(sdk.calls.some((c) => String(c.prompt).includes("Reunião sobre: Quero um modo offline"))).toBe(true);
+});
+
+it("reunião sem plano termina com erro e não cria trabalho", async () => {
+  sdk.answer = () => [result("não sei")];
+  await expect(office.meeting(project.id, ["ana"], "x")).rejects.toThrow(/duas/);
+  await office.meeting(project.id, ["ana", "bruno"], "Assunto");
+  await settle();
+  expect(office.state(project.id).meeting).toMatchObject({ status: "erro" });
+  expect(office.state(project.id).jobs).toHaveLength(0);
+});
+
+it("com o Escritório desativado, o chat das tarefas não aparece na sala", async () => {
+  office.state(project.id);
+  run.enabled = false;
+  run.tasks[chatTask().id] = chatTask();
+  office.onChat(chatTask().id, { type: "user", text: "Oi" });
+  expect(office.state(project.id).jobs).toHaveLength(0);
 });

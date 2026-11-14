@@ -1,5 +1,9 @@
-import React from "react";
-import { Armchair, Eraser, MousePointer2, Monitor, Paintbrush, Trash2 } from "lucide-react";
+import React, { useState } from "react";
+import { Armchair, Eraser, MousePointer2, Monitor, Paintbrush, Trash2, UserRound } from "lucide-react";
+import { OfficeLookEditor, type LookTarget } from "./OfficeLookEditor";
+import { agentDesk, agentLook, bossLook } from "./office3d/officeLooks";
+import type { Look } from "./office3d/avatar";
+import type { DeskStyle } from "./office3d/desk3d";
 import { OFFICE_PROVIDERS, type FurnitureKind, type OfficeAgent, type OfficeLayout, type OfficeProvider, type TileKind } from "../shared/office";
 import {
   FURNITURE_LABEL,
@@ -21,7 +25,7 @@ export type Tool =
   | { kind: "desk" };
 
 const TILES: TileKind[] = ["piso", "tapete", "azulejo", "parede", "janela"];
-const FURNITURE: FurnitureKind[] = ["planta", "sofa", "estante", "bebedouro", "telao", "quadro", "chefe"];
+const FURNITURE: FurnitureKind[] = ["planta", "sofa", "estante", "bebedouro", "reuniao", "telao", "quadro", "chefe"];
 const same = (a: Tool, b: Tool) => JSON.stringify(a) === JSON.stringify(b);
 
 // Painel do modo de edição: ferramentas, modelos prontos e o cadastro do agente escolhido.
@@ -54,6 +58,15 @@ export function OfficeEditor({
   const agent = selected?.type === "agent" ? layout.agents.find((a) => a.id === selected.id) : undefined;
   const furniture = selected?.type === "furniture" ? layout.furniture.find((f) => f.id === selected.id) : undefined;
   const set = (patch: Partial<OfficeAgent>) => agent && onChange(updateAgent(layout, agent.id, patch));
+  // Editor de personagem ou de mesa aberto (do agente selecionado, ou o personagem do chefe).
+  const [looks, setLooks] = useState<(LookTarget & { agentId: string | null }) | null>(null);
+  const applyLook = (value: Look | DeskStyle) => {
+    if (!looks) return;
+    const style = { ...value } as unknown as Record<string, unknown>;
+    if (looks.agentId === null) onChange({ ...layout, bossLook: style });
+    else onChange(updateAgent(layout, looks.agentId, looks.kind === "personagem" ? { look: style } : { deskStyle: style }));
+    setLooks(null);
+  };
   const button = (t: Tool, label: string, icon?: React.ReactNode) => (
     <button
       key={JSON.stringify(t)}
@@ -86,6 +99,14 @@ export function OfficeEditor({
         </ul>
       )}
 
+      {looks && <OfficeLookEditor target={looks} onApply={applyLook} onClose={() => setLooks(null)} />}
+      <button
+        type="button"
+        className="office-edit"
+        onClick={() => setLooks({ kind: "personagem", title: "Seu personagem (chefe)", look: bossLook(layout), agentId: null })}
+      >
+        <UserRound size={12} /> Seu personagem (chefe)
+      </button>
       <fieldset>
         <legend>Ferramenta</legend>
         <div className="office-tools">
@@ -161,6 +182,31 @@ export function OfficeEditor({
                 <option value="o">o</option>
               </select>
             </label>
+          </div>
+          <div className="office-look-buttons">
+            <button
+              type="button"
+              onClick={() =>
+                setLooks({ kind: "personagem", title: `Personagem de ${agent.name || "agente"}`, look: agentLook(agent), lockBody: true, agentId: agent.id })
+              }
+            >
+              <UserRound size={12} /> Personagem 3D
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                setLooks({
+                  kind: "mesa",
+                  title: `Mesa de ${agent.name || "agente"}`,
+                  style: agentDesk(agent),
+                  accent: agent.color,
+                  name: agent.name,
+                  agentId: agent.id,
+                })
+              }
+            >
+              <Monitor size={12} /> Mesa e setup
+            </button>
           </div>
           <div className="office-row">
             <label>

@@ -231,3 +231,13 @@ describe("pacote de handoff", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 });
+
+describe("configuração do Escritório", () => {
+  it("guarda e devolve se o Escritório está em uso e se o tutorial foi feito", () => {
+    const store = new Store(":memory:");
+    expect(store.settings().office).toBeUndefined();
+    store.saveSettings({ ...store.settings(), office: { enabled: true, tutorial: true } });
+    expect(store.settings().office).toEqual({ enabled: true, tutorial: true });
+    store.close();
+  });
+});
