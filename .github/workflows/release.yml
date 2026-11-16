@@ -14,7 +14,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        # Linux no 22.04 de propósito: os módulos nativos (node-pty) exigem a glibc da máquina
+        # em que foram compilados. No ubuntu-latest saem pedindo uma glibc nova e não abrem
+        # no Ubuntu 22.04 nem no 24.04.
+        os: [ubuntu-22.04, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -50,7 +53,8 @@ jobs:
 
   # Separado dos instaladores: uma falha aqui não segura a release do GitHub.
   snap:
-    runs-on: ubuntu-latest
+    # Mesmo motivo do build: o snap empacota o node-pty compilado aqui.
+    runs-on: ubuntu-22.04
     env:
       SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
     steps:
