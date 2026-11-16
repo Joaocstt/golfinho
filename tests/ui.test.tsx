@@ -102,9 +102,12 @@ describe("interface de tarefas", () => {
           prompt: "",
           branch: "golfinho/login",
           projectId: "p",
+          timeoutMinutes: 0,
         }),
       }),
     );
+    // Criou, começou: a tarefa já sai rodando, sem o botão Iniciar.
+    await waitFor(() => expect(request).toHaveBeenCalledWith({ action: "queue", taskId: "new" }));
   });
   it("escolhe o agente pelos botões com ícone, com Codex como padrão", async () => {
     const request = setup();

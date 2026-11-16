@@ -73,10 +73,36 @@ describe("persistent tasks", () => {
       s.addCheck(t.id, "npm test");
       s.close();
       s = new Store(db);
-      s.recover();
+      expect(s.recover()).toEqual([]);
       expect(s.task(t.id).status).toBe("interrupted");
       expect(s.checks(t.id)[0].status).toBe("interrupted");
       expect(s.events(t.id).at(-1)?.kind).toBe("interrupted");
+      s.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+  it("devolve para retomar só as tarefas com sessão da CLI do terminal", () => {
+    const dir = mkdtempSync(join(tmpdir(), "golfinho-store-"));
+    const db = join(dir, "data.db");
+    try {
+      let s = new Store(db);
+      s.addProject({ id: "p", name: "Repo", path: "/repo", remotes: [] });
+      const run = (branch: string, sessionId: string | null, chatSessionId: string | null) => {
+        const t = s.createTask({ ...input, branch });
+        s.transition(t.id, "queued", "");
+        s.transition(t.id, "running", "");
+        s.update(t.id, { branchCreated: true, sessionId }, "");
+        if (chatSessionId) s.setChatSession(t.id, chatSessionId);
+        return t.id;
+      };
+      const terminal = run("golfinho/a", "cli", null);
+      run("golfinho/b", null, null);
+      run("golfinho/c", "chat", "chat");
+      s.close();
+      s = new Store(db);
+      expect(s.recover()).toEqual([terminal]);
+      expect(s.events(terminal).at(-1)?.message).toMatch(/Retomando/);
       s.close();
     } finally {
       rmSync(dir, { recursive: true, force: true });

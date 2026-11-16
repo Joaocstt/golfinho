@@ -1525,8 +1525,11 @@ function Workspace() {
               busy={busy}
               onSubmit={(input) =>
                 perform(async () => {
-                  await request({ action: "createTask", input });
+                  // Criou, começou: a tarefa já sai rodando, sem passar pelo botão Iniciar.
+                  const created = (await request({ action: "createTask", input })) as Task;
                   setModal(null);
+                  openTask(created.id);
+                  await request({ action: "queue", taskId: created.id });
                 })
               }
             />

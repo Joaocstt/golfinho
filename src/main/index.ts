@@ -80,7 +80,7 @@ else {
       const directory = join(home, "logs");
       mkdirSync(directory, { recursive: true, mode: 0o700 });
       store = new Store(join(home, "golfinho.sqlite"));
-      store.recover();
+      const resumable = store.recover();
       const signal = (s: Signal) => {
         if (window && !window.isDestroyed()) window.webContents.send("golfinho:signal", s);
       };
@@ -255,6 +255,8 @@ else {
       });
       service.useOffice(office);
       coordinator.afterRun((taskId) => service.remember(taskId));
+      // Tarefa iniciada fica iniciada: o que rodava quando o app fechou volta sozinho.
+      for (const id of resumable) coordinator.queue(id);
       window = new BrowserWindow({
         // Limitada à área útil do monitor: com escala do Windows acima de 100%, 950 px lógicos
         // passam da tela e escondem a parte de baixo, onde fica o campo de digitação.

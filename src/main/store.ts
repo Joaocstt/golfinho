@@ -427,17 +427,24 @@ export class Store {
       "Resultado revisado e aceito pelo usuário. Nenhum merge foi realizado.",
     );
   }
-  recover() {
+  // Devolve as tarefas que rodavam no terminal com uma sessão da CLI salva: o app as retoma.
+  recover(): string[] {
+    const resumable: string[] = [];
     for (const t of this.tasks()) {
       for (const c of this.checks(t.id))
         if (c.status === "running") this.finishCheck(c.id, null, c.output, true);
-      if (t.status === "running" || t.status === "waiting" || t.status === "queued")
+      if (t.status === "running" || t.status === "waiting" || t.status === "queued") {
+        // Sessão do chat (Escritório) não é do terminal: retomar abriria a CLI à toa.
+        const resume = Boolean(t.sessionId && t.sessionId !== t.chatSessionId && t.branchCreated);
         this.transition(
           t.id,
           "interrupted",
-          "Aplicativo reiniciado. Processo anterior não foi retomado automaticamente.",
+          resume ? "Aplicativo reiniciado. Retomando a sessão da CLI." : "Aplicativo reiniciado. Processo anterior não foi retomado automaticamente.",
         );
+        if (resume) resumable.push(t.id);
+      }
     }
+    return resumable;
   }
   // Memória do projeto. A nota fica em JSON, como as tarefas; o índice FTS5 guarda só título e
   // conteúdo para a busca (sem acento: "migracao" encontra "migração").

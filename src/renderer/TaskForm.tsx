@@ -47,7 +47,7 @@ export function TaskForm({
   const [base, setBase] = useState("");
   const [existing, setExisting] = useState("");
   const [remote, setRemote] = useState("");
-  const [timeout, setTimeoutMinutes] = useState(60);
+  const [timeout, setTimeoutMinutes] = useState(0);
   const [touched, setTouched] = useState(false);
 
   useEffect(() => {
