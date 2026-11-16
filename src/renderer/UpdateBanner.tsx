@@ -45,7 +45,7 @@ export function UpdateBanner({ requested }: { requested: number }) {
   let body: React.ReactNode;
   switch (status.state) {
     case "unsupported":
-      body = <><span>Esta instalação não se atualiza por aqui (modo de desenvolvimento, snap ou .deb).</span>{close}</>;
+      body = <><span>Esta instalação não se atualiza por aqui (modo de desenvolvimento ou snap, que se atualiza pela loja).</span>{close}</>;
       break;
     case "checking":
       body = <span>Verificando atualizações…</span>;

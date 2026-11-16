@@ -2,7 +2,7 @@ import { app, net } from "electron";
 import { createRequire } from "node:module";
 import { createHash } from "node:crypto";
 import { execFile, spawn } from "node:child_process";
-import { createWriteStream } from "node:fs";
+import { createWriteStream, readFileSync } from "node:fs";
 import { access, constants, mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { Readable, Transform } from "node:stream";
@@ -10,6 +10,7 @@ import { pipeline } from "node:stream/promises";
 import { promisify } from "node:util";
 import type { ProgressInfo, UpdateInfo } from "electron-updater";
 import type { UpdateStatus } from "../shared/contracts";
+import { linuxPackage } from "./linuxPackage";
 import { INSTALL_SCRIPT, RELEASES, appBundle, isNewer, parseLatestMac, pickZip, type MacRelease } from "./macUpdate";
 
 // electron-updater é CommonJS: o import nomeado quebra no app empacotado (ESM),
@@ -25,10 +26,10 @@ export interface Updater {
   installNow(): void;
 }
 
-// AppImage é o único formato Linux que o electron-updater atualiza sozinho.
 function supported() {
   if (!app.isPackaged) return false;
-  if (process.platform === "linux") return Boolean(process.env.APPIMAGE);
+  if (process.platform === "linux")
+    return linuxPackage(process.env, () => readFileSync(join(process.resourcesPath, "package-type"), "utf8")) !== null;
   return true;
 }
 
@@ -77,7 +78,12 @@ export function startUpdater(notify: (status: UpdateStatus) => void): Updater {
       set({ state: "downloading", version, percent: 0 });
       void autoUpdater.downloadUpdate().catch(() => undefined);
     },
-    installNow: () => autoUpdater.quitAndInstall(),
+    installNow: () => {
+      // Reabre a versão nova depois de instalar. No .deb, se a senha for cancelada (ou o dpkg
+      // falhar), a instalação não acontece: o app fecha do mesmo jeito e volta na versão atual.
+      autoUpdater.quitAndInstall(false, true);
+      setTimeout(() => app.quit(), 1500).unref();
+    },
   };
 }
 

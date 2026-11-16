@@ -60,7 +60,7 @@ pelo botão de atualizar do Golfinho. Prefere o pacote `.deb`, instalado pelo `a
 curl -fsSL https://raw.githubusercontent.com/Joaocstt/golfinho/main/scripts/install-linux.sh | bash -s -- --deb
 ```
 
-Com o `.deb`, rode o mesmo comando para atualizar.
+O `.deb` também se atualiza pelo botão do Golfinho (a partir da 0.1.41): na hora de instalar, o sistema pede a senha de administrador.
 
 No macOS, instale pelo Terminal:
 
@@ -75,8 +75,8 @@ pelo próprio Golfinho (veja abaixo).
 
 **Atualizações:** o Golfinho não verifica nada sozinho. Clique no botão de download ao lado de
 *Configurações*, no topo da barra lateral: se houver versão nova, o aviso mostra *Atualizar*,
-que baixa a versão, e depois *Reiniciar e atualizar*. Funciona no Windows, no macOS e no
-AppImage; o snap se atualiza pela loja e o `.deb` pelo `apt`.
+que baixa a versão, e depois *Reiniciar e atualizar*. Funciona no Windows, no macOS, no
+AppImage e no `.deb` (este pede a senha de administrador para instalar); o snap se atualiza pela loja.
 
 Para os outros sistemas, baixe os arquivos na página de [Releases](https://github.com/Joaocstt/golfinho/releases).
 
