@@ -246,6 +246,7 @@ export function FileEditor({
   }, [text === null, usePlugin, path, readOnly]);
   // Linguagem trazida por um plugin (ex.: .http): o arquivo ganha as cores assim que ela é registrada.
   useEffect(() => {
+    if (!plugins.some((p) => p.syntaxes.length)) return;
     void registerPluginSyntaxes(plugins).then(() => {
       const model = editor.current?.getModel();
       if (model) monaco.editor.setModelLanguage(model, languageOf(path));
