@@ -35,7 +35,9 @@ export function TaskForm({
   busy: boolean;
   onSubmit: (input: CreateTask) => void;
 }) {
-  const [p, setP] = useState(projectId || snapshot.projects[0]?.id || "");
+  // Projeto arquivado não recebe tarefa nova.
+  const projects = snapshot.projects.filter((x) => !x.archived);
+  const [p, setP] = useState(projectId || projects[0]?.id || "");
   const project = snapshot.projects.find((x) => x.id === p);
   const [refs, setRefs] = useState<ProjectRefs | null>(null);
   const [refsFailed, setRefsFailed] = useState(false);
@@ -153,7 +155,7 @@ export function TaskForm({
         <div className="task-form-grid">
           <Field label="Projeto" htmlFor="task-project">
             <Select id="task-project" value={p} onChange={(e) => setP(e.target.value)}>
-              {snapshot.projects.map((x) => (
+              {projects.map((x) => (
                 <option value={x.id} key={x.id}>
                   {x.name}
                 </option>

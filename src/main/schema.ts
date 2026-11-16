@@ -137,6 +137,7 @@ export const requestSchema = z.discriminatedUnion("action", [
     .object({ action: z.literal("addProject"), path: z.string().min(1).max(4096).optional() })
     .strict(),
   z.object({ action: z.literal("removeProject"), projectId: id }).strict(),
+  z.object({ action: z.literal("archiveProject"), projectId: id, archived: z.boolean() }).strict(),
   z.object({ action: z.literal("initGit"), projectId: id }).strict(),
   z.object({ action: z.literal("wslAgents"), projectId: id }).strict(),
   z.object({ action: z.literal("branches"), projectId: id }).strict(),

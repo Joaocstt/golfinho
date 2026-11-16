@@ -17,6 +17,8 @@ export interface Project {
   remotes: string[];
   /** "folder": pasta sem Git (pode conter vários projetos). Ausente = repositório Git. */
   kind?: "git" | "folder";
+  /** Escondido da barra lateral junto com as tarefas; aparece no filtro "Arquivadas". */
+  archived?: boolean;
 }
 export interface Task {
   id: string;
@@ -232,6 +234,7 @@ export type Request =
   | { action: "snapshot" }
   | { action: "addProject"; path?: string }
   | { action: "removeProject"; projectId: string }
+  | { action: "archiveProject"; projectId: string; archived: boolean }
   | { action: "initGit"; projectId: string }
   | { action: "wslAgents"; projectId: string }
   | { action: "createTask"; input: CreateTask }

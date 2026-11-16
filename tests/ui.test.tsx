@@ -658,6 +658,30 @@ it("arquiva a tarefa sem excluir e mostra só no filtro Arquivadas", async () =>
     expect(request).toHaveBeenCalledWith({ action: "archiveTask", taskId: "old", archived: false }),
   );
 });
+it("arquiva o projeto inteiro e desarquiva pelo filtro Arquivadas", async () => {
+  const request = setup([editableTask]);
+  await screen.findByRole("button", { name: "Editar arquivo" });
+  fireEvent.click(screen.getByRole("button", { name: "Arquivar projeto Projeto real" }));
+  await waitFor(() =>
+    expect(request).toHaveBeenCalledWith({ action: "archiveProject", projectId: "p", archived: true }),
+  );
+  cleanup();
+  const projects = snapshot.projects;
+  snapshot.projects = [{ ...projects[0], archived: true }];
+  try {
+    const again = setup([editableTask]);
+    await screen.findByRole("button", { name: /^Arquivadas/ });
+    expect(screen.queryByRole("button", { name: "Arquivar projeto Projeto real" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /^Arquivadas/ }));
+    expect(screen.getByRole("button", { name: editableTask.title })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Desarquivar projeto Projeto real" }));
+    await waitFor(() =>
+      expect(again).toHaveBeenCalledWith({ action: "archiveProject", projectId: "p", archived: false }),
+    );
+  } finally {
+    snapshot.projects = projects;
+  }
+});
 it("redimensiona navegação e oculta inspetor", async () => {
   setup();
   await screen.findByText("Projeto real");

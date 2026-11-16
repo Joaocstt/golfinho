@@ -404,6 +404,19 @@ export class Service {
         this.changed();
         return null;
       }
+      // Como a tarefa arquivada: só esconde, nada muda na pasta nem nas tarefas.
+      case "archiveProject": {
+        const project = this.store.project(r.projectId);
+        if (
+          r.archived &&
+          this.store.tasks().some((t) => t.projectId === project.id && ["running", "waiting", "queued"].includes(t.status))
+        )
+          throw new Error("Este projeto tem tarefas em execução ou na fila. Cancele antes de arquivar.");
+        const updated = { ...project, archived: r.archived };
+        this.store.updateProject(updated);
+        this.changed();
+        return updated;
+      }
       case "quota":
         return this.quota(r.provider, r.refresh === true);
       case "branches": {

@@ -247,4 +247,23 @@ describe("arquivar tarefa", () => {
     await expect(s.request({ action: "archiveTask", taskId: task.id, archived: true })).rejects.toThrow(/Cancele antes de arquivar/);
     store.close();
   });
+
+  it("arquiva o projeto inteiro e desarquiva", async () => {
+    const root = temp();
+    const store = new Store(":memory:");
+    const coordinator = { exclusive: async (_i: string, op: () => Promise<unknown>) => op(), pump() {}, kick() {}, ready: () => false } as unknown as Coordinator;
+    const s = new Service(store, new GitService(), coordinator, { remove() {} } as never, () => {}, async () => null);
+    const project = (await s.request({ action: "addProject", path: root })) as Project;
+    const input = { projectId: project.id, title: "t", prompt: "p", provider: "claude" as const, branch: "", base: "", remote: "", timeoutMinutes: 0 };
+    const task = (await s.request({ action: "createTask", input })) as Task;
+    store.transition(task.id, "queued", "na fila");
+    await expect(s.request({ action: "archiveProject", projectId: project.id, archived: true })).rejects.toThrow(/Cancele antes de arquivar/);
+    store.transition(task.id, "cancelled", "cancelada");
+    expect(((await s.request({ action: "archiveProject", projectId: project.id, archived: true })) as Project).archived).toBe(true);
+    expect(store.project(project.id).archived).toBe(true);
+    expect(store.task(task.id).archived).toBeFalsy();
+    await s.request({ action: "archiveProject", projectId: project.id, archived: false });
+    expect(store.project(project.id).archived).toBe(false);
+    store.close();
+  });
 });

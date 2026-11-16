@@ -325,10 +325,14 @@ function Workspace() {
   }, [snapshot, splitTasks]);
   const task = snapshot?.tasks.find((t) => t.id === selected);
   // Arquivadas ficam fora da barra lateral e da lista, a não ser no filtro "Arquivadas".
+  // Projeto arquivado leva as tarefas junto.
   const [showArchived, setShowArchived] = useState(false);
-  const archivedCount = snapshot?.tasks.filter((t) => t.archived).length ?? 0;
+  const projectArchived = (id: string) => Boolean(snapshot?.projects.find((p) => p.id === id)?.archived);
+  const hidden = (t: Task) => Boolean(t.archived) || projectArchived(t.projectId);
+  const archivedTasks = snapshot?.tasks.filter(hidden).length ?? 0;
+  const archivedCount = archivedTasks + (snapshot?.projects.filter((p) => p.archived).length ?? 0);
   const matches = (t: Task) =>
-    Boolean(t.archived) === showArchived &&
+    hidden(t) === showArchived &&
     [t.title, t.branch, t.prompt, snapshot?.projects.find((p) => p.id === t.projectId)?.name ?? ""]
       .join(" ")
       .toLocaleLowerCase()
@@ -581,13 +585,13 @@ function Workspace() {
           }}
         >
           <List size={14} />
-          Todas as tarefas<span>{snapshot ? snapshot.tasks.length - archivedCount : "—"}</span>
+          Todas as tarefas<span>{snapshot ? snapshot.tasks.length - archivedTasks : "—"}</span>
         </button>
         {(archivedCount > 0 || showArchived) && (
           <button
             className={showArchived ? "nav-item active" : "nav-item"}
             aria-pressed={showArchived}
-            title="Tarefas arquivadas: escondidas da lista, com branch e pasta preservadas"
+            title="Projetos e tarefas arquivados: escondidos da lista, com branch e pasta preservadas"
             onClick={() => setShowArchived((on) => !on)}
           >
             <Archive size={14} />
@@ -630,6 +634,11 @@ function Workspace() {
         </div>
         <div className="project-tree">
           {snapshot && orderedProjects
+            .filter((p) =>
+              showArchived
+                ? p.archived || snapshot.tasks.some((t) => t.projectId === p.id && hidden(t))
+                : !p.archived,
+            )
             .filter(
               (p) =>
                 !query ||
@@ -707,7 +716,7 @@ function Workspace() {
                       {snapshot.activeBranches[p.id]}
                     </span>
                   )}
-                  <small>{snapshot.tasks.filter((t) => t.projectId === p.id && !t.archived).length}</small>
+                  <small>{snapshot.tasks.filter((t) => t.projectId === p.id && !hidden(t)).length}</small>
                 </button>
                 {p.kind === "folder" && (
                   <button
@@ -732,15 +741,62 @@ function Workspace() {
                   </button>
                 )}
                 <button
+                  className="project-remove project-archive"
+                  aria-label={(p.archived ? "Desarquivar projeto " : "Arquivar projeto ") + p.name}
+                  title={
+                    p.archived
+                      ? "Desarquivar: o projeto e as tarefas dele voltam para a lista"
+                      : "Arquivar: o projeto e as tarefas somem da lista; pasta, branches e histórico ficam como estão"
+                  }
+                  disabled={
+                    busy ||
+                    (!p.archived &&
+                      snapshot.tasks.some(
+                        (t) => t.projectId === p.id && ["running", "waiting", "queued"].includes(t.status),
+                      ))
+                  }
+                  onClick={() =>
+                    perform(async () => {
+                      await request({ action: "archiveProject", projectId: p.id, archived: !p.archived });
+                      if (p.archived) return;
+                      // Tarefas do projeto saem das abas abertas, como ao arquivar uma tarefa.
+                      const ids = snapshot.tasks.filter((t) => t.projectId === p.id).map((t) => t.id);
+                      setOpen((list) => list.filter((id) => !ids.includes(id)));
+                      if (ids.includes(selectedRef.current)) setSelected("");
+                      if (project === p.id) setProject("");
+                    })
+                  }
+                >
+                  {p.archived ? <ArchiveRestore size={12} /> : <Archive size={12} />}
+                </button>
+                <button
                   className="project-remove"
                   aria-label={`Remover ${p.name} do Golfinho`}
                   title={
-                    snapshot.tasks.some((t) => t.projectId === p.id)
+                    snapshot.tasks.some((t) => t.projectId === p.id && !hidden(t))
                       ? "Exclua as tarefas deste projeto antes de removê-lo"
-                      : "Remover do Golfinho (a pasta não é apagada)"
+                      : snapshot.tasks.some((t) => t.projectId === p.id)
+                        ? "Este projeto tem tarefas arquivadas: exclua-as antes de removê-lo"
+                        : "Remover do Golfinho (a pasta não é apagada)"
                   }
-                  disabled={busy || snapshot.tasks.some((t) => t.projectId === p.id)}
+                  disabled={busy || snapshot.tasks.some((t) => t.projectId === p.id && !hidden(t))}
                   onClick={async () => {
+                    // Só sobraram arquivadas: elas estão fora da vista, então leva até elas.
+                    const archived = snapshot.tasks.filter((t) => t.projectId === p.id).length;
+                    if (archived) {
+                      if (
+                        await confirm({
+                          title: `"${p.name}" ainda tem ${archived === 1 ? "1 tarefa arquivada" : `${archived} tarefas arquivadas`}`,
+                          message: "Exclua as tarefas arquivadas deste projeto para poder removê-lo do Golfinho.",
+                          confirmLabel: "Ver arquivadas",
+                        })
+                      ) {
+                        setShowArchived(true);
+                        setProject(p.id);
+                        setCollapsed((list) => saveCollapsed(list.filter((x) => x !== p.id)));
+                      }
+                      return;
+                    }
                     if (
                       !(await confirm({
                         title: `Remover "${p.name}" do Golfinho?`,
