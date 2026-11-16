@@ -5,7 +5,6 @@ const provider = z.enum(["codex", "claude", "antigravity"]);
 const treePath = z.string().min(1).max(4096);
 const settings = z
   .object({
-    concurrency: z.number().int().min(1).max(8),
     executables: z
       .object({
         codex: z.string().trim().min(1).max(4096),

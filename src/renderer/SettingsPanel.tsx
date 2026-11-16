@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Bot, Brain, CircleCheck, CircleAlert, FolderCog, Minus, Plus, SlidersHorizontal, X } from "lucide-react";
+import { Bot, Brain, CircleCheck, CircleAlert, FolderCog, SlidersHorizontal, X } from "lucide-react";
 import type { AgentInfo, Project, Provider, Settings } from "../shared/contracts";
 import { AgentIcon } from "./agentIcons";
 import { FileTypeIcon } from "./fileIcons";
@@ -84,8 +84,6 @@ export function SettingsPanel({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   });
-  const setConcurrency = (value: number) =>
-    setDraft({ ...draft, concurrency: Math.min(8, Math.max(1, Math.round(value) || 1)) });
 
   return (
     <form
@@ -123,7 +121,7 @@ export function SettingsPanel({
           {error}
           {section === "geral" && (
             <>
-              <SectionHead title="Geral" text="Como o Golfinho aparece e quantas coisas ele roda ao mesmo tempo." />
+              <SectionHead title="Geral" text="Como o Golfinho aparece." />
               <div className="settings-card">
                 <div className="settings-row">
                   <div className="settings-label">
@@ -149,47 +147,6 @@ export function SettingsPanel({
                       <em>{Math.round(s.value * 100)}%</em>
                     </button>
                   ))}
-                </div>
-              </div>
-              <div className="settings-card">
-                <div className="settings-row">
-                  <div className="settings-label">
-                    <label htmlFor="settings-concurrency">
-                      <strong>Execuções simultâneas</strong>
-                    </label>
-                    <small>
-                      Máximo de agentes e checks rodando ao mesmo tempo, somando todos os projetos. Cada projeto
-                      roda uma tarefa por vez.
-                    </small>
-                  </div>
-                  <div className="settings-stepper">
-                    <button
-                      type="button"
-                      aria-label="Diminuir execuções simultâneas"
-                      disabled={draft.concurrency <= 1}
-                      onClick={() => setConcurrency(draft.concurrency - 1)}
-                    >
-                      <Minus size={14} />
-                    </button>
-                    <input
-                      id="settings-concurrency"
-                      aria-label="Execuções simultâneas"
-                      type="number"
-                      min={1}
-                      max={8}
-                      required
-                      value={draft.concurrency}
-                      onChange={(e) => setConcurrency(Number(e.target.value))}
-                    />
-                    <button
-                      type="button"
-                      aria-label="Aumentar execuções simultâneas"
-                      disabled={draft.concurrency >= 8}
-                      onClick={() => setConcurrency(draft.concurrency + 1)}
-                    >
-                      <Plus size={14} />
-                    </button>
-                  </div>
                 </div>
               </div>
             </>

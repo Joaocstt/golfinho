@@ -45,7 +45,6 @@ export async function exercise(
   await service.request({
     action: "settings",
     settings: {
-      concurrency: 2,
       executables: { codex: executable, claude: executable, antigravity: executable },
       // Grava o diretório em que o setup roda, fora do repositório, para conferir depois.
       ssh: [],

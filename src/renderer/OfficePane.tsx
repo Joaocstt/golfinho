@@ -1505,7 +1505,7 @@ export function OfficePane({
                 {project && <code className="office-path">{project.path}</code>}
                 <p className="office-muted">
                   A equipe lê os arquivos desta pasta e recebe a memória do projeto. Ninguém altera nada: pedidos de
-                  código viram uma tarefa do Golfinho em rascunho, que você revisa e coloca na fila. Cada projeto tem o
+                  código viram uma tarefa do Golfinho em rascunho, que você revisa e inicia. Cada projeto tem o
                   próprio escritório.
                 </p>
               </div>

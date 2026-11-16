@@ -7,7 +7,7 @@ import type { Project, Request, Settings } from "../src/shared/contracts";
 
 afterEach(cleanup);
 const project: Project = { id: "11111111-1111-4111-8111-111111111111", name: "Golfinho", path: "C:/repo", remotes: [] };
-const settings = { concurrency: 2, ssh: [], executables: { claude: "claude", codex: "codex", antigravity: "agy" }, setup: {} } as Settings;
+const settings = { ssh: [], executables: { claude: "claude", codex: "codex", antigravity: "agy" }, setup: {} } as Settings;
 
 function setup() {
   const request = vi.fn(async (_r: Request) => null);

@@ -41,7 +41,7 @@ async function insideRoot(root: string, path: string) {
 const STATUS_LABELS: Partial<Record<Task["status"], string>> = {
   running: "em andamento",
   waiting: "em andamento",
-  queued: "na fila",
+  queued: "iniciando",
   review: "em revisão",
   completed: "concluída",
   failed: "com falha",
@@ -411,7 +411,7 @@ export class Service {
           r.archived &&
           this.store.tasks().some((t) => t.projectId === project.id && ["running", "waiting", "queued"].includes(t.status))
         )
-          throw new Error("Este projeto tem tarefas em execução ou na fila. Cancele antes de arquivar.");
+          throw new Error("Este projeto tem tarefas em execução. Cancele antes de arquivar.");
         const updated = { ...project, archived: r.archived };
         this.store.updateProject(updated);
         this.changed();
@@ -436,7 +436,7 @@ export class Service {
         // então bloqueia. Tarefa antiga, no checkout do projeto, segue a regra de troca.
         const uncommitted = t.worktreePath ? await this.git.uncommitted(t.worktreePath) : 0;
         const blocked = busy
-          ? "Esta tarefa está em execução ou na fila. Cancele antes de excluir."
+          ? "Esta tarefa está em execução. Cancele antes de excluir."
           : uncommitted > 0
             ? `A pasta desta tarefa tem ${uncommitted} alteração(ões) não commitada(s). Faça commit ou descarte antes de excluir.`
           : status.active && !status.fallback
@@ -458,7 +458,7 @@ export class Service {
       case "archiveTask": {
         const t = this.store.task(r.taskId);
         if (r.archived && ["running", "waiting", "queued"].includes(t.status))
-          throw new Error("Esta tarefa está em execução ou na fila. Cancele antes de arquivar.");
+          throw new Error("Esta tarefa está em execução. Cancele antes de arquivar.");
         const result = this.store.setArchived(t.id, r.archived);
         this.changed();
         return result;
@@ -682,7 +682,7 @@ export class Service {
         return this.coordinator.exclusive(r.taskId, async () => {
           const t = this.store.task(r.taskId);
           if (t.status !== "queued")
-            throw new Error("Só é possível guardar alterações de uma tarefa na fila.");
+            throw new Error("Só é possível guardar alterações de uma tarefa esperando a pasta do projeto.");
           const p = this.store.project(t.projectId);
           if ((await this.git.run(p.path, ["status", "--porcelain=v1", "-z"])).length === 0) {
             this.coordinator.kick();

@@ -158,7 +158,8 @@ describe("configurações", () => {
       executables: { codex: "codex", claude: "claude", antigravity: "agy" },
     } as never);
     expect(store.settings().setup).toEqual({});
-    expect(store.settings().concurrency).toBe(3);
+    // O limite de execuções saiu: o campo antigo é ignorado.
+    expect("concurrency" in store.settings()).toBe(false);
     store.close();
   });
 });
@@ -224,7 +225,7 @@ describe("pacote de handoff", () => {
       }),
     );
     const s = store.settings();
-    expect(s.concurrency).toBe(4);
+    expect("concurrency" in s).toBe(false);
     expect("mobile" in s).toBe(false);
     expect("unknownField" in s).toBe(false);
     store.close();

@@ -31,7 +31,6 @@ const allowed: Record<Status, Status[]> = {
   cancelled: ["queued", "review"],
 };
 const defaults: Settings = {
-  concurrency: 2,
   executables: { codex: "codex", claude: "claude", antigravity: "agy" },
   setup: {},
   ssh: [],
@@ -352,7 +351,6 @@ export class Store {
     if (!row) return structuredClone(defaults);
     const parsed = JSON.parse(String(row.body)) as Partial<Settings>;
     return {
-      concurrency: typeof parsed.concurrency === "number" ? parsed.concurrency : defaults.concurrency,
       executables: { ...defaults.executables, ...(parsed.executables ?? {}) },
       setup: parsed.setup && typeof parsed.setup === "object" ? parsed.setup : {},
       ssh: Array.isArray(parsed.ssh) ? parsed.ssh : [],

@@ -27,7 +27,6 @@ const snapshot: Snapshot = {
   tasks: [],
   sshPasswords: [],
   settings: {
-    concurrency: 2,
     executables: { codex: "codex", claude: "claude", antigravity: "antigravity" },
     setup: {},
     ssh: [],
@@ -233,7 +232,7 @@ describe("interface de tarefas", () => {
     expect(await screen.findByText(/Sessão não recuperável/)).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Desmarcar aguardando" })).toBeNull();
     // Sem id de sessão descoberto, o app não promete retomada: é conversa nova.
-    expect(await screen.findByRole("button", { name: "Colocar na fila" })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "Iniciar" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Retomar sessão" })).toBeNull();
   });
   it("oferece retomar quando há sessão descoberta na tarefa interrompida", async () => {
@@ -261,7 +260,7 @@ describe("interface de tarefas", () => {
     ]);
     fireEvent.click(await screen.findByRole("button", { name: /Interrompida/ }));
     expect(await screen.findByRole("button", { name: "Retomar sessão" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Colocar na fila" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Iniciar" })).toBeNull();
   });
 });
 
@@ -370,7 +369,7 @@ it("divide duas tarefas com abas e ações independentes", async () => {
   expect(within(left).getByText("Terminal conectado")).toBeTruthy();
   fireEvent.click(within(right).getByRole("button", { name: "Carregar diff" }));
   await waitFor(() => expect(request).toHaveBeenCalledWith({ action: "review", taskId: "edit" }));
-  fireEvent.click(within(left).getByRole("button", { name: "Colocar na fila" }));
+  fireEvent.click(within(left).getByRole("button", { name: "Iniciar" }));
   await waitFor(() => expect(request).toHaveBeenCalledWith({ action: "queue", taskId: "other" }));
   expect(within(right).getByText("Nenhuma alteração encontrada nesta branch.")).toBeTruthy();
   expect(request).not.toHaveBeenCalledWith({ action: "queue", taskId: "edit" });
@@ -439,7 +438,7 @@ it("respeita limites do backend nos formulários", async () => {
   expect(screen.getByLabelText("Encerrar se parado (minutos)").getAttribute("min")).toBe("0");
   fireEvent.click(screen.getByRole("button", { name: "Fechar janela" }));
   fireEvent.click(screen.getByRole("button", { name: "Configurações" }));
-  expect(screen.getByLabelText("Execuções simultâneas").getAttribute("max")).toBe("8");
+  expect(screen.queryByLabelText("Execuções simultâneas")).toBeNull();
 });
 it("configurações em abas: edita, mostra o rascunho e salva tudo junto", async () => {
   const request = setup();
@@ -448,7 +447,6 @@ it("configurações em abas: edita, mostra o rascunho e salva tudo junto", async
   const dialog = screen.getByRole("dialog", { name: "Configurações" });
   const save = within(dialog).getByRole("button", { name: "Salvar configurações" }) as HTMLButtonElement;
   expect(save.disabled).toBe(true);
-  fireEvent.click(within(dialog).getByRole("button", { name: "Aumentar execuções simultâneas" }));
   fireEvent.click(within(dialog).getByRole("button", { name: /Agentes/ }));
   expect(within(dialog).getByText("Instalado")).toBeTruthy();
   expect(within(dialog).getAllByText("Não encontrado")).toHaveLength(2);
@@ -463,7 +461,6 @@ it("configurações em abas: edita, mostra o rascunho e salva tudo junto", async
     expect(request).toHaveBeenCalledWith({
       action: "settings",
       settings: {
-        concurrency: 3,
         executables: { codex: "codex", claude: "/opt/claude", antigravity: "antigravity" },
         setup: { p: "npm ci" },
         ssh: [],
@@ -600,7 +597,7 @@ vi.mock("@xterm/addon-fit", () => ({
   },
 }));
 it.each([
-  ["queue", "Colocar na fila"],
+  ["queue", "Iniciar"],
 ] as const)("protege editor não salvo antes de %s", async (action, label) => {
   const request = setup([editableTask]);
   fireEvent.click(await screen.findByRole("button", { name: /Editar arquivo/ }));

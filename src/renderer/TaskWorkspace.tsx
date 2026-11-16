@@ -57,7 +57,7 @@ function zoneAt(e: React.DragEvent, box: HTMLElement): DropZone {
 }
 const labels: Record<string, string> = {
   draft: "Rascunho",
-  queued: "Na fila",
+  queued: "Iniciando",
   running: "Executando",
   waiting: "Aguardando",
   interrupted: "Interrompida",
@@ -677,7 +677,7 @@ export const TaskWorkspace = forwardRef<TaskWorkspaceHandle, Props>(function Tas
                       onClick={() => act("queue")}
                     >
                       <Play size={14} />
-                      {task.sessionId && task.branchCreated ? "Retomar sessão" : "Colocar na fila"}
+                      {task.sessionId && task.branchCreated ? "Retomar sessão" : "Iniciar"}
                     </button>
                   )}
                   {["running", "waiting", "queued"].includes(task.status) && (
@@ -747,7 +747,7 @@ export const TaskWorkspace = forwardRef<TaskWorkspaceHandle, Props>(function Tas
               {task.status === "interrupted" && !task.sessionId && (
                 <p className="notice notice-compact">
                   Processo interrompido. A sessão anterior não é recuperável: revise os arquivos ou
-                  coloque a tarefa na fila de novo.
+                  inicie a tarefa de novo.
                 </p>
               )}
               <div className="tab-body" ref={bodyRef} style={bodyStyle()}>
@@ -785,7 +785,7 @@ export const TaskWorkspace = forwardRef<TaskWorkspaceHandle, Props>(function Tas
                         <TerminalSquare size={32} aria-hidden="true" />
                         <h2 id={`task-start-${task.id}`}>Tudo pronto para começar</h2>
                         <p>
-                          Esta tarefa ainda não foi iniciada. Clique em <b>Colocar na fila</b> para o
+                          Esta tarefa ainda não foi iniciada. Clique em <b>Iniciar</b> para o
                           agente começar com as instruções cadastradas.
                         </p>
                         <p>
@@ -793,7 +793,7 @@ export const TaskWorkspace = forwardRef<TaskWorkspaceHandle, Props>(function Tas
                           Depois, confira as alterações em <b>Diff</b> e as verificações em <b>Checks</b>.
                         </p>
                         <button className="primary" disabled={busy} onClick={() => act("queue")}>
-                          <Play size={14} aria-hidden="true" /> Colocar na fila
+                          <Play size={14} aria-hidden="true" /> Iniciar
                         </button>
                       </div>
                     </section>

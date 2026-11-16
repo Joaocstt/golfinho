@@ -55,7 +55,6 @@ it("aceita setup por projeto e recusa identificador que não é de projeto", () 
   const ok = {
     action: "settings",
     settings: {
-      concurrency: 2,
       executables: { codex: "codex", claude: "claude", antigravity: "agy" },
       setup: { "0199cf80-3b73-7252-9458-adfe7a905da5": "npm ci" },
     },

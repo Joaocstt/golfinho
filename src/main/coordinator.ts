@@ -58,8 +58,6 @@ export class Coordinator {
   private owners = new Map<string, string>();
   private stopping = false;
   private pending = new Set<Promise<void>>();
-  private starting = 0;
-  private waiters: (() => void)[] = [];
   private checks = new Map<
     string,
     {
@@ -86,7 +84,6 @@ export class Coordinator {
     ) => Promise<string | null> = (provider, cwd, since, exclude) =>
       findSession(provider, cwd, since, undefined, exclude),
   ) {}
-  // Tenta iniciar as tarefas da fila agora, sem esperar a próxima liberação de vaga.
   // Servidor MCP da memória, quando o app conseguiu subir um. Sem ele, só as notas no prompt.
   useMemory(memory: MemoryLink | null) {
     this.memory = memory;
@@ -98,8 +95,10 @@ export class Coordinator {
   kick() {
     this.pump();
   }
+  // Sem limite de execuções: "queued" só dura até a tarefa arrancar (ou, sem pasta própria,
+  // até a pasta do projeto ficar livre).
   queue(id: string) {
-    this.store.transition(id, "queued", "Aguardando vaga e checkout livre.");
+    this.store.transition(id, "queued", "Iniciando.");
     this.changed();
     this.pump();
   }
@@ -131,7 +130,7 @@ export class Coordinator {
             `Branch local criada: ${t.branch}. O Escritório trabalha nela pelo chat. Publicação é uma ação separada.`,
           );
       }
-      // Sem passar pela fila: a tarefa não pode ser pega pela CLI do terminal ao mesmo tempo.
+      // Direto para "rodando": a tarefa não pode ser pega pela CLI do terminal ao mesmo tempo.
       this.store.transition(id, "queued", "Escritório: preparando o trabalho pelo chat.");
       this.store.transition(id, "running", "Escritório: agente trabalhando pelo chat.");
       this.changed();
@@ -149,22 +148,9 @@ export class Coordinator {
     this.changed();
     this.pump();
   }
-  private slots() {
-    return this.active.size + this.checks.size + this.starting;
-  }
-  private full() {
-    return this.slots() >= this.store.settings().concurrency;
-  }
-  // Libera quem espera vaga assim que uma abre — ou imediatamente no encerramento,
-  // para que o pedido falhe em vez de ficar pendurado.
-  private wake() {
-    while (this.waiters.length && (this.stopping || !this.full())) this.waiters.shift()!();
-  }
   pump() {
-    this.wake();
     if (this.stopping) return;
     for (const task of this.store.tasks().reverse()) {
-      if (this.full()) break;
       if (task.status !== "queued") continue;
       const project = this.store.project(task.projectId);
       // Tarefa antiga, no checkout do projeto: só uma por vez naquele diretório.
@@ -176,7 +162,7 @@ export class Coordinator {
       if (legacy) this.owners.set(project.path, task.id);
       this.active.set(task.id, e);
       // Tarefa na pasta do projeto só vira "rodando" depois que a pasta estiver pronta; antes,
-      // uma pasta com alterações deixa a tarefa na fila, sem registrar uma troca de status a cada tentativa.
+      // uma pasta com alterações deixa a tarefa esperando, sem registrar uma troca de status a cada tentativa.
       if (!legacy) this.store.transition(task.id, "running", "Preparando branch e CLI.");
       this.changed();
       const launch = this.launch(task.id, e);
@@ -351,7 +337,7 @@ export class Coordinator {
       this.changed();
     } catch (error) {
       if (error instanceof PendingChangesError && !this.stopping && !e.cancelled) {
-        // Alterações pendentes na pasta do projeto: a tarefa continua na fila, com um aviso só
+        // Alterações pendentes na pasta do projeto: a tarefa continua esperando, com um aviso só
         // na primeira vez, e tenta de novo sem repetir o registro.
         if (!this.blocked.has(id)) {
           this.blocked.add(id);
@@ -475,7 +461,7 @@ export class Coordinator {
   input(id: string, data: string) {
     const e = this.active.get(id);
     const h = e?.handle;
-    if (!h) throw new Error("Não há terminal ativo. Coloque a tarefa na fila.");
+    if (!h) throw new Error("Não há terminal ativo. Inicie a tarefa.");
     e!.lastActivity = Date.now();
     h.write(data);
   }
@@ -514,27 +500,14 @@ export class Coordinator {
       this.pump();
     }
   }
-  // Tarefas entram na fila quando o limite está cheio; checks faziam o usuário
-  // repetir a ação na mão. Agora esperam a mesma vaga.
   async runCheck(id: string, command: string) {
     if (this.stopping) throw new Error("Golfinho está encerrando as execuções.");
-    if (this.full()) {
-      this.store.note(id, "Check aguardando vaga no limite de execuções.");
-      this.changed();
-      while (this.full()) {
-        if (this.stopping) throw new Error("Golfinho está encerrando as execuções.");
-        await new Promise<void>((resolve) => this.waiters.push(resolve));
-      }
-      if (this.stopping) throw new Error("Golfinho está encerrando as execuções.");
-    }
-    this.starting++;
     const pending = this.startCheck(id, command);
     this.pending.add(pending);
     try {
       await pending;
     } finally {
       this.pending.delete(pending);
-      this.starting--;
       this.pump();
     }
   }
@@ -621,7 +594,6 @@ export class Coordinator {
   }
   async shutdown() {
     this.stopping = true;
-    this.wake();
     for (const [id, e] of this.active) {
       e.cancelled = true;
       if (e.timer) clearTimeout(e.timer);

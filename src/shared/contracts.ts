@@ -106,7 +106,6 @@ export interface SshRoots {
   mounts: string[];
 }
 export interface Settings {
-  concurrency: number;
   ssh: SshConnection[];
   executables: Record<Provider, string>;
   /** Comando de setup por projeto (id do projeto → comando). Roda na pasta nova, antes da CLI. */

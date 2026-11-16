@@ -48,7 +48,6 @@ it("valida o perfil: host e usuário sem espaços, chave com caminho absoluto", 
   const settings = (ssh: unknown) => ({
     action: "settings",
     settings: {
-      concurrency: 2,
       executables: { codex: "codex", claude: "claude", antigravity: "agy" },
       setup: {},
       ssh: [ssh],

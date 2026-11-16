@@ -327,7 +327,7 @@ export function TerminalPane({ taskId, active = false, autoFocus = true, focusRe
     terminal.write(active ? "\x1b[?25h" : "\x1b[?25l");
     if (active) {
       runtime.current?.resize();
-      // Ao iniciar pela fila, o foco ainda está no botão de início. Entrega o
+      // Ao iniciar a tarefa, o foco ainda está no botão de início. Entrega o
       // teclado à CLI assim que ela aceita entrada, como nos terminais de shell.
       if (focusAllowed.current) terminal.focus();
     }

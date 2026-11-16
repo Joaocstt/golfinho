@@ -17,7 +17,7 @@ const JOB_STATUS: Record<OfficeJob["status"], string> = {
 };
 const TASK_STATUS: Record<Task["status"], string> = {
   draft: "Rascunho",
-  queued: "Na fila",
+  queued: "Iniciando",
   running: "Rodando",
   waiting: "Esperando você",
   interrupted: "Interrompida",
@@ -290,7 +290,7 @@ function JobRow({
                 ) : changes === "erro" || Object.keys(changes).length === 0 ? (
                   <span className="office-muted">
                     {" "}
-                    nada ainda{task?.status === "draft" ? ": a tarefa está em rascunho, coloque na fila para o agente de código trabalhar" : ""}.
+                    nada ainda{task?.status === "draft" ? ": a tarefa está em rascunho, inicie-a para o agente de código trabalhar" : ""}.
                   </span>
                 ) : (
                   <ul>

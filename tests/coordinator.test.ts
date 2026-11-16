@@ -139,9 +139,8 @@ it("keeps a cancelled worktree owned until its process acknowledges exit", async
   await c.shutdown();
   store.close();
 });
-it("queues a check when the limit is full instead of failing the request", async () => {
+it("starts a check right away while another task runs: there is no execution limit", async () => {
   const { store, c, started, create } = setup();
-  store.saveSettings({ ...store.settings(), concurrency: 1 });
   const busy = create("q", "golfinho/busy");
   const target = create("p", "golfinho/target");
   store.transition(target.id, "queued", "x");
@@ -151,24 +150,13 @@ it("queues a check when the limit is full instead of failing the request", async
   c.queue(busy.id);
   await tick();
   expect(store.task(busy.id).status).toBe("running");
-  let settled = false;
-  const check = c.runCheck(target.id, "echo ok").then(() => {
-    settled = true;
-  });
+  const check = c.runCheck(target.id, "echo ok");
   await tick();
-  // A vaga única está com a execução; o check espera em vez de recusar.
-  expect(settled).toBe(false);
-  expect(store.events(target.id).some((e) => /aguardando vaga/i.test(e.message))).toBe(true);
-  expect(store.checks(target.id)).toHaveLength(0);
-  started.find((s) => s.cwd === "/other")!.exit(0);
-  await tick();
-  // Com a vaga livre o check arranca sozinho, sem o usuário repetir a ação.
   const run = started.find((s) => s.cwd === "/repo");
   expect(run).toBeTruthy();
   expect(store.checks(target.id)).toHaveLength(1);
   run!.exit(0);
   await check;
-  expect(settled).toBe(true);
   expect(store.checks(target.id)[0].status).toBe("passed");
   await c.shutdown();
   store.close();

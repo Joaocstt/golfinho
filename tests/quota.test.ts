@@ -17,7 +17,6 @@ function fake(nome: string, corpo: string) {
 }
 const settings = (provider: string, caminho: string): Settings =>
   ({
-    concurrency: 2,
     executables: { codex: "codex", claude: "claude", antigravity: "agy", [provider]: caminho },
   }) as Settings;
 

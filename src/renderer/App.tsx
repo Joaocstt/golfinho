@@ -81,7 +81,7 @@ function ago(iso: string, now: number) {
 }
 const labels: Record<string, string> = {
   draft: "Rascunho",
-  queued: "Na fila",
+  queued: "Iniciando",
   running: "Executando",
   waiting: "Aguardando",
   interrupted: "Interrompida",
@@ -1368,7 +1368,7 @@ function Workspace() {
           </div>
           <span>
             {snapshot
-              ? `${snapshot.tasks.filter((t) => t.status === "running").length} em execução · ${snapshot.tasks.filter((t) => t.status === "queued").length} na fila`
+              ? `${snapshot.tasks.filter((t) => t.status === "running").length} em execução`
               : "Conectando…"}
           </span>
         </footer>

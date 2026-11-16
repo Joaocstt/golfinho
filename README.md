@@ -7,8 +7,8 @@ Code e Antigravity) dentro de repositórios Git. Reúne terminal interativo, cha
 editor de arquivos, revisão de diff, checks, histórico e publicação de branches.
 
 As tarefas novas trabalham na pasta do projeto, na branch escolhida ou criada para
-a tarefa. A fila executa uma tarefa por vez em cada pasta de projeto; projetos
-diferentes podem executar em paralelo. Tarefas antigas com `git worktree` continuam
+a tarefa. Não há fila nem limite de execuções: a tarefa começa assim que você clica
+em **Iniciar**. Na mesma pasta de projeto roda uma tarefa por vez. Tarefas antigas com `git worktree` continuam
 usando suas pastas próprias.
 
 - **Plataformas:** Linux, Windows e macOS (instaladores gerados pelo GitHub Actions).
@@ -161,11 +161,11 @@ npm start
 1. **Criar a tarefa** com título, instrução, agente, base e remoto. A branch
    `golfinho/...` é sugerida automaticamente. A base precisa ser uma referência local
    existente; o Golfinho não faz `fetch` implícito.
-2. **Colocar na fila.** Numa tarefa nova, o Golfinho cria a branch `golfinho/...` a
+2. **Iniciar.** Numa tarefa nova, o Golfinho cria a branch `golfinho/...` a
    partir da base e a torna ativa na pasta do projeto. Numa tarefa com branch existente,
    a tarefa entra nessa branch e trabalha diretamente nela. Cada projeto roda uma tarefa
    por vez, na pasta do projeto. Se a pasta tiver alterações não commitadas, a tarefa
-   continua na fila com um aviso e os botões **Tentar agora** e **Guardar alterações
+   espera com um aviso e os botões **Tentar agora** e **Guardar alterações
    (stash)**, que usa `git stash -u` e pode ser desfeito com `git stash pop`.
 3. **Trabalhar com o agente.** No Terminal, responda às perguntas da CLI. No Chat
    de Claude ou Codex, envie mensagens e imagens e responda aos cartões de aprovação.
@@ -186,7 +186,7 @@ npm start
 Uma branch que já existia ao criar a tarefa é preservada. A pasta principal do
 projeto é mantida. Nas tarefas antigas com worktree, a pasta própria também é
 removida; alterações não commitadas nessa pasta bloqueiam a exclusão. Não é possível
-excluir uma tarefa em execução ou na fila sem cancelá-la antes.
+excluir uma tarefa em execução sem cancelá-la antes.
 
 **Tarefas antigas:** tarefas criadas antes desta versão com pasta própria continuam nela.
 
@@ -197,8 +197,6 @@ excluir uma tarefa em execução ou na fila sem cancelá-la antes.
 - Vários projetos e várias tarefas por projeto, com branch nova ou existente.
 - Tarefas na pasta do mesmo projeto esperam sua vez; pastas de projetos diferentes
   podem executar em paralelo. Worktrees antigas continuam suportadas.
-- Limite global de execuções simultâneas (padrão: 2). Checks também contam para esse
-  limite; o que passar do limite entra em fila.
 - Encerramento por inatividade no terminal: o prazo é renovado ao receber saída
   da CLI ou entrada do usuário. Zero desativa o limite.
 
@@ -234,7 +232,7 @@ excluir uma tarefa em execução ou na fila sem cancelá-la antes.
 
 **Histórico**
 
-- Eventos de cada tarefa (criação, filas, transições, checks, aceite, publicação).
+- Eventos de cada tarefa (criação, início, transições, checks, aceite, publicação).
   Os 200 eventos mais recentes são exibidos.
 
 **Consumo dos planos**
@@ -279,8 +277,7 @@ atual e permite continuar a conversa depois.
 
 Terminal e Chat têm sessões separadas e não compartilham o histórico da conversa.
 Os dois acessam a mesma pasta de trabalho da tarefa. Evite executar os dois
-agentes ao mesmo tempo sobre os mesmos arquivos. O limite da fila controla as
-execuções do coordenador e os checks; o Chat e os shells avulsos têm ciclo próprio.
+agentes ao mesmo tempo sobre os mesmos arquivos.
 
 ## Memória do projeto
 
@@ -366,7 +363,7 @@ src/
 ├── main/        # processo principal do Electron
 │   ├── index.ts         janela, IPC e inicialização
 │   ├── service.ts       roteia as requisições da interface
-│   ├── coordinator.ts   fila, transições e execução das tarefas
+│   ├── coordinator.ts   início, transições e execução das tarefas
 │   ├── store.ts         persistência em SQLite
 │   ├── git.ts           operações Git e worktrees
 │   ├── checkout.ts      pasta ativa de cada tarefa
