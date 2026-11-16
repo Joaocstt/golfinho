@@ -104,6 +104,8 @@ export interface OfficeJob {
   stage?: "plano" | "codigo";
   /** O chefe mandou implementar (na mesa dele). Sem isso, nada de código é feito. */
   approved?: boolean;
+  /** Branch existente que o chefe escolheu para a implementação; sem isso, cria uma branch nova. */
+  targetBranch?: string;
   /** Voltas de correção pedidas pela revisora (no máximo OFFICE_MAX_ROUNDS). */
   rounds?: number;
   /** O que a revisora pediu para corrigir, esperando o agente de código. */

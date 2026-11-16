@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron";
-import type { GolfinhoAPI, Signal, UpdateStatus, YouTubeState } from "../shared/contracts";
+import type { GolfinhoAPI, PluginEvent, Signal, UpdateStatus, YouTubeState } from "../shared/contracts";
 const api: GolfinhoAPI = {
   getPathForFile(file) {
     return webUtils.getPathForFile(file);
@@ -13,6 +13,18 @@ const api: GolfinhoAPI = {
     const handler = (_event: unknown, signal: Signal) => listener(signal);
     ipcRenderer.on("golfinho:signal", handler);
     return () => ipcRenderer.removeListener("golfinho:signal", handler);
+  },
+  plugins: {
+    async request(r) {
+      const result = await ipcRenderer.invoke("golfinho:plugins", r);
+      if (!result.ok) throw Object.assign(new Error(result.error), { code: result.code });
+      return result.value;
+    },
+    subscribe(listener) {
+      const handler = (_event: unknown, e: PluginEvent) => listener(e);
+      ipcRenderer.on("golfinho:plugin-event", handler);
+      return () => ipcRenderer.removeListener("golfinho:plugin-event", handler);
+    },
   },
   update: {
     status: () => ipcRenderer.invoke("golfinho:update:status"),

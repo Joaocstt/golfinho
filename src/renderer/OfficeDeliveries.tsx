@@ -152,6 +152,19 @@ export function OfficeDeliveries({
     if (!desk.some((j) => j.id === selected)) setSelected(desk[0]?.id ?? "");
   }, [desk, selected]);
   useEffect(() => setError(""), [selected]);
+  // Onde implementar: "" cria uma branch nova; um nome usa essa branch que já existe.
+  const [branches, setBranches] = useState<{ current: string; branches: string[] }>({ current: "", branches: [] });
+  const [target, setTarget] = useState("");
+  useEffect(() => {
+    let alive = true;
+    setTarget("");
+    void request<{ current: string; branches: string[] }>({ action: "branches", projectId })
+      .then((b) => alive && setBranches(Array.isArray(b?.branches) ? b : { current: "", branches: [] }))
+      .catch(() => alive && setBranches({ current: "", branches: [] }));
+    return () => {
+      alive = false;
+    };
+  }, [projectId, selected]);
   const job = desk.find((j) => j.id === selected);
   if (!desk.length)
     return <p className="office-muted desk-empty">Nada na sua mesa ainda. As entregas da equipe chegam aqui.</p>;
@@ -231,14 +244,33 @@ export function OfficeDeliveries({
 
           <div className="desk-actions">
             {job.status === "entregue" && kind !== "codigo" && !job.followUp && !(kind === "plano" && job.approved) && (
-              <button
-                type="button"
-                className="primary"
-                disabled={sending}
-                onClick={() => void act({ action: "officeImplement", projectId, jobId: job.id })}
-              >
-                <Hammer size={13} /> Implementar
-              </button>
+              <>
+                {/* Projeto de pasta, sem Git, não tem branches: implementa direto na pasta. */}
+                {branches.branches.length > 0 && (
+                  <label className="desk-branch" title="Onde a implementação vai acontecer">
+                    <GitBranch size={13} />
+                    <select aria-label="Branch da implementação" value={target} onChange={(e) => setTarget(e.target.value)}>
+                      <option value="">Criar uma branch nova</option>
+                      <optgroup label="Usar uma branch existente">
+                        {branches.branches.map((b) => (
+                          <option key={b} value={b}>
+                            {b}
+                            {b === branches.current ? " (atual)" : ""}
+                          </option>
+                        ))}
+                      </optgroup>
+                    </select>
+                  </label>
+                )}
+                <button
+                  type="button"
+                  className="primary"
+                  disabled={sending}
+                  onClick={() => void act({ action: "officeImplement", projectId, jobId: job.id, ...(target ? { branch: target } : {}) })}
+                >
+                  <Hammer size={13} /> Implementar
+                </button>
+              </>
             )}
             {job.status === "entregue" && kind === "codigo" && job.changed && job.changed.length > 0 && !job.committed && (
               <button

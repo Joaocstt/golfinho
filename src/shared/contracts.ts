@@ -55,6 +55,8 @@ export interface Task {
   terminalReady?: boolean;
   /** Tarefa de pasta: HEAD de cada repositório de dentro quando ela começou, para a revisão. */
   folderBases?: Record<string, string> | null;
+  /** Escondida da barra lateral e da lista; branch, pasta e histórico continuam como estão. */
+  archived?: boolean;
 }
 export interface TaskEvent {
   id: number;
@@ -237,6 +239,7 @@ export type Request =
   | { action: "quota"; provider: Provider; refresh?: boolean }
   | { action: "deleteInfo"; taskId: string }
   | { action: "deleteTask"; taskId: string }
+  | { action: "archiveTask"; taskId: string; archived: boolean }
   | {
       action:
         | "queue"
@@ -290,6 +293,14 @@ export type Request =
   | { action: "chatInterrupt"; taskId: string }
   | { action: "chatHistory"; taskId: string }
   | { action: "saveFile"; taskId: string; path: string; content: string }
+  | { action: "fileCreate"; taskId: string; path: string; kind: "file" | "directory" }
+  | { action: "fileMove"; taskId: string; from: string; to: string }
+  | { action: "fileCopy"; taskId: string; from: string; dir: string }
+  | { action: "fileImport"; taskId: string; sources: string[]; dir: string }
+  | { action: "fileDelete"; taskId: string; path: string; permanent?: boolean }
+  | { action: "filePath"; taskId: string; path: string }
+  | { action: "fileReveal"; taskId: string; path: string }
+  | { action: "clipboardFiles" }
   | { action: "runCheck"; taskId: string; command: string }
   | { action: "summary"; taskId: string; summary: string }
   | { action: "settings"; settings: Settings }
@@ -306,7 +317,7 @@ export type Request =
   | { action: "officeSaveLayout"; projectId: string; layout: OfficeLayout }
   | { action: "officeDecide"; projectId: string; jobId: string; behavior: "allow" | "deny"; always?: boolean }
   | { action: "officeCommit"; projectId: string; jobId: string }
-  | { action: "officeImplement"; projectId: string; jobId: string }
+  | { action: "officeImplement"; projectId: string; jobId: string; branch?: string }
   | { action: "officeCancel"; projectId: string; jobId: string }
   | { action: "officeMeeting"; projectId: string; agentIds: string[]; text: string }
   | { action: "officeRetry"; projectId: string; jobId: string };
@@ -343,6 +354,7 @@ export type Response =
   | Changes
   | FileChange
   | number
+  | boolean
   | SshListing
   | SshRoots
   | SshWriteResult
@@ -413,7 +425,18 @@ export interface YouTubeState {
   canGoForward: boolean;
   adblock: boolean;
 }
+/** Evento que o worker de um plugin mandou para o editor e o painel dele. */
+export interface PluginEvent {
+  key: string;
+  event: string;
+  data: unknown;
+}
 export interface GolfinhoAPI {
+  /** Plugins no formato do ORCA. Os tipos dos pedidos ficam em src/renderer/plugins.ts. */
+  plugins?: {
+    request(r: { action: string; [field: string]: unknown }): Promise<unknown>;
+    subscribe(listener: (e: PluginEvent) => void): () => void;
+  };
   request(request: Request): Promise<Response>;
   getPathForFile(file: File): string;
   subscribe(listener: (signal: Signal) => void): () => void;

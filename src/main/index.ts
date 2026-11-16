@@ -26,10 +26,12 @@ import { safeStorage } from "electron";
 import { exercise } from "./smoke";
 import { writeFile } from "node:fs/promises";
 import { startUpdater, type Updater } from "./updater";
+import { pluginSchemePrivileges, setupPlugins } from "./plugins/electron";
 import { YouTube } from "./youtube";
 import { Office } from "./office";
 import { prepareMemory } from "./memory";
 import { isFolderProject } from "./workspace";
+import { clipboardFiles, FILE_FORMATS } from "./files";
 const here = dirname(fileURLToPath(import.meta.url));
 let window: BrowserWindow | null = null;
 let updater: Updater | undefined;
@@ -50,6 +52,7 @@ if (process.platform !== "win32") process.env.PATH = mergePath(process.env.PATH,
 // Modelos 3D do Escritório: o esquema precisa ser registrado antes do app ficar pronto.
 protocol.registerSchemesAsPrivileged([
   { scheme: ASSET_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } },
+  pluginSchemePrivileges,
 ]);
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
@@ -152,6 +155,20 @@ else {
           }
           return null;
         },
+        // Arquivos copiados no gerenciador de arquivos: cada sistema guarda a lista num formato.
+        files: async () => {
+          for (const item of await clipboard.read()) {
+            for (const type of item.types) {
+              if (!FILE_FORMATS.some((format) => type.toLowerCase().includes(format.toLowerCase()))) continue;
+              const blob = (await item.getType(type)) as unknown as { arrayBuffer(): Promise<ArrayBuffer> };
+              const bytes = Buffer.from(await blob.arrayBuffer());
+              const text = /filenamew/i.test(type) ? bytes.toString("utf16le") : bytes.toString("utf8");
+              const found = clipboardFiles(type, text);
+              if (found.length) return found;
+            }
+          }
+          return [];
+        },
         saveImage: async (png) => {
           const dir = join(app.getPath("userData"), "clipboard");
           await mkdir(dir, { recursive: true });
@@ -161,14 +178,15 @@ else {
         },
       }, shells, vaultFrom(safeStorage), chat, chatImages);
       service.useMemory(memoryMcp);
+      service.useDesktop({ trash: (path) => shell.trashItem(path), reveal: (path) => shell.showItemInFolder(path) });
       // Escritório: a equipe de agentes trabalha no projeto escolhido. Quem pesquisa, escreve e
       // revisa só lê os arquivos; o agente de código executa o pedido numa tarefa do Golfinho, pelo
-      // chat, numa branch própria, com o chefe aprovando as alterações pelo Escritório.
+      // chat, numa branch nova ou numa existente (o chefe escolhe), com o chefe aprovando as alterações pelo Escritório.
       office = new Office({
         project: (id) => store!.project(id),
         memory: (projectId, text) =>
           store!.settings().memory?.enabled === false ? null : prepareMemory(store!, projectId, text, false).text,
-        createTask: async (p, title, prompt, hint, provider) => {
+        createTask: async (p, title, prompt, hint, provider, existing) => {
           const folder = isFolderProject(p);
           const slug =
             hint.toLowerCase().normalize("NFD").replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) ||
@@ -181,8 +199,10 @@ else {
               title,
               prompt: prompt.slice(0, 16000),
               provider,
-              branch: folder ? "" : `golfinho/escritorio-${slug}-${randomUUID().slice(0, 4)}`,
-              base: folder ? "" : await git.current(p.path),
+              // O chefe escolhe: branch existente (adotada, como no formulário de tarefa) ou uma nova.
+              branch: folder ? "" : existing ?? `golfinho/escritorio-${slug}-${randomUUID().slice(0, 4)}`,
+              base: folder ? "" : existing ?? (await git.current(p.path)),
+              adopt: !folder && Boolean(existing),
               remote: remotes[0] ?? "",
               timeoutMinutes: 60,
             },
@@ -270,6 +290,16 @@ else {
         return { action: "deny" };
       });
       window.webContents.on("will-navigate", (event) => event.preventDefault());
+      // Plugins no formato do ORCA: instalação, worker de cada um e os arquivos do editor.
+      setupPlugins({
+        here,
+        root: join(home, "plugins"),
+        vault: vaultFrom(safeStorage),
+        store: () => store!,
+        window: () => window,
+        activeBranch: () => null,
+        notify: (title, body) => new Notification({ title, body }).show(),
+      });
       ipcMain.handle("golfinho:request", async (event, input: unknown) => {
         if (closing) return { ok: false, error: "Golfinho está encerrando as execuções." };
         if (

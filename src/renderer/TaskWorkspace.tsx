@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import type { Check, Provider, Request, Review, Snapshot, Task, TaskEvent } from "../shared/contracts";
 import { TerminalPane, DiffPane, FileEditor, FileTree } from "./Editors";
+import { followMove } from "./fileTreeOps";
 import { ChatPane } from "./ChatPane";
 import { ShellPane } from "./ShellPane";
 import { AgentIcon } from "./agentIcons";
@@ -889,6 +890,12 @@ export const TaskWorkspace = forwardRef<TaskWorkspaceHandle, Props>(function Tas
                       taskId={task.id}
                       selected={file}
                       onError={report}
+                      onMoved={(from, to) => {
+                        const next = file && followMove(file, from, to);
+                        if (next === file) return;
+                        // O arquivo aberto foi renomeado, movido ou excluído: o editor acompanha.
+                        navigate(() => setFile(next ?? ""));
+                      }}
                       onOpen={(path, writable) =>
                         navigate(() => {
                           setFileWritable(writable);

@@ -29,7 +29,8 @@ export interface OfficeDeps {
   /** Pacote da memória do projeto para o pedido; null quando desligada ou vazia. */
   memory(projectId: string, text: string): string | null;
   /** Cria a tarefa do Golfinho (rascunho) que o agente de código preparou. */
-  createTask(project: Project, title: string, prompt: string, branchHint: string, provider: OfficeProvider): Promise<Task>;
+  /** `existing`: trabalhar nessa branch que já existe; sem ela, cria uma branch nova a partir de `branchHint`. */
+  createTask(project: Project, title: string, prompt: string, branchHint: string, provider: OfficeProvider, existing?: string): Promise<Task>;
   /** Prepara a branch e manda as instruções pelo chat da tarefa; o andamento chega por onChat. */
   runTask(taskId: string, text: string): Promise<void>;
   /** Fim da execução: a tarefa vai para revisão (ou falha) e a pasta fica livre. */
@@ -487,7 +488,7 @@ ${this.contexts.get(job.id) ?? job.request}
     const prompt =
       agent.mode === "task"
         ? `${base}
-Investigue o projeto (sem alterar nada) e monte um plano de implementação. O plano vai para a mesa do chefe, que decide se você implementa; se ele aprovar, você mesmo vai executar o plano numa branch própria.
+Investigue o projeto (sem alterar nada) e monte um plano de implementação. O plano vai para a mesa do chefe, que decide se você implementa; se ele aprovar, você mesmo vai executar o plano numa branch (nova ou existente, como o chefe escolher).
 Responda só com JSON: {"titulo":"até 60 caracteres","branch":"sufixo curto em kebab-case, sem barra","instrucoes":"o plano de execução: objetivo, arquivos envolvidos, passos e critérios de pronto, em Markdown","resumo":"2 a 4 frases para o chefe, em Markdown"}`
         : `${base}
 Faça o trabalho agora. Investigue o projeto no que for útil e escreva a entrega final em Markdown, em português do Brasil, objetiva (até umas 500 palavras, a não ser que o pedido peça mais). Não faça perguntas: assuma o razoável e diga o que assumiu.`;
@@ -667,7 +668,7 @@ Responda só com JSON: {"aprovado":true,"correcoes":["..."],"notas":["até 3 obs
     const resumed = Boolean(job.taskId);
     const task = job.taskId
       ? { id: job.taskId }
-      : await this.deps.createTask(this.deps.project(projectId), plan.title, plan.instructions, plan.branch, agentProvider(agent));
+      : await this.deps.createTask(this.deps.project(projectId), plan.title, plan.instructions, plan.branch, agentProvider(agent), job.targetBranch);
     if (!resumed) {
       job.taskId = task.id;
       const created = task as Task;
@@ -888,7 +889,8 @@ ${rules}`;
 
   // Relatório entregue → trabalho de código: vai direto para quem entrega tarefas de código,
   // com o relatório inteiro como contexto, sem passar pela decisão de quem faz.
-  implement(projectId: string, jobId: string) {
+  // `branch`: branch existente escolhida pelo chefe; sem ela, a implementação cria uma nova.
+  implement(projectId: string, jobId: string, branch?: string) {
     const s = this.state(projectId);
     const source = s.jobs.find((j) => j.id === jobId);
     if (!source || source.status !== "entregue") throw new Error("Só dá para implementar uma entrega pronta.");
@@ -896,10 +898,11 @@ ${rules}`;
     // Plano do agente de código: o mesmo trabalho volta para a fila, agora aprovado.
     if (source.stage === "plano" && this.plans.has(source.id)) {
       source.approved = true;
+      source.targetBranch = branch;
       source.status = "fila";
       source.read = false;
       source.finishedAt = undefined;
-      note(source, "Chefe", "pedido", "Aprovou o plano: pode implementar.");
+      note(source, "Chefe", "pedido", `Aprovou o plano: pode implementar${branch ? ` na branch ${branch}` : " numa branch nova"}.`);
       this.emit(s);
       this.pump(projectId);
       return s;
@@ -923,6 +926,7 @@ ${rules}`;
       createdAt: new Date().toISOString(),
       basedOn: source.id,
       approved: true,
+      targetBranch: branch,
     };
     this.contexts.set(
       job.id,

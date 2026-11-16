@@ -1,16 +1,20 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, ChevronRight, ChevronUp, Eye, EyeOff, RefreshCw } from "lucide-react";
+import React, { useEffect, useRef, useState } from "react";
+import { ChevronDown, ChevronUp, Eye, EyeOff } from "lucide-react";
 import { FileTypeIcon } from "./fileIcons";
 import * as monaco from "monaco-editor";
 import EditorWorker from "monaco-editor/editor/editor.worker.js?worker";
-import type { Changes, FileChange, Request, TreeEntry, TreeListing } from "../shared/contracts";
+import type { FileChange, Request } from "../shared/contracts";
 import { languageFor } from "./language";
 import { countLines } from "./diffStats";
+import { PluginEditor } from "./PluginEditor";
+import { pluginEditorFor, usePlugins } from "./plugins";
+import { registerPluginSyntaxes } from "./pluginSyntax";
 (self as unknown as { MonacoEnvironment: unknown }).MonacoEnvironment = {
   getWorker: () => new EditorWorker(),
 };
 const request = <T,>(r: Request) => window.golfinho.request(r) as Promise<T>;
 export { TerminalPane } from "./TerminalPane";
+export { FileTree } from "./FileTree";
 // Mesmas cores da árvore e dos chips: verde para o que entrou, vermelho para o que saiu.
 // Os tons são mais fortes que os do vs-dark, para a diferença ser vista de relance.
 const DIFF_THEME = "golfinho-diff";
@@ -182,27 +186,30 @@ export function FileEditor({
   const editor = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   const [busy, setBusy] = useState(true);
   const [dirty, setDirty] = useState(false);
+  // Texto do arquivo, de onde o editor de código e o do plugin partem quando um troca pelo outro.
+  const [text, setText] = useState<string | null>(null);
+  const textRef = useRef<string | null>(null);
+  // Arquivo que um plugin sabe abrir (ex.: .http): abre no editor dele; "Código" volta ao Monaco.
+  const plugins = usePlugins();
+  const custom = pluginEditorFor(path, plugins);
+  const [code, setCode] = useState(false);
+  const usePlugin = Boolean(custom) && !code;
+  const markDirty = (value: boolean) => {
+    setDirty(value);
+    onDirty(value);
+  };
   useEffect(() => {
     let alive = true;
     setBusy(true);
-    setDirty(false);
-    onDirty(false);
+    markDirty(false);
+    setText(null);
+    textRef.current = null;
+    setCode(false);
     request<string>({ action: "readTree", taskId, path })
       .then((content) => {
         if (!alive) return;
-        editor.current = monaco.editor.create(host.current!, {
-          value: content,
-          language: languageOf(path),
-          theme: "vs-dark",
-          automaticLayout: true,
-          minimap: { enabled: false },
-          fontSize: 13,
-          readOnly,
-        });
-        editor.current.onDidChangeModelContent(() => {
-          setDirty(true);
-          onDirty(true);
-        });
+        textRef.current = content;
+        setText(content);
       })
       .catch(onError)
       .finally(() => {
@@ -210,32 +217,56 @@ export function FileEditor({
       });
     return () => {
       alive = false;
-      const model = editor.current?.getModel();
-      editor.current?.dispose();
-      model?.dispose();
-      editor.current = null;
     };
-  }, [taskId, path, readOnly]);
+  }, [taskId, path]);
+  useEffect(() => {
+    if (text === null || usePlugin || !host.current) return;
+    editor.current = monaco.editor.create(host.current, {
+      value: textRef.current ?? "",
+      language: languageOf(path),
+      theme: "vs-dark",
+      automaticLayout: true,
+      minimap: { enabled: false },
+      fontSize: 13,
+      readOnly,
+    });
+    const current = editor.current;
+    current.onDidChangeModelContent(() => {
+      textRef.current = current.getValue();
+      markDirty(true);
+    });
+    return () => {
+      // Volta para o editor do plugin com o que foi digitado aqui.
+      if (textRef.current !== null) setText(textRef.current);
+      const model = current.getModel();
+      current.dispose();
+      model?.dispose();
+      if (editor.current === current) editor.current = null;
+    };
+  }, [text === null, usePlugin, path, readOnly]);
+  // Linguagem trazida por um plugin (ex.: .http): o arquivo ganha as cores assim que ela é registrada.
+  useEffect(() => {
+    void registerPluginSyntaxes(plugins).then(() => {
+      const model = editor.current?.getModel();
+      if (model) monaco.editor.setModelLanguage(model, languageOf(path));
+    });
+  }, [plugins, path, text === null, usePlugin]);
   async function save() {
     const current = editor.current;
-    if (!current) return;
-    const version = current.getModel()?.getVersionId();
-    const content = current.getValue();
+    const content = current ? current.getValue() : textRef.current;
+    if (content === null) return;
+    const version = current?.getModel()?.getVersionId();
     setBusy(true);
     try {
       await request({ action: "saveFile", taskId, path, content });
-      if (
-        editor.current === current &&
-        current.getModel()?.getVersionId() === version &&
-        current.getValue() === content
-      ) {
-        setDirty(false);
-        onDirty(false);
-      }
+      const unchanged = current
+        ? editor.current === current && current.getModel()?.getVersionId() === version && current.getValue() === content
+        : textRef.current === content;
+      if (unchanged) markDirty(false);
     } catch (e) {
       onError(e);
     } finally {
-      if (editor.current === current) setBusy(false);
+      setBusy(false);
     }
   }
   return (
@@ -246,194 +277,41 @@ export function FileEditor({
           {path}
           {readOnly ? " • somente leitura" : dirty ? " • alterações não salvas" : ""}
         </span>
+        {custom && (
+          <button
+            type="button"
+            title={usePlugin ? "Ver e editar o arquivo como texto" : `Abrir no editor do plugin ${custom.plugin.name}`}
+            onClick={() => setCode((c) => !c)}
+          >
+            {usePlugin ? "Código" : custom.editor.title}
+          </button>
+        )}
         {!readOnly && (
           <button disabled={busy || !dirty} onClick={save}>
             Salvar arquivo
           </button>
         )}
       </div>
-      <div ref={host} className="editor-host" />
+      {usePlugin && custom && text !== null ? (
+        <PluginEditor
+          key={`${custom.plugin.key}:${path}`}
+          pluginKey={custom.plugin.key}
+          editorId={custom.editor.id}
+          title={custom.editor.title}
+          path={path}
+          value={text}
+          readOnly={readOnly}
+          dark
+          onChange={(value) => {
+            textRef.current = value;
+            setText(value);
+            markDirty(true);
+          }}
+          onSave={save}
+        />
+      ) : (
+        <div ref={host} className="editor-host" />
+      )}
     </>
-  );
-}
-
-// Atualiza a árvore a cada poucos segundos, só com a aba aberta. Consulta apenas as
-// pastas expandidas, então o custo cresce com o que você está vendo, não com o projeto.
-const TREE_REFRESH_MS = 3_000;
-const CHANGE_LABEL = {
-  modified: "modificado",
-  added: "novo",
-  untracked: "novo (ainda não versionado)",
-  deleted: "apagado",
-} as const;
-export function FileTree({
-  taskId,
-  selected,
-  onOpen,
-  onError,
-}: {
-  taskId: string;
-  selected: string;
-  onOpen: (path: string, writable: boolean) => void;
-  onError: (e: unknown) => void;
-}) {
-  const [root, setRoot] = useState<TreeListing["root"] | null>(null);
-  const [children, setChildren] = useState<Record<string, TreeEntry[]>>({});
-  const [cut, setCut] = useState<Record<string, boolean>>({});
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const [changes, setChanges] = useState<Changes>({});
-  const [busy, setBusy] = useState(false);
-  const expandedRef = useRef(expanded);
-  expandedRef.current = expanded;
-  const loadDirectory = useCallback(
-    async (path: string) => {
-      const listing = await request<TreeListing>({ action: "tree", taskId, path });
-      setRoot(listing.root);
-      setChildren((current) => ({ ...current, [path]: listing.entries }));
-      setCut((current) => ({ ...current, [path]: listing.truncated }));
-    },
-    [taskId],
-  );
-  // Pasta aberta que sumiu (apagada pela CLI ou pelo git) é recolhida, sem erro.
-  const refresh = useCallback(async () => {
-    const gone: string[] = [];
-    await Promise.all(
-      ["", ...expandedRef.current].map(async (path) => {
-        try {
-          await loadDirectory(path);
-        } catch (e) {
-          if (!path) throw e;
-          gone.push(path);
-        }
-      }),
-    );
-    if (gone.length)
-      setExpanded((current) => {
-        const next = new Set(current);
-        for (const path of gone) next.delete(path);
-        return next;
-      });
-    setChanges(await request<Changes>({ action: "changes", taskId }));
-  }, [loadDirectory, taskId]);
-  const reload = useCallback(async () => {
-    setBusy(true);
-    setChildren({});
-    setCut({});
-    setExpanded(new Set());
-    try {
-      await refresh();
-    } catch (e) {
-      onError(e);
-    } finally {
-      setBusy(false);
-    }
-  }, [refresh, onError]);
-  useEffect(() => {
-    void reload();
-  }, [reload]);
-  const polling = useRef(false);
-  useEffect(() => {
-    const timer = setInterval(() => {
-      if (polling.current) return;
-      polling.current = true;
-      // Falha de atualização automática não gera alerta a cada 3 s; o botão mostra erros.
-      refresh()
-        .catch(() => undefined)
-        .finally(() => {
-          polling.current = false;
-        });
-    }, TREE_REFRESH_MS);
-    return () => clearInterval(timer);
-  }, [refresh]);
-  // Pastas que contêm alguma alteração, para marcá-las mesmo recolhidas.
-  const dirsWithChanges = useMemo(() => {
-    const dirs = new Set<string>();
-    for (const path of Object.keys(changes)) {
-      const parts = path.split("/");
-      for (let i = 1; i < parts.length; i++) dirs.add(parts.slice(0, i).join("/"));
-    }
-    return dirs;
-  }, [changes]);
-  async function toggle(path: string) {
-    if (expanded.has(path)) {
-      setExpanded((current) => {
-        const next = new Set(current);
-        next.delete(path);
-        return next;
-      });
-      return;
-    }
-    try {
-      if (!children[path]) await loadDirectory(path);
-      setExpanded((current) => new Set(current).add(path));
-    } catch (e) {
-      onError(e);
-    }
-  }
-  function rows(parent: string, depth: number): React.ReactNode {
-    return (children[parent] ?? []).map((entry) => {
-      const isDirectory = entry.kind === "directory";
-      const isOpen = expanded.has(entry.path);
-      const change = isDirectory ? undefined : changes[entry.path];
-      const marked = isDirectory ? dirsWithChanges.has(entry.path) : Boolean(change);
-      const title = change ? `${entry.path} · ${CHANGE_LABEL[change]}` : entry.path;
-      return (
-        <React.Fragment key={entry.path}>
-          <button
-            className={
-              "tree-row" +
-              (selected === entry.path ? " active" : "") +
-              (change ? ` changed-${change}` : "") +
-              (isDirectory && marked ? " tree-dirty" : "")
-            }
-            style={{ paddingLeft: 8 + depth * 14 }}
-            title={title}
-            onClick={() =>
-              isDirectory ? void toggle(entry.path) : onOpen(entry.path, root === "task")
-            }
-          >
-            {isDirectory ? (
-              isOpen ? (
-                <ChevronDown size={12} />
-              ) : (
-                <ChevronRight size={12} />
-              )
-            ) : (
-              <span className="tree-spacer" />
-            )}
-            <FileTypeIcon name={entry.name} kind={isDirectory ? "directory" : "file"} open={isOpen} />
-            <span className="tree-name">{entry.name}</span>
-          </button>
-          {isDirectory && isOpen && rows(entry.path, depth + 1)}
-          {isDirectory && isOpen && cut[entry.path] && (
-            <p className="tree-note" style={{ paddingLeft: 22 + depth * 14 }}>
-              Lista cortada em 2000 itens.
-            </p>
-          )}
-        </React.Fragment>
-      );
-    });
-  }
-  return (
-    <aside className="file-tree" aria-label="Arquivos da tarefa">
-      <div className="file-tree-head">
-        <span>
-          {root === "task"
-            ? "Pasta da tarefa · editável"
-            : root === "project"
-              ? "Projeto · somente leitura"
-              : "Arquivos"}
-        </span>
-        <button
-          aria-label="Atualizar árvore"
-          title="Atualizar árvore"
-          disabled={busy}
-          onClick={() => void reload()}
-        >
-          <RefreshCw size={12} />
-        </button>
-      </div>
-      <div className="file-tree-body">{rows("", 0)}</div>
-    </aside>
   );
 }

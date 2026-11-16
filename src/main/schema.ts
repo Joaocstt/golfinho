@@ -1,6 +1,8 @@
 import { z } from "zod";
 const id = z.uuid();
 const provider = z.enum(["codex", "claude", "antigravity"]);
+// Caminho dentro da árvore da tarefa, relativo à raiz.
+const treePath = z.string().min(1).max(4096);
 const settings = z
   .object({
     concurrency: z.number().int().min(1).max(8),
@@ -109,7 +111,9 @@ export const requestSchema = z.discriminatedUnion("action", [
     })
     .strict(),
   z.object({ action: z.literal("officeCommit"), projectId: id, jobId: id }).strict(),
-  z.object({ action: z.literal("officeImplement"), projectId: id, jobId: id }).strict(),
+  z
+    .object({ action: z.literal("officeImplement"), projectId: id, jobId: id, branch: z.string().min(1).max(250).optional() })
+    .strict(),
   z.object({ action: z.literal("officeCancel"), projectId: id, jobId: id }).strict(),
   z
     .object({
@@ -139,6 +143,7 @@ export const requestSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("quota"), provider, refresh: z.boolean().optional() }).strict(),
   z.object({ action: z.literal("deleteInfo"), taskId: id }).strict(),
   z.object({ action: z.literal("deleteTask"), taskId: id }).strict(),
+  z.object({ action: z.literal("archiveTask"), taskId: id, archived: z.boolean() }).strict(),
   z
     .object({
       action: z.literal("createTask"),
@@ -281,6 +286,23 @@ export const requestSchema = z.discriminatedUnion("action", [
       login: z.boolean().optional(),
     })
     .strict(),
+  z
+    .object({ action: z.literal("fileCreate"), taskId: id, path: treePath, kind: z.enum(["file", "directory"]) })
+    .strict(),
+  z.object({ action: z.literal("fileMove"), taskId: id, from: treePath, to: treePath }).strict(),
+  z.object({ action: z.literal("fileCopy"), taskId: id, from: treePath, dir: z.string().max(4096) }).strict(),
+  z
+    .object({
+      action: z.literal("fileImport"),
+      taskId: id,
+      sources: z.array(z.string().min(1).max(4096)).min(1).max(500),
+      dir: z.string().max(4096),
+    })
+    .strict(),
+  z.object({ action: z.literal("fileDelete"), taskId: id, path: treePath, permanent: z.boolean().optional() }).strict(),
+  z.object({ action: z.literal("filePath"), taskId: id, path: z.string().max(4096) }).strict(),
+  z.object({ action: z.literal("fileReveal"), taskId: id, path: z.string().max(4096) }).strict(),
+  z.object({ action: z.literal("clipboardFiles") }).strict(),
   z
     .object({
       action: z.literal("saveFile"),

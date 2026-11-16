@@ -20,6 +20,7 @@ import { readQuota } from "./quota";
 import { buildHandoff, clip, withHandoff } from "./handoff";
 import { prepareMemory, taskDigest, titleFrom, type MemoryLink } from "./memory";
 import type { Office } from "./office";
+import { absolutePath, copyEntry, createEntry, deleteEntry, importEntries, moveEntry } from "./files";
 import type {
   Request,
   Response,
@@ -60,6 +61,7 @@ export class Service {
       write(text: string): void | Promise<void>;
       image?(): Promise<Buffer | null>;
       saveImage?(png: Buffer): Promise<string>;
+      files?(): Promise<string[]>;
     },
     private shells?: Shells,
     private vault?: Vault,
@@ -72,6 +74,12 @@ export class Service {
     },
   ) {}
   private office: Office | null = null;
+  // Lixeira e gerenciador de arquivos do sistema, para o menu da árvore. Sem eles (testes),
+  // excluir pede confirmação para apagar de vez e revelar avisa que não está disponível.
+  private desktop: { trash?(path: string): Promise<void>; reveal?(path: string): void } = {};
+  useDesktop(desktop: { trash?(path: string): Promise<void>; reveal?(path: string): void }) {
+    this.desktop = desktop;
+  }
   // Equipe do Escritório; sem ela, as ações do Escritório respondem que ele não está disponível.
   useOffice(office: Office | null) {
     this.office = office;
@@ -187,6 +195,16 @@ export class Service {
       this.quotaRunning.delete(provider);
     }
   }
+  // Mexer na árvore segue as regras de salvar arquivo: só na pasta da tarefa, com a branch
+  // dela ativa e sem uma execução usando a pasta ao mesmo tempo.
+  private editTree<T>(taskId: string, operation: (dir: string) => Promise<T>) {
+    return this.coordinator.exclusive(taskId, async () => {
+      const t = this.store.task(taskId);
+      const dir = requireCheckout(t, this.store.project(t.projectId));
+      await this.git.requireCurrent(dir, t.branch);
+      return operation(dir);
+    });
+  }
   // Pasta da tarefa quando ela existe; antes disso, o projeto (somente leitura).
   private async treeRoot(taskId: string) {
     const t = this.store.task(taskId);
@@ -301,7 +319,7 @@ export class Service {
       case "officeRetry":
         return this.officeOrThrow().retry(r.projectId, r.jobId);
       case "officeImplement":
-        return this.officeOrThrow().implement(r.projectId, r.jobId);
+        return this.officeOrThrow().implement(r.projectId, r.jobId, r.branch);
       case "officeCommit":
         return this.officeOrThrow().commitJob(r.projectId, r.jobId);
       case "officeSaveLayout":
@@ -422,6 +440,15 @@ export class Service {
           published: t.published,
           blocked,
         };
+      }
+      // Arquivar só esconde a tarefa: nada muda no git nem na pasta dela.
+      case "archiveTask": {
+        const t = this.store.task(r.taskId);
+        if (r.archived && ["running", "waiting", "queued"].includes(t.status))
+          throw new Error("Esta tarefa está em execução ou na fila. Cancele antes de arquivar.");
+        const result = this.store.setArchived(t.id, r.archived);
+        this.changed();
+        return result;
       }
       case "deleteTask":
         return this.coordinator.exclusive(r.taskId, async () => {
@@ -877,6 +904,30 @@ export class Service {
           this.changed();
           return null;
         });
+      case "fileCreate":
+        return this.editTree(r.taskId, (dir) => createEntry(dir, r.path, r.kind));
+      case "fileMove":
+        return this.editTree(r.taskId, (dir) => moveEntry(dir, r.from, r.to));
+      case "fileCopy":
+        return this.editTree(r.taskId, (dir) => copyEntry(dir, r.from, r.dir));
+      case "fileImport":
+        return this.editTree(r.taskId, (dir) => importEntries(dir, r.sources, r.dir));
+      case "fileDelete":
+        return this.editTree(r.taskId, async (dir) => {
+          const deleted = await deleteEntry(dir, r.path, r.permanent ?? false, this.desktop.trash);
+          if (deleted) this.store.note(r.taskId, `${r.permanent ? "Excluído" : "Enviado à lixeira"}: ${r.path}.`);
+          return deleted;
+        });
+      // Copiar caminho e revelar só leem: valem também para o projeto, antes da tarefa começar.
+      case "filePath":
+        return absolutePath((await this.treeRoot(r.taskId)).root, r.path);
+      case "fileReveal": {
+        if (!this.desktop.reveal) throw new Error("O gerenciador de arquivos não está disponível.");
+        this.desktop.reveal(await absolutePath((await this.treeRoot(r.taskId)).root, r.path));
+        return null;
+      }
+      case "clipboardFiles":
+        return (await this.clipboard?.files?.()) ?? [];
       case "review": {
         // Com a CLI trabalhando, a diff só lê a pasta. Não toma o bloqueio (que a execução
         // segura) e não muda o estado da tarefa, então dá para conferir o que o agente fez.

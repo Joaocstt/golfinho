@@ -19,6 +19,7 @@ function setup(state: Partial<OfficeState> = {}) {
   const request = vi.fn(async (r: Request) => {
     if (r.action === "officeState" || r.action === "officeRead") return office;
     if (r.action === "officeAsk") return { action: "encaminhar", to: "carla", reply: "Fala com a Carla!" };
+    if (r.action === "branches") return { current: "main", branches: ["main", "develop"] };
     return null;
   });
   (window as any).golfinho = { request, subscribe: (l: any) => (listeners.add(l), () => listeners.delete(l)) };
@@ -170,6 +171,30 @@ it("na mesa, plano espera a decisão do chefe e o botão Implementar manda fazer
   expect(within(dialog).getAllByText(/esperando sua decisão/).length).toBeGreaterThan(0);
   fireEvent.click(within(dialog).getByRole("button", { name: /Implementar/ }));
   await waitFor(() => expect(request).toHaveBeenCalledWith({ action: "officeImplement", projectId: project.id, jobId: "j1" }));
+});
+
+it("o chefe escolhe implementar numa branch existente em vez de criar uma nova", async () => {
+  const { request } = setup({
+    jobs: [
+      {
+        id: "j1", agentId: "bruno", agentName: "Bruno", title: "Corrigir login", request: "corrige", status: "entregue",
+        activity: "", stage: "plano", result: "O plano é ajustar o auth.", notes: [], read: false, createdAt: new Date().toISOString(),
+      },
+    ],
+  });
+  await screen.findByText("Corrigir login");
+  const room = screen.getByLabelText(/Escritório: ande/);
+  await new Promise((r) => setTimeout(r, 60));
+  fireEvent.keyDown(room, { key: "e" });
+  const dialog = await screen.findByRole("dialog", { name: "Entregas" });
+  const select = (await within(dialog).findByLabelText("Branch da implementação")) as HTMLSelectElement;
+  expect(select.value).toBe("");
+  expect(within(select).getByRole("option", { name: "main (atual)" })).toBeTruthy();
+  fireEvent.change(select, { target: { value: "develop" } });
+  fireEvent.click(within(dialog).getByRole("button", { name: /Implementar/ }));
+  await waitFor(() =>
+    expect(request).toHaveBeenCalledWith({ action: "officeImplement", projectId: project.id, jobId: "j1", branch: "develop" }),
+  );
 });
 
 it("trabalho em andamento tem Cancelar; o cancelado tem Tentar de novo", async () => {

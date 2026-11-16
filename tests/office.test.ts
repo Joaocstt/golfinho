@@ -79,12 +79,12 @@ const runDeps = () => ({
 });
 let states: OfficeState[];
 // O chefe aprova, na mesa dele, o plano que acabou de chegar.
-const approve = async () => {
+const approve = async (branch?: string) => {
   const plan = office.state(project.id).jobs[0];
-  office.implement(project.id, plan.id);
+  office.implement(project.id, plan.id, branch);
   await settle();
 };
-let created: { title: string; prompt: string; hint: string }[];
+let created: { title: string; prompt: string; hint: string; existing?: string }[];
 let createdProviders: string[] = [];
 let saved: Map<string, unknown>;
 beforeEach(() => {
@@ -109,8 +109,8 @@ beforeEach(() => {
       return project;
     },
     memory: () => "## Memória do projeto\n- usa Electron",
-    createTask: async (_p, title, prompt, hint, provider) => {
-      created.push({ title, prompt, hint });
+    createTask: async (_p, title, prompt, hint, provider, existing) => {
+      created.push({ title, prompt, hint, ...(existing ? { existing } : {}) });
       createdProviders.push(provider);
       return { id: "22222222-2222-4222-8222-222222222222" } as Task;
     },
@@ -208,6 +208,21 @@ it("pedido de código: o agente planeja, executa a tarefa pelo chat, e a revisor
   expect(texts).toContain("Editando auth.ts (src)");
   // A revisora recebe a lista do que mudou.
   expect(sdk.calls.at(-1).prompt).toContain("src/auth.ts (modified)");
+});
+
+it("o chefe pode mandar implementar numa branch que já existe", async () => {
+  sdk.answer = (prompt) => {
+    if (prompt.includes("Decida o que fazer")) return [result('{"acao":"aceitar","fala":"Deixa comigo","titulo":"Corrigir login"}')];
+    if (prompt.includes("para conferir")) return [result('{"notas":[],"versao_final":"Plano final"}')];
+    return [result('{"titulo":"Corrigir login","branch":"corrigir-login","instrucoes":"Ajustar o auth","resumo":"Resumo"}')];
+  };
+  await office.ask(project.id, "bruno", "Corrige o bug do login");
+  await settle();
+  await approve("develop");
+  expect(created).toEqual([{ title: "Corrigir login", prompt: "Plano final", hint: "corrigir-login", existing: "develop" }]);
+  const job = office.state(project.id).jobs[0];
+  expect(job.targetBranch).toBe("develop");
+  expect(job.log?.map((e) => e.text)).toContain("Aprovou o plano: pode implementar na branch develop.");
 });
 
 it("pedido de permissão aparece no Escritório e a resposta do chefe vai para o chat", async () => {

@@ -10,8 +10,13 @@ import {
   PanelRight,
   Files,
   ChevronRight,
+  ChevronsDownUp,
+  ChevronsUpDown,
+  Puzzle,
   TerminalSquare,
   Trash2,
+  Archive,
+  ArchiveRestore,
   TriangleAlert,
   RefreshCw,
   LogIn,
@@ -59,6 +64,10 @@ import { FileTypeIcon } from "./fileIcons";
 import { RemoteTree } from "./RemoteTree";
 import { RemoteViewer } from "./RemoteViewer";
 import { UpdateBanner } from "./UpdateBanner";
+import { loadOrder, moveBefore, saveOrder, sortByOrder } from "./projectOrder";
+import { PluginsPanel } from "./PluginsPanel";
+import { PanelIcon, PluginPanel } from "./PluginPanel";
+import { usePlugins } from "./plugins";
 import golfinhoLogo from "../../build/icon.png";
 
 const request = <T,>(r: Request) => window.golfinho.request(r) as Promise<T>;
@@ -101,7 +110,7 @@ function Workspace() {
     [selected, setSelected] = useState(""),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false),
-    [modal, setModal] = useState<"task" | "settings" | null>(null);
+    [modal, setModal] = useState<"task" | "settings" | "plugins" | null>(null);
   const [dirty, setDirty] = useState(false);
   const { pending: permissionRequests, answeredTerminal } = usePermissionRequests(snapshot?.tasks);
   const permissionTasks = new Set(permissionRequests.map((request) => request.taskId));
@@ -169,6 +178,18 @@ function Workspace() {
   const mainRow = useRef<HTMLDivElement>(null);
   // Tarefa que estava aberta antes de ir para a aba YouTube: volta ao dividir ou minimizar.
   const beforeYoutube = useRef("");
+  // Painéis de plugins na lateral direita, ao lado do inspetor. Os já abertos continuam vivos
+  // (escondidos) ao trocar de aba, para não perder o que estava preenchido.
+  const plugins = usePlugins();
+  const pluginPanels = plugins.flatMap((pl) => pl.panels.map((panel) => ({ ...panel, plugin: pl.key, id: `${pl.key}:${panel.id}`, panelId: panel.id })));
+  const [sidePanel, setSidePanel] = useState("");
+  const [openedPanels, setOpenedPanels] = useState<string[]>([]);
+  const activePanel = pluginPanels.find((x) => x.id === sidePanel);
+  // Plugins perguntam qual é o projeto aberto (workspace.readContext): a tarefa selecionada manda.
+  useEffect(() => {
+    const projectId = snapshot?.tasks.find((t) => t.id === selected)?.projectId ?? project;
+    void window.golfinho?.plugins?.request({ action: "focus", projectId: projectId ?? "", taskId: selected }).catch(() => {});
+  }, [selected, project, snapshot?.tasks.length]);
   // Projetos recolhidos na lateral. Preferência de tela: fica neste computador.
   const [collapsed, setCollapsed] = useState<string[]>(() => {
     try {
@@ -181,16 +202,30 @@ function Workspace() {
   function closedProject(id: string) {
     return !query && collapsed.includes(id);
   }
+  function saveCollapsed(next: string[]) {
+    try {
+      localStorage.setItem("golfinho.ui.collapsedProjects", JSON.stringify(next));
+    } catch {
+      /* sem armazenamento: vale só nesta sessão */
+    }
+    return next;
+  }
   function toggleProject(id: string) {
-    setCollapsed((list) => {
-      const next = list.includes(id) ? list.filter((x) => x !== id) : [...list, id];
-      try {
-        localStorage.setItem("golfinho.ui.collapsedProjects", JSON.stringify(next));
-      } catch {
-        /* sem armazenamento: vale só nesta sessão */
-      }
-      return next;
-    });
+    setCollapsed((list) => saveCollapsed(list.includes(id) ? list.filter((x) => x !== id) : [...list, id]));
+  }
+  // Recolher todos de uma vez; com todos recolhidos, o mesmo botão abre todos.
+  function setAllCollapsed(close: boolean) {
+    setCollapsed(saveCollapsed(close ? (snapshot?.projects ?? []).map((p) => p.id) : []));
+  }
+  // Ordem dos projetos na lateral: arrastar um projeto e soltar no lugar de outro.
+  const [projectOrder, setProjectOrder] = useState<string[]>(loadOrder);
+  const [draggingProject, setDraggingProject] = useState("");
+  const [projectDrop, setProjectDrop] = useState<{ id: string; after: boolean } | null>(null);
+  const orderedProjects = sortByOrder(snapshot?.projects ?? [], projectOrder);
+  function reorderProject(moving: string, target: string, after: boolean) {
+    const next = moveBefore(orderedProjects.map((p) => p.id), moving, target, after);
+    setProjectOrder(next);
+    saveOrder(next);
   }
   // Servidores expandidos na barra lateral, e o arquivo remoto aberto na área principal.
   const [sshOpen, setSshOpen] = useState<Record<string, boolean>>({});
@@ -289,7 +324,11 @@ function Workspace() {
       setSelected(remaining[0] ?? "");
   }, [snapshot, splitTasks]);
   const task = snapshot?.tasks.find((t) => t.id === selected);
+  // Arquivadas ficam fora da barra lateral e da lista, a não ser no filtro "Arquivadas".
+  const [showArchived, setShowArchived] = useState(false);
+  const archivedCount = snapshot?.tasks.filter((t) => t.archived).length ?? 0;
   const matches = (t: Task) =>
+    Boolean(t.archived) === showArchived &&
     [t.title, t.branch, t.prompt, snapshot?.projects.find((p) => p.id === t.projectId)?.name ?? ""]
       .join(" ")
       .toLocaleLowerCase()
@@ -513,6 +552,9 @@ function Workspace() {
           >
             <Download size={14} />
           </button>
+          <button aria-label="Plugins" title="Plugins" onClick={() => setModal("plugins")}>
+            <Puzzle size={14} />
+          </button>
           <button
             aria-label="Configurações"
             title="Configurações"
@@ -532,12 +574,26 @@ function Workspace() {
           />
         </div>
         <button
-          className={!project ? "nav-item active" : "nav-item"}
-          onClick={() => setProject("")}
+          className={!project && !showArchived ? "nav-item active" : "nav-item"}
+          onClick={() => {
+            setProject("");
+            setShowArchived(false);
+          }}
         >
           <List size={14} />
-          Todas as tarefas<span>{snapshot?.tasks.length ?? "—"}</span>
+          Todas as tarefas<span>{snapshot ? snapshot.tasks.length - archivedCount : "—"}</span>
         </button>
+        {(archivedCount > 0 || showArchived) && (
+          <button
+            className={showArchived ? "nav-item active" : "nav-item"}
+            aria-pressed={showArchived}
+            title="Tarefas arquivadas: escondidas da lista, com branch e pasta preservadas"
+            onClick={() => setShowArchived((on) => !on)}
+          >
+            <Archive size={14} />
+            Arquivadas<span>{archivedCount}</span>
+          </button>
+        )}
         <button
           className="nav-item new-task"
           disabled={!snapshot?.projects.length || busy}
@@ -548,17 +604,32 @@ function Workspace() {
         </button>
         <div className="sidebar-label">
           Projetos
-          <button
-            aria-label="Adicionar projeto"
-            title="Adicionar projeto"
-            disabled={busy}
-            onClick={() => perform(() => request({ action: "addProject" }))}
-          >
-            <Plus size={13} />
-          </button>
+          <span className="sidebar-label-actions">
+            {(() => {
+              const allClosed = orderedProjects.length > 0 && orderedProjects.every((p) => collapsed.includes(p.id));
+              return (
+                <button
+                  aria-label={allClosed ? "Expandir todos os projetos" : "Recolher todos os projetos"}
+                  title={allClosed ? "Expandir todos os projetos" : "Recolher todos os projetos"}
+                  disabled={!orderedProjects.length}
+                  onClick={() => setAllCollapsed(!allClosed)}
+                >
+                  {allClosed ? <ChevronsUpDown size={13} /> : <ChevronsDownUp size={13} />}
+                </button>
+              );
+            })()}
+            <button
+              aria-label="Adicionar projeto"
+              title="Adicionar projeto"
+              disabled={busy}
+              onClick={() => perform(() => request({ action: "addProject" }))}
+            >
+              <Plus size={13} />
+            </button>
+          </span>
         </div>
         <div className="project-tree">
-          {snapshot?.projects
+          {snapshot && orderedProjects
             .filter(
               (p) =>
                 !query ||
@@ -566,7 +637,31 @@ function Workspace() {
                 snapshot.tasks.some((t) => t.projectId === p.id && matches(t)),
             )
             .map((p) => (
-              <div className={"project-group" + (closedProject(p.id) ? " collapsed" : "")} key={p.id}>
+              <div
+                className={
+                  "project-group" +
+                  (closedProject(p.id) ? " collapsed" : "") +
+                  (draggingProject === p.id ? " dragging" : "") +
+                  (projectDrop?.id === p.id && draggingProject !== p.id ? (projectDrop.after ? " drop-after" : " drop-before") : "")
+                }
+                key={p.id}
+                // Arrastar pelo nome do projeto e soltar sobre outro: fica antes ou depois dele,
+                // conforme a metade em que soltou. Na busca a lista está filtrada, então não reordena.
+                onDragOver={(e) => {
+                  if (!draggingProject || query) return;
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = "move";
+                  const box = e.currentTarget.getBoundingClientRect();
+                  const after = e.clientY > box.top + Math.min(box.height, 36) / 2;
+                  if (projectDrop?.id !== p.id || projectDrop.after !== after) setProjectDrop({ id: p.id, after });
+                }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  if (draggingProject && projectDrop) reorderProject(draggingProject, projectDrop.id, projectDrop.after);
+                  setDraggingProject("");
+                  setProjectDrop(null);
+                }}
+              >
                 <button
                   className="project-toggle"
                   aria-label={closedProject(p.id) ? `Expandir ${p.name}` : `Recolher ${p.name}`}
@@ -578,7 +673,24 @@ function Workspace() {
                 </button>
                 <button
                   className={"project-row " + (project === p.id ? "active" : "")}
-                  title={p.path}
+                  title={query ? p.path : `${p.path}\nArraste para mudar a ordem (ou Alt+↑/↓)`}
+                  draggable={!query}
+                  onDragStart={(e) => {
+                    e.dataTransfer.effectAllowed = "move";
+                    e.dataTransfer.setData("text/plain", p.name);
+                    setDraggingProject(p.id);
+                  }}
+                  onDragEnd={() => {
+                    setDraggingProject("");
+                    setProjectDrop(null);
+                  }}
+                  onKeyDown={(e) => {
+                    if (!e.altKey || query || (e.key !== "ArrowUp" && e.key !== "ArrowDown")) return;
+                    e.preventDefault();
+                    const i = orderedProjects.findIndex((x) => x.id === p.id);
+                    const neighbor = orderedProjects[e.key === "ArrowUp" ? i - 1 : i + 1];
+                    if (neighbor) reorderProject(p.id, neighbor.id, e.key === "ArrowDown");
+                  }}
                   onClick={() => setProject(p.id)}
                   onDoubleClick={() => toggleProject(p.id)}
                 >
@@ -595,7 +707,7 @@ function Workspace() {
                       {snapshot.activeBranches[p.id]}
                     </span>
                   )}
-                  <small>{snapshot.tasks.filter((t) => t.projectId === p.id).length}</small>
+                  <small>{snapshot.tasks.filter((t) => t.projectId === p.id && !t.archived).length}</small>
                 </button>
                 {p.kind === "folder" && (
                   <button
@@ -684,6 +796,27 @@ function Workspace() {
                               <span>{t.branch}</span>
                             </div>
                           )}
+                        </button>
+                        <button
+                          className="branch-task-delete branch-task-archive"
+                          aria-label={(t.archived ? "Desarquivar tarefa " : "Arquivar tarefa ") + t.branch}
+                          title={
+                            t.archived
+                              ? "Desarquivar: a tarefa volta para a lista"
+                              : "Arquivar: some da lista; branch, pasta e histórico ficam como estão"
+                          }
+                          disabled={busy || (!t.archived && ["running", "waiting", "queued"].includes(t.status))}
+                          onClick={() =>
+                            perform(async () => {
+                              await request({ action: "archiveTask", taskId: t.id, archived: !t.archived });
+                              // Tarefa arquivada também sai das abas abertas.
+                              if (t.archived) return;
+                              setOpen((list) => list.filter((id) => id !== t.id));
+                              if (selectedRef.current === t.id) setSelected("");
+                            })
+                          }
+                        >
+                          {t.archived ? <ArchiveRestore size={14} /> : <Archive size={14} />}
                         </button>
                         <button
                           className="branch-task-delete"
@@ -1186,6 +1319,37 @@ function Workspace() {
       </div>
       {inspector && (
         <aside className="inspector" aria-label="Inspetor da tarefa">
+          {pluginPanels.length > 0 && (
+            <div className="inspector-tabs" role="tablist" aria-label="Painéis da lateral">
+              <button type="button" role="tab" aria-selected={!activePanel} title="Servidores e tarefa" onClick={() => setSidePanel("")}>
+                <Server size={13} />
+              </button>
+              {pluginPanels.map((x) => (
+                <button
+                  key={x.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={activePanel?.id === x.id}
+                  title={x.title}
+                  onClick={() => {
+                    setSidePanel(x.id);
+                    setOpenedPanels((list) => (list.includes(x.id) ? list : [...list, x.id]));
+                  }}
+                >
+                  <PanelIcon name={x.icon} />
+                  <span>{x.title}</span>
+                </button>
+              ))}
+            </div>
+          )}
+          {pluginPanels
+            .filter((x) => openedPanels.includes(x.id))
+            .map((x) => (
+              <div key={x.id} className="inspector-plugin" hidden={activePanel?.id !== x.id}>
+                <PluginPanel pluginKey={x.plugin} panelId={x.panelId} title={x.title} />
+              </div>
+            ))}
+          {!activePanel && <>
           <div className="inspector-heading">
             <Server size={14} />
             <strong>Servidores</strong>
@@ -1239,7 +1403,15 @@ function Workspace() {
               <p>Selecione uma tarefa para inspecionar a branch e suas alterações.</p>
             </div>
           ) : null}
+          </>}
         </aside>
+      )}
+      {modal === "plugins" && (
+        <div className="modal-backdrop">
+          <div className="modal settings-modal" role="dialog" aria-modal="true" aria-label="Plugins">
+            <PluginsPanel onClose={() => setModal(null)} />
+          </div>
+        </div>
       )}
       {modal === "settings" && snapshot && (
         <div className="modal-backdrop">

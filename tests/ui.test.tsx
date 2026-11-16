@@ -638,6 +638,26 @@ it("filtra tarefas e navega pelas abas do workspace", async () => {
   fireEvent.click(screen.getByRole("tab", { name: "Workspace golfinho/edit" }));
   expect(screen.getByRole("button", { name: "Fechar tarefa" })).toBeTruthy();
 });
+it("arquiva a tarefa sem excluir e mostra só no filtro Arquivadas", async () => {
+  const request = setup([
+    editableTask,
+    { ...editableTask, id: "old", title: "Tarefa antiga", branch: "golfinho/old", status: "completed", archived: true },
+  ]);
+  await screen.findByRole("button", { name: "Editar arquivo" });
+  expect(screen.queryByRole("button", { name: "Tarefa antiga" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Arquivar tarefa golfinho/edit" }));
+  await waitFor(() =>
+    expect(request).toHaveBeenCalledWith({ action: "archiveTask", taskId: "edit", archived: true }),
+  );
+  expect(request.mock.calls.some(([r]) => r.action === "deleteTask")).toBe(false);
+  fireEvent.click(screen.getByRole("button", { name: /^Arquivadas/ }));
+  expect(screen.getByRole("button", { name: "Tarefa antiga" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Editar arquivo" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Desarquivar tarefa golfinho/old" }));
+  await waitFor(() =>
+    expect(request).toHaveBeenCalledWith({ action: "archiveTask", taskId: "old", archived: false }),
+  );
+});
 it("redimensiona navegação e oculta inspetor", async () => {
   setup();
   await screen.findByText("Projeto real");

@@ -3,9 +3,11 @@ export interface MenuItem {
   label: string;
   shortcut?: string;
   disabled?: boolean;
+  /** Linha divisória antes do item. */
+  separator?: boolean;
   onSelect: () => void;
 }
-// Menu do clique direito no terminal. O xterm não tem menu próprio.
+// Menu do clique direito no terminal (o xterm não tem menu próprio) e na árvore de arquivos.
 export function TerminalMenu({
   x,
   y,
@@ -39,6 +41,7 @@ export function TerminalMenu({
           <button
             key={item.label}
             role="menuitem"
+            className={item.separator ? "ctx-separated" : undefined}
             disabled={item.disabled}
             onClick={() => {
               onClose();

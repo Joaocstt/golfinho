@@ -284,6 +284,15 @@ export class Store {
       .reverse()
       .map((r) => ({ seq: Number(r.id), event: JSON.parse(String(r.body)) }));
   }
+  setArchived(taskId: string, archived: boolean): Task {
+    return this.atomic(() => {
+      const t = this.task(taskId);
+      t.archived = archived;
+      this.write(t);
+      this.event(taskId, "updated", archived ? "Tarefa arquivada." : "Tarefa desarquivada.");
+      return t;
+    });
+  }
   setModel(taskId: string, model: string | null) {
     const task = this.task(taskId);
     task.model = model;
