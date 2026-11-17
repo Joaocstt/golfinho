@@ -10093,3 +10093,194 @@ select {
   top: auto;
   bottom: -6px;
 }
+
+/* Menu de comandos de barra: abre acima do campo, na largura dele. */
+.chat-input-box {
+  position: relative;
+}
+.chat-input-box .chat-command-menu {
+  left: 0;
+  right: 0;
+  max-width: none;
+  max-height: 320px;
+  overflow-y: auto;
+}
+/* O formulário do chat estiliza todos os botões; aqui eles voltam a ser itens de menu. */
+.chat-input .chat-command-menu .chat-menu-item {
+  justify-content: flex-start;
+  gap: 14px;
+  width: 100%;
+  height: auto;
+  min-height: 32px;
+  margin: 0;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--chat-text);
+  font-size: 14px;
+  text-align: left;
+}
+.chat-input .chat-command-menu .chat-menu-item.active {
+  background: #ffffff12;
+}
+.chat-command-name {
+  flex: none;
+  font-family: "Geist Mono Variable", ui-monospace, monospace;
+  font-size: 13px;
+}
+.chat-command-hint {
+  color: var(--chat-dim);
+}
+.chat-command-desc {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--chat-dim);
+  font-size: 13px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* Pergunta do Claude (AskUserQuestion): opções numeradas para marcar, "Outro" e responder. */
+.chat-question {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 8px;
+  padding: 14px;
+  background: var(--chat-surface, #2a2a2a);
+  border: 1px solid var(--chat-line, #ffffff17);
+  border-radius: 14px;
+  font-family: "Geist Variable", Geist, system-ui, sans-serif;
+}
+.chat-question-item {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.chat-question-header {
+  align-self: flex-start;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #ffffff12;
+  color: var(--chat-dim, #8e8e8b);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+}
+.chat-question-text {
+  margin: 0;
+  color: var(--chat-text, #e8e8e6);
+  font-size: 15px;
+  font-weight: 500;
+}
+.chat-question-options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.chat-pane .chat-question-option {
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: 10px;
+  width: 100%;
+  height: auto;
+  margin: 0;
+  padding: 9px 12px;
+  border: 1px solid var(--chat-line, #ffffff17);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--chat-text, #e8e8e6);
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+}
+.chat-pane .chat-question-option:hover {
+  background: #ffffff0a;
+}
+.chat-pane .chat-question-option.on {
+  border-color: #d97757;
+  background: #d977571a;
+}
+.chat-question-mark {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  margin-top: 1px;
+  border: 1px solid #ffffff2e;
+  border-radius: 50%;
+  color: var(--chat-dim, #8e8e8b);
+  font-size: 11px;
+}
+.chat-question-mark.square {
+  border-radius: 5px;
+}
+.chat-question-option.on .chat-question-mark {
+  border-color: #d97757;
+  background: #d97757;
+  color: #1c1c1c;
+}
+.chat-question-label {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 0;
+}
+.chat-question-label small {
+  color: var(--chat-dim, #8e8e8b);
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+.chat-pane .chat-question-other {
+  width: 100%;
+  margin: 0;
+  padding: 9px 12px;
+  border: 1px dashed var(--chat-line, #ffffff17);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--chat-text, #e8e8e6);
+  font: inherit;
+  font-size: 14px;
+  box-sizing: border-box;
+}
+.chat-pane .chat-question-other:focus {
+  border-style: solid;
+  border-color: #ffffff40;
+  outline: none;
+}
+.chat-question-answer {
+  margin: 0;
+  color: var(--chat-dim, #8e8e8b);
+  font-size: 14px;
+}
+.chat-question-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.chat-pane .chat-question-actions button {
+  height: 30px;
+  margin: 0;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 8px;
+  background: #e8e8e6;
+  color: #1c1c1c;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.chat-pane .chat-question-actions button.secondary {
+  border: 1px solid var(--chat-line, #ffffff17);
+  background: transparent;
+  color: var(--chat-text, #e8e8e6);
+}
+.chat-pane .chat-question-actions button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}

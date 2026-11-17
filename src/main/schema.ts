@@ -239,6 +239,14 @@ export const requestSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("chatImage"), path: z.string().min(1).max(4096) }).strict(),
   z
     .object({
+      action: z.literal("chatAnswer"),
+      taskId: id,
+      id,
+      answers: z.record(z.string().max(2000), z.string().max(4000)),
+    })
+    .strict(),
+  z
+    .object({
       action: z.literal("chatDecide"),
       taskId: id,
       id,
@@ -268,6 +276,7 @@ export const requestSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("chatInterrupt"), taskId: id }).strict(),
   z.object({ action: z.literal("chatHistory"), taskId: id }).strict(),
   z.object({ action: z.literal("chatModels"), taskId: id }).strict(),
+  z.object({ action: z.literal("chatCommands"), taskId: id }).strict(),
   z.object({ action: z.literal("endSession"), taskId: id }).strict(),
   z.object({ action: z.literal("testActivate"), taskId: id }).strict(),
   z.object({ action: z.literal("testRestore"), taskId: id }).strict(),

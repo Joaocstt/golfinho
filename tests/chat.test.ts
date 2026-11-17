@@ -286,3 +286,59 @@ it("modelo: troca na sessão aberta do Claude sem fechar a conversa", () => {
   manager.send("t1", CLAUDE, "de novo");
   expect(sdk.calls).toHaveLength(1);
 });
+
+it("lista de comandos tira os de terminal e os internos", async () => {
+  const { toCommandOptions } = await import("../src/main/chat");
+  const list = toCommandOptions([
+    { name: "usage", description: "Custo", argumentHint: "" },
+    { name: "doctor", description: "x" },
+    { name: "__remote-workflow", description: "x" },
+    { name: "code-review", description: "Revisa", argumentHint: "[nível]" },
+    { name: "usage", description: "duplicado" },
+  ]);
+  expect(list).toEqual([
+    { name: "code-review", description: "Revisa", hint: "[nível]" },
+    { name: "usage", description: "Custo" },
+  ]);
+});
+it("pergunta do Claude (AskUserQuestion): vira cartão de opções e as respostas voltam na entrada", async () => {
+  manager.send("t1", CLAUDE, "planeje");
+  const input = {
+    questions: [
+      { question: "Qual banco?", header: "Banco", multiSelect: false, options: [{ label: "Postgres", description: "Relacional" }, { label: "SQLite", description: "" }] },
+    ],
+  };
+  const pending = sdk.calls[0].options.canUseTool("AskUserQuestion", input, { signal: new AbortController().signal, suggestions: [{ type: "x" }] });
+  await tick();
+  const approval = approvalOf();
+  expect(approval).toMatchObject({
+    summary: "Qual banco?",
+    canAlwaysAllow: false,
+    questions: [{ question: "Qual banco?", header: "Banco", multiSelect: false, options: [{ label: "Postgres", description: "Relacional" }, { label: "SQLite" }] }],
+  });
+  manager.answer("t1", approval.id, { "Qual banco?": "SQLite" });
+  await expect(pending).resolves.toEqual({ behavior: "allow", updatedInput: { ...input, answers: { "Qual banco?": "SQLite" } } });
+  expect(events.map((e) => e.event)).toContainEqual({ type: "approval_resolved", id: approval.id, behavior: "allow", answers: { "Qual banco?": "SQLite" } });
+});
+it("pergunta pulada (ou permitida sem resposta) volta como negada", async () => {
+  manager.send("t1", CLAUDE, "planeje");
+  const input = { questions: [{ question: "A ou B?", header: "", multiSelect: false, options: [{ label: "A" }, { label: "B" }] }] };
+  const pending = sdk.calls[0].options.canUseTool("AskUserQuestion", input, { signal: new AbortController().signal });
+  await tick();
+  manager.decide("t1", approvalOf().id, "allow", false);
+  await expect(pending).resolves.toEqual({ behavior: "deny", message: "A pessoa preferiu não responder." });
+});
+it("pergunta vai pelo hook PreToolUse, que vale até com Ignorar permissões", async () => {
+  manager.send("t1", { ...CLAUDE, permissionMode: "bypassPermissions" }, "planeje");
+  const [matcher] = sdk.calls[0].options.hooks.PreToolUse;
+  expect(matcher.matcher).toBe("AskUserQuestion");
+  const input = { questions: [{ question: "A ou B?", header: "", multiSelect: false, options: [{ label: "A" }, { label: "B" }] }] };
+  const out = matcher.hooks[0]({ hook_event_name: "PreToolUse", tool_name: "AskUserQuestion", tool_input: input }, "tu1", { signal: new AbortController().signal });
+  await tick();
+  manager.answer("t1", approvalOf().id, { "A ou B?": "B" });
+  await expect(out).resolves.toEqual({
+    hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "allow", updatedInput: { ...input, answers: { "A ou B?": "B" } } },
+  });
+  // Já respondida, o canUseTool não pergunta de novo.
+  await expect(sdk.calls[0].options.canUseTool("AskUserQuestion", { ...input, answers: { "A ou B?": "B" } }, { signal: new AbortController().signal })).resolves.toMatchObject({ behavior: "allow" });
+});

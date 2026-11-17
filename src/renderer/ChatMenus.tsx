@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Check, ChevronRight } from "lucide-react";
-import type { ChatEffort, ChatModelOption, ChatPermissionMode } from "../shared/contracts";
+import type { ChatCommandOption, ChatEffort, ChatModelOption, ChatPermissionMode } from "../shared/contracts";
 import { EFFORT_LABELS, PERMISSION_MODES } from "../shared/permissionModes";
 
 // Menus do campo de mensagem no estilo do app do Claude: abrem para cima, item marcado com ✓,
@@ -250,6 +250,61 @@ export function PermissionMenu({
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+// Comandos que combinam com o que foi digitado depois da barra: primeiro os que começam com o
+// texto, depois os que o contêm no nome. Só vale enquanto o campo é "/palavra", sem espaço.
+export function matchCommands(commands: ChatCommandOption[], draft: string): ChatCommandOption[] | null {
+  const typed = /^\/(\S*)$/.exec(draft);
+  if (!typed) return null;
+  const q = typed[1].toLowerCase();
+  const starts = commands.filter((c) => c.name.toLowerCase().startsWith(q));
+  const contains = commands.filter((c) => !starts.includes(c) && c.name.toLowerCase().includes(q));
+  return [...starts, ...contains];
+}
+
+// Lista de comandos de barra acima do campo, como no Claude: setas escolhem, Enter/Tab usam.
+export function CommandMenu({
+  commands,
+  active,
+  onHover,
+  onPick,
+}: {
+  commands: ChatCommandOption[];
+  active: number;
+  onHover: (index: number) => void;
+  onPick: (command: ChatCommandOption) => void;
+}) {
+  const list = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    list.current?.querySelector<HTMLElement>(`[data-index="${active}"]`)?.scrollIntoView?.({ block: "nearest" });
+  }, [active]);
+  return (
+    <div className="chat-menu chat-command-menu" role="listbox" aria-label="Comandos" ref={list}>
+      {commands.map((c, i) => (
+        <button
+          key={c.name}
+          type="button"
+          role="option"
+          aria-selected={i === active}
+          data-index={i}
+          className={`chat-menu-item${i === active ? " active" : ""}`}
+          // mousedown para não tirar o foco do campo antes de escolher.
+          onMouseDown={(e) => {
+            e.preventDefault();
+            onPick(c);
+          }}
+          onMouseEnter={() => onHover(i)}
+        >
+          <span className="chat-command-name">
+            /{c.name}
+            {c.hint && <span className="chat-command-hint"> {c.hint}</span>}
+          </span>
+          <span className="chat-command-desc">{c.description}</span>
+        </button>
+      ))}
     </div>
   );
 }

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
   query,
+  type HookJSONOutput,
   type PermissionResult,
   type PermissionUpdate,
   type Query,
@@ -12,6 +13,8 @@ import type {
   ChatEffort,
   ChatEvent,
   ChatHistoryItem,
+  ChatCommandOption,
+  ChatQuestion,
   ChatModelOption,
   ChatPermissionMode,
   Provider,
@@ -67,8 +70,31 @@ function toolResultText(content: unknown): string {
     .map((part) => (part && typeof part === "object" && "text" in part ? String(part.text) : ""))
     .join("\n");
 }
+// Perguntas do AskUserQuestion como o cartão do chat mostra; null se vierem num formato inesperado.
+function toQuestions(value: unknown): ChatQuestion[] | null {
+  if (!Array.isArray(value) || !value.length) return null;
+  const questions: ChatQuestion[] = [];
+  for (const q of value) {
+    if (!q || typeof q !== "object" || typeof q.question !== "string" || !Array.isArray(q.options)) return null;
+    questions.push({
+      question: q.question,
+      header: typeof q.header === "string" ? q.header : "",
+      multiSelect: q.multiSelect === true,
+      options: q.options
+        .filter((o: unknown) => o && typeof o === "object" && typeof (o as { label?: unknown }).label === "string")
+        .map((o: { label: string; description?: unknown }) => ({
+          label: o.label,
+          ...(typeof o.description === "string" && o.description ? { description: o.description } : {}),
+        })),
+    });
+  }
+  return questions;
+}
+const QUESTION_TIMEOUT_S = 24 * 60 * 60;
 interface Pending {
   input: Record<string, unknown>;
+  /** Pergunta do AskUserQuestion: só sai com respostas, por answer(). */
+  question?: boolean;
   suggestions: PermissionUpdate[];
   resolve: (result: PermissionResult) => void;
 }
@@ -86,10 +112,15 @@ export interface ChatOptions {
   /** CLI configurada; dentro do WSL vale o comando de mesmo nome instalado na distro. */
   executable?: string;
 }
-// Modelos que a CLI do Claude oferece para esta conta (nomes com versão, como no app do Claude).
-// Abre um processo só para perguntar e fecha em seguida; a resposta fica guardada até o app fechar.
-const MODELS_TIMEOUT_MS = 20_000;
-let modelsCache: Promise<ChatModelOption[]> | null = null;
+// Modelos e comandos que a CLI do Claude oferece (nomes com versão, como no app do Claude).
+// Abre um processo só para perguntar e fecha em seguida; a resposta fica guardada por pasta até o
+// app fechar (os comandos incluem as skills do projeto).
+const CATALOG_TIMEOUT_MS = 20_000;
+interface Catalog {
+  models: ChatModelOption[];
+  commands: ChatCommandOption[];
+}
+const catalogs = new Map<string, Promise<Catalog>>();
 // "claude-opus-5-5" vira "Opus 5.5": o nome com a versão, como aparece no app do Claude.
 export function modelName(id: string | undefined): string | null {
   const m = /^claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?(?!\d)/.exec(id ?? "");
@@ -111,34 +142,54 @@ export function toModelOptions(
   });
   return options.some((m) => m.value === "") ? options : [{ value: "", label: "Padrão" }, ...options];
 }
-export function claudeModels(cwd: string, executable?: string): Promise<ChatModelOption[]> {
-  modelsCache ??= (async () => {
+// Comandos que só fazem sentido na tela do terminal (ou são internos) ficam fora do menu.
+const TERMINAL_COMMANDS = new Set(["doctor", "color", "focus", "reload-plugins", "heapdump", "statusline", "exit", "vim", "terminal-setup"]);
+export function toCommandOptions(list: { name: string; description: string; argumentHint?: string }[]): ChatCommandOption[] {
+  const seen = new Set<string>();
+  return list
+    .filter((c) => c.name && !c.name.startsWith("_") && !TERMINAL_COMMANDS.has(c.name))
+    .filter((c) => !seen.has(c.name) && Boolean(seen.add(c.name)))
+    .map((c) => ({ name: c.name, description: c.description, ...(c.argumentHint ? { hint: c.argumentHint } : {}) }))
+    .sort((x, y) => x.name.localeCompare(y.name));
+}
+function claudeCatalog(cwd: string, executable?: string): Promise<Catalog> {
+  const key = `${executable ?? ""}\0${cwd}`;
+  let cached = catalogs.get(key);
+  if (cached) return cached;
+  cached = (async () => {
     const idle = new Promise<never>(() => undefined);
     const probe = query({
       prompt: (async function* (): AsyncGenerator<SDKUserMessage> {
         await idle;
       })(),
-      options: { cwd, ...sdkExecutableOption(), ...wslSpawn(cwd, executable) },
+      options: { cwd, settingSources: ["user", "project", "local"], ...sdkExecutableOption(), ...wslSpawn(cwd, executable) },
     });
     let timer: NodeJS.Timeout | undefined;
     try {
-      const list = await Promise.race([
-        probe.supportedModels(),
+      const init = await Promise.race([
+        probe.initializationResult(),
         new Promise<never>((_, reject) => {
-          timer = setTimeout(() => reject(new Error("A CLI do Claude não respondeu a lista de modelos.")), MODELS_TIMEOUT_MS);
+          timer = setTimeout(() => reject(new Error("A CLI do Claude não respondeu a lista de modelos.")), CATALOG_TIMEOUT_MS);
         }),
       ]);
-      return toModelOptions(list);
+      return { models: toModelOptions(init.models), commands: toCommandOptions(init.commands) };
     } finally {
       clearTimeout(timer);
       probe.close();
     }
   })().catch((error) => {
     // Falhou: a próxima abertura do chat tenta de novo.
-    modelsCache = null;
+    catalogs.delete(key);
     throw error;
   });
-  return modelsCache;
+  catalogs.set(key, cached);
+  return cached;
+}
+export function claudeModels(cwd: string, executable?: string): Promise<ChatModelOption[]> {
+  return claudeCatalog(cwd, executable).then((c) => c.models);
+}
+export function claudeCommands(cwd: string, executable?: string): Promise<ChatCommandOption[]> {
+  return claudeCatalog(cwd, executable).then((c) => c.commands);
 }
 // Uma conversa do Claude por tarefa. As mensagens entram por uma fila, então o SDK mantém a
 // sessão aberta entre um turno e o seguinte.
@@ -190,6 +241,8 @@ export class ChatSession {
     const pending = this.pending.get(id);
     if (!pending) return;
     this.pending.delete(id);
+    // Pergunta sem resposta escolhida conta como pulada.
+    if (pending.question) behavior = "deny";
     const result: PermissionResult =
       behavior === "allow"
         ? {
@@ -197,9 +250,17 @@ export class ChatSession {
             updatedInput: pending.input,
             ...(always && pending.suggestions.length ? { updatedPermissions: pending.suggestions } : {}),
           }
-        : { behavior: "deny", message: "Negado pela pessoa no chat." };
+        : { behavior: "deny", message: pending.question ? "A pessoa preferiu não responder." : "Negado pela pessoa no chat." };
     this.emit({ type: "approval_resolved", id, behavior });
     pending.resolve(result);
+  }
+  // Respostas do cartão de perguntas: voltam ao Claude como o resultado da ferramenta.
+  answer(id: string, answers: Record<string, string>) {
+    const pending = this.pending.get(id);
+    if (!pending?.question) return;
+    this.pending.delete(id);
+    this.emit({ type: "approval_resolved", id, behavior: "allow", answers });
+    pending.resolve({ behavior: "allow", updatedInput: { ...pending.input, answers } });
   }
   // Para o turno atual sem fechar a conversa: o próximo envio continua na mesma sessão.
   interrupt() {
@@ -265,7 +326,22 @@ export class ChatSession {
         permissionMode: this.options.permissionMode ?? "default",
         // Necessário para "Liberar tudo"; só tem efeito quando a pessoa escolhe esse modo.
         allowDangerouslySkipPermissions: true,
-        canUseTool: (toolName, input, options) => this.approve(toolName, input, options),
+        // Já respondida pelo hook abaixo, a pergunta passa direto.
+        canUseTool: (toolName, input, options) =>
+          toolName === "AskUserQuestion" && input.answers
+            ? Promise.resolve({ behavior: "allow", updatedInput: input })
+            : this.approve(toolName, input, options),
+        // As perguntas do Claude vão pelo hook PreToolUse, que roda em qualquer modo de permissão
+        // (com "Ignorar permissões" o canUseTool não é chamado). Espera a pessoa por até um dia.
+        hooks: {
+          PreToolUse: [
+            {
+              matcher: "AskUserQuestion",
+              timeout: QUESTION_TIMEOUT_S,
+              hooks: [(hook, _id, { signal }) => this.ask((hook as { tool_input?: unknown }).tool_input, signal)],
+            },
+          ],
+        },
         ...sdkExecutableOption(),
         ...wslSpawn(this.cwd, this.options.executable),
       },
@@ -283,6 +359,8 @@ export class ChatSession {
   }
   private route(message: SDKMessage) {
     if (message.type === "system" && message.subtype === "init") this.options.onSession?.(message.session_id);
+    if (message.type === "system" && message.subtype === "local_command_output" && message.content.trim())
+      this.emit({ type: "assistant", blocks: [{ kind: "text", text: message.content }] });
     if (message.type === "stream_event") {
       // Só a conversa principal: subagentes não escrevem ao vivo na tela.
       if (message.parent_tool_use_id) return;
@@ -294,8 +372,9 @@ export class ChatSession {
         this.emit({ type: "delta", kind: "thinking", text: event.delta.thinking });
     } else if (message.type === "assistant") {
       // Contexto em uso: entrada da última chamada (com cache), que é o que a janela carrega.
+      // Respostas de comandos (/usage, /recap…) chegam como mensagem sintética com uso zerado.
       const usage = message.message.usage as unknown as Record<string, number> | undefined;
-      if (usage) {
+      if (usage && message.message.model !== "<synthetic>") {
         this.contextUsed =
           (usage.input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0);
       }
@@ -341,6 +420,16 @@ export class ChatSession {
       });
     }
   }
+  private async ask(toolInput: unknown, signal: AbortSignal): Promise<HookJSONOutput> {
+    const input = (toolInput && typeof toolInput === "object" ? toolInput : {}) as Record<string, unknown>;
+    const result = await this.approve("AskUserQuestion", input, { signal });
+    return {
+      hookSpecificOutput:
+        result.behavior === "allow"
+          ? { hookEventName: "PreToolUse", permissionDecision: "allow", updatedInput: result.updatedInput }
+          : { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: result.message },
+    };
+  }
   private approve(
     toolName: string,
     input: Record<string, unknown>,
@@ -348,15 +437,17 @@ export class ChatSession {
   ): Promise<PermissionResult> {
     const id = randomUUID();
     const suggestions = options.suggestions ?? [];
+    const questions = toolName === "AskUserQuestion" ? toQuestions(input.questions) : null;
     return new Promise<PermissionResult>((resolve) => {
-      this.pending.set(id, { input, suggestions, resolve });
+      this.pending.set(id, { input, suggestions, resolve, ...(questions ? { question: true } : {}) });
       options.signal.addEventListener("abort", () => this.decide(id, "deny", false), { once: true });
       this.emit({
         type: "approval",
         id,
         toolName,
-        summary: summarize(toolName, input),
-        canAlwaysAllow: suggestions.length > 0,
+        summary: questions ? questions.map((q) => q.question).join(" ") : summarize(toolName, input),
+        canAlwaysAllow: !questions && suggestions.length > 0,
+        ...(questions ? { questions } : {}),
       });
     });
   }
@@ -365,6 +456,8 @@ export class ChatSession {
 export interface ChatBackend {
   send(text: string, images?: ChatImage[], wire?: string): void;
   decide(id: string, behavior: "allow" | "deny", always: boolean): void;
+  /** Respostas a uma pergunta de múltipla escolha (só o Claude pergunta assim). */
+  answer?(id: string, answers: Record<string, string>): void;
   interrupt(): void;
   stop(): void;
   // Compactação nativa, quando a CLI tem uma. Sem ela, a conversa precisa ser refeita.
@@ -450,6 +543,9 @@ export class ChatManager {
   }
   decide(taskId: string, id: string, behavior: "allow" | "deny", always: boolean) {
     this.sessions.get(taskId)?.decide(id, behavior, always);
+  }
+  answer(taskId: string, id: string, answers: Record<string, string>) {
+    this.sessions.get(taskId)?.answer?.(id, answers);
   }
   setPermissionMode(taskId: string, mode: ChatPermissionMode) {
     this.sessions.get(taskId)?.setPermissionMode?.(mode);

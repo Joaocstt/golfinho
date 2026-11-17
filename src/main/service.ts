@@ -6,7 +6,7 @@ import type { Logs } from "./logs";
 import { agentInfo, invocation } from "./agents";
 import { interactiveShell } from "./shellCommand";
 import type { ChatManager } from "./chat";
-import { claudeModels } from "./chat";
+import { claudeCommands, claudeModels } from "./chat";
 import type { ChatImage } from "./chatImages";
 import { checkoutOf, requireCheckout } from "./checkout";
 import type { Shells } from "./shells";
@@ -813,6 +813,9 @@ export class Service {
         }
         return null;
       }
+      case "chatAnswer":
+        this.requireChat().answer(r.taskId, r.id, r.answers);
+        return null;
       case "chatDecide":
         this.requireChat().decide(r.taskId, r.id, r.behavior, r.always ?? false);
         return null;
@@ -891,6 +894,12 @@ export class Service {
         if (task.provider !== "claude") return [];
         const { root } = await this.treeRoot(r.taskId);
         return claudeModels(root, this.store.settings().executables.claude);
+      }
+      case "chatCommands": {
+        const task = this.store.task(r.taskId);
+        if (task.provider !== "claude") return [];
+        const { root } = await this.treeRoot(r.taskId);
+        return claudeCommands(root, this.store.settings().executables.claude);
       }
       case "chatPickImages":
         return this.requireChatImages().pick();

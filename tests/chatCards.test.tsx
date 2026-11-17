@@ -110,3 +110,78 @@ it("menu de modelos como no Claude: versões, número, esforço e mais modelos",
   fireEvent.click(screen.getByRole("menuitem", { name: /Mais modelos/ }));
   expect(screen.getByRole("menuitemradio", { name: "Padrão (Opus 5.5)" })).toBeTruthy();
 });
+
+it("menu de comandos ao digitar /: filtra, setas escolhem e Enter roda", async () => {
+  cleanup();
+  const request = vi.fn(async (r: { action: string }) =>
+    r.action === "chatCommands"
+      ? [
+          { name: "compact", description: "Resume a conversa" },
+          { name: "context", description: "Uso do contexto" },
+          { name: "code-review", description: "Revisa o diff", hint: "[nível]" },
+          { name: "usage", description: "Custo da sessão" },
+        ]
+      : [],
+  );
+  window.golfinho = { request, subscribe: () => () => {} } as unknown as typeof window.golfinho;
+  const onDraftChange = vi.fn();
+  const { rerender } = render(<ChatPane taskId="t" provider="claude" draft="/co" onDraftChange={onDraftChange} onError={() => {}} />);
+  const options = await screen.findAllByRole("option");
+  expect(options.map((o) => o.querySelector(".chat-command-name")?.textContent)).toEqual(["/compact", "/context", "/code-review [nível]"]);
+  const box = screen.getByPlaceholderText(/Mensagem para/);
+  fireEvent.keyDown(box, { key: "ArrowDown" });
+  fireEvent.keyDown(box, { key: "Enter" });
+  expect(request).toHaveBeenCalledWith({ action: "chatSend", taskId: "t", text: "/context" });
+  // Com argumentos, o comando entra no campo para completar.
+  rerender(<ChatPane taskId="t" provider="claude" draft="/code" onDraftChange={onDraftChange} onError={() => {}} />);
+  fireEvent.keyDown(box, { key: "Tab" });
+  expect(onDraftChange).toHaveBeenLastCalledWith("/code-review ");
+  // Esc fecha; com espaço o menu não aparece.
+  fireEvent.keyDown(box, { key: "Escape" });
+  expect(screen.queryByRole("listbox")).toBeNull();
+  rerender(<ChatPane taskId="t" provider="claude" draft="/usage agora" onDraftChange={onDraftChange} onError={() => {}} />);
+  expect(screen.queryByRole("listbox")).toBeNull();
+});
+
+const QUESTION = {
+  type: "approval" as const,
+  id: "q1",
+  toolName: "AskUserQuestion",
+  summary: "Qual banco?",
+  canAlwaysAllow: false,
+  questions: [{ question: "Qual banco?", header: "Banco", multiSelect: false, options: [{ label: "Postgres", description: "Relacional" }, { label: "SQLite" }] }],
+};
+
+it("pergunta do Claude: clicar na opção já responde", async () => {
+  mountWith([QUESTION]);
+  fireEvent.click(await screen.findByRole("radio", { name: /SQLite/ }));
+  expect(window.golfinho.request).toHaveBeenCalledWith({ action: "chatAnswer", taskId: "t", id: "q1", answers: { "Qual banco?": "SQLite" } });
+});
+
+it("pergunta com várias escolhas e Outro; respondida mostra a resposta", async () => {
+  mountWith([
+    {
+      ...QUESTION,
+      questions: [
+        { question: "Quais testes?", header: "Testes", multiSelect: true, options: [{ label: "Unidade" }, { label: "E2E" }] },
+        QUESTION.questions[0],
+      ],
+    },
+  ]);
+  const send = await screen.findByRole("button", { name: "Responder" });
+  fireEvent.click(screen.getByRole("checkbox", { name: /Unidade/ }));
+  fireEvent.click(screen.getByRole("checkbox", { name: /E2E/ }));
+  expect((send as HTMLButtonElement).disabled).toBe(true);
+  fireEvent.change(screen.getByLabelText("Outra resposta: Qual banco?"), { target: { value: "MySQL" } });
+  fireEvent.click(send);
+  expect(window.golfinho.request).toHaveBeenCalledWith({
+    action: "chatAnswer",
+    taskId: "t",
+    id: "q1",
+    answers: { "Quais testes?": "Unidade, E2E", "Qual banco?": "MySQL" },
+  });
+  cleanup();
+  mountWith([QUESTION, { type: "approval_resolved", id: "q1", behavior: "allow", answers: { "Qual banco?": "SQLite" } }]);
+  expect(await screen.findByText("→ SQLite")).toBeTruthy();
+  expect(screen.queryByRole("radio")).toBeNull();
+});

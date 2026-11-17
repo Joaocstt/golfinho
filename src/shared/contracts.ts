@@ -28,6 +28,21 @@ export interface ChatModelOption {
   /** Níveis de esforço que o modelo aceita, quando a CLI informa. */
   efforts?: ChatEffort[];
 }
+/** Pergunta de múltipla escolha do Claude (ferramenta AskUserQuestion). */
+export interface ChatQuestion {
+  question: string;
+  /** Rótulo curto, mostrado como etiqueta. */
+  header: string;
+  options: { label: string; description?: string }[];
+  multiSelect: boolean;
+}
+/** Comando de barra do Claude (/usage, /compact, skills…) oferecido no menu do chat. */
+export interface ChatCommandOption {
+  name: string;
+  description: string;
+  /** Dica de argumentos, como "<arquivo>". */
+  hint?: string;
+}
 /** Esforço do Claude na resposta (quanto ele pensa). */
 export type ChatEffort = "low" | "medium" | "high" | "xhigh" | "max";
 /** Modo de permissão do chat do Claude: quanto o agente faz sem pedir aprovação. */
@@ -303,6 +318,7 @@ export type Request =
   | { action: "chatImportImages"; paths: string[] }
   | { action: "chatImage"; path: string }
   | { action: "chatDecide"; taskId: string; id: string; behavior: "allow" | "deny"; always?: boolean }
+  | { action: "chatAnswer"; taskId: string; id: string; answers: Record<string, string> }
   | { action: "chatStop"; taskId: string }
   | { action: "chatReset"; taskId: string }
   | { action: "setChatModel"; taskId: string; model: string | null }
@@ -313,6 +329,7 @@ export type Request =
   | { action: "chatInterrupt"; taskId: string }
   | { action: "chatHistory"; taskId: string }
   | { action: "chatModels"; taskId: string }
+  | { action: "chatCommands"; taskId: string }
   | { action: "saveFile"; taskId: string; path: string; content: string }
   | { action: "fileCreate"; taskId: string; path: string; kind: "file" | "directory" }
   | { action: "fileMove"; taskId: string; from: string; to: string }
@@ -393,6 +410,7 @@ export type Response =
   | DeleteInfo
   | ProviderQuota
   | ChatModelOption[]
+  | ChatCommandOption[]
   | string
   | null;
 // Eventos do chat com o Claude (Agent SDK). A aprovação de ferramenta chega como "approval" e
@@ -410,8 +428,8 @@ export type ChatEvent =
   // Texto ou raciocínio chegando token a token. Só vai para a tela: não é guardado no histórico,
   // e a mensagem completa ("assistant") substitui o que foi mostrado.
   | { type: "delta"; kind: "text" | "thinking"; text: string }
-  | { type: "approval"; id: string; toolName: string; summary: string; canAlwaysAllow: boolean }
-  | { type: "approval_resolved"; id: string; behavior: "allow" | "deny" }
+  | { type: "approval"; id: string; toolName: string; summary: string; canAlwaysAllow: boolean; questions?: ChatQuestion[] }
+  | { type: "approval_resolved"; id: string; behavior: "allow" | "deny"; answers?: Record<string, string> }
   | { type: "status"; state: "running" | "idle" | "error"; message?: string }
   // Contexto em uso: tokens da última chamada e o tamanho da janela do modelo, quando a CLI informa.
   | { type: "context"; used: number; limit: number | null }

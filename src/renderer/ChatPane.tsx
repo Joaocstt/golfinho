@@ -2,9 +2,10 @@ import React, { createContext, memo, useCallback, useEffect, useLayoutEffect, us
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Brain, CornerDownLeft, Lock, Play, Plus, Square, X } from "lucide-react";
-import type { ChatBlock, ChatEvent, ChatHistoryItem, ChatEffort, ChatModelOption, ChatPermissionMode, Provider, Request } from "../shared/contracts";
+import type { ChatBlock, ChatCommandOption, ChatEvent, ChatHistoryItem, ChatEffort, ChatModelOption, ChatPermissionMode, Provider, Request } from "../shared/contracts";
 import { currentContext } from "../shared/chatContext";
-import { ModelMenu, PermissionMenu } from "./ChatMenus";
+import { CommandMenu, ModelMenu, PermissionMenu, matchCommands } from "./ChatMenus";
+import { QuestionCard } from "./ChatQuestions";
 import { absolutePathIn, asFilePath } from "./filePaths";
 import { FilePreview } from "./FilePreview";
 export interface ChatPaneProps {
@@ -290,7 +291,8 @@ const Blocks = memo(function Blocks({ blocks, results }: { blocks: ChatBlock[]; 
           <Markdown key={index} text={block.text} />
         ) : block.kind === "thinking" ? (
           <Thinking key={index} text={block.text} />
-        ) : (
+        ) : block.name === "AskUserQuestion" ? null : (
+          // A pergunta aparece no cartão de opções; o cartão da ferramenta repetiria tudo.
           <ToolCard key={index} block={block} result={block.id ? results?.get(block.id) : undefined} />
         ),
       )}
@@ -315,6 +317,27 @@ export function ChatPane({ taskId, provider, model, permissionMode, effort, draf
       alive = false;
     };
   }, [taskId, provider]);
+  // Comandos de barra do Claude (/usage, /compact, skills…), para o menu que abre ao digitar "/".
+  const [commands, setCommands] = useState<ChatCommandOption[]>([]);
+  useEffect(() => {
+    let alive = true;
+    setCommands([]);
+    if (provider !== "claude") return;
+    request<ChatCommandOption[]>({ action: "chatCommands", taskId })
+      .then((list) => {
+        if (alive && list?.length) setCommands(list);
+      })
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [taskId, provider]);
+  const [commandIndex, setCommandIndex] = useState(0);
+  // Esc fecha o menu até o texto mudar.
+  const [commandsDismissed, setCommandsDismissed] = useState<string | null>(null);
+  const commandMatches = commandsDismissed === draft ? null : matchCommands(commands, draft);
+  const commandMenu = commandMatches && commandMatches.length > 0 ? commandMatches : null;
+  useEffect(() => setCommandIndex(0), [draft]);
   const baseModels: ChatModelOption[] = cliModels ?? MODELS[provider] ?? MODELS.claude;
   // O modelo salvo na tarefa sempre aparece, mesmo que a lista não o tenha.
   const modelOptions = model && !baseModels.some((m) => m.value === model) ? [...baseModels, { value: model, label: model }] : baseModels;
@@ -442,9 +465,9 @@ export function ChatPane({ taskId, provider, model, permissionMode, effort, draf
     return ids;
   }, [events]);
   const resolved = useMemo(() => {
-    const map = new Map<string, "allow" | "deny">();
+    const map = new Map<string, { behavior: "allow" | "deny"; answers?: Record<string, string> }>();
     for (const event of events)
-      if (event.type === "approval_resolved") map.set(event.id, event.behavior);
+      if (event.type === "approval_resolved") map.set(event.id, { behavior: event.behavior, answers: event.answers });
     return map;
   }, [events]);
   function addAttachments(paths: string[]) {
@@ -483,8 +506,8 @@ export function ChatPane({ taskId, provider, model, permissionMode, effort, draf
       request<string[]>({ action: "chatImportImages", paths }).then(addAttachments).catch(onError);
     } catch (error) { onError(error); }
   }
-  async function send() {
-    const text = draft.trim();
+  async function send(override?: string) {
+    const text = (override ?? draft).trim();
     if (!text && !attachments.length) return;
     const images = attachments;
     onDraftChange("");
@@ -495,6 +518,11 @@ export function ChatPane({ taskId, provider, model, permissionMode, effort, draf
       onError(e);
       setAttachments(images);
     }
+  }
+  // Comando sem argumentos roda na hora; com argumentos, entra no campo para completar.
+  function pickCommand(command: ChatCommandOption, run: boolean) {
+    if (run && !command.hint) void send(`/${command.name}`);
+    else onDraftChange(`/${command.name} `);
   }
   function interrupt() {
     request({ action: "chatInterrupt", taskId }).catch(onError);
@@ -518,7 +546,7 @@ export function ChatPane({ taskId, provider, model, permissionMode, effort, draf
     const index = items.findIndex(({ event }) => event.type === "approval" && event.id === approvalTarget.id);
     if (index < 0) return;
     if (index < items.length - shown) { setShown(items.length - index); return; }
-    const card = [...(logRef.current?.querySelectorAll<HTMLElement>(".chat-approval") ?? [])]
+    const card = [...(logRef.current?.querySelectorAll<HTMLElement>(".chat-approval, .chat-approval-question") ?? [])]
       .find((element) => element.dataset.approvalId === approvalTarget.id);
     if (!card) return;
     card.scrollIntoView({ block: "center" });
@@ -572,8 +600,21 @@ export function ChatPane({ taskId, provider, model, permissionMode, effort, draf
               </details>
             );
           }
-          if (event.type === "approval") {
+          if (event.type === "approval" && event.questions) {
             const outcome = resolved.get(event.id);
+            return (
+              <div key={seq} className="chat-approval-question" data-approval-id={event.id}>
+                <QuestionCard
+                  questions={event.questions}
+                  answered={outcome ? (outcome.answers ?? null) : undefined}
+                  onAnswer={(answers) => request({ action: "chatAnswer", taskId, id: event.id, answers }).catch(onError)}
+                  onSkip={() => decide(event.id, "deny")}
+                />
+              </div>
+            );
+          }
+          if (event.type === "approval") {
+            const outcome = resolved.get(event.id)?.behavior;
             return (
               <div key={seq} className="chat-approval" data-approval-id={event.id}>
                 <div className="chat-approval-title">Permitir {event.toolName}?</div>
@@ -697,6 +738,14 @@ export function ChatPane({ taskId, provider, model, permissionMode, effort, draf
         )}
         {/* Como no Claude Code: campo de uma linha com o enviar dentro; ações e seletores embaixo, fora da caixa. */}
         <div className="chat-input-box">
+          {commandMenu && (
+            <CommandMenu
+              commands={commandMenu}
+              active={Math.min(commandIndex, commandMenu.length - 1)}
+              onHover={setCommandIndex}
+              onPick={(c) => pickCommand(c, true)}
+            />
+          )}
           <textarea
             ref={composerRef}
             value={draft}
@@ -706,6 +755,24 @@ export function ChatPane({ taskId, provider, model, permissionMode, effort, draf
             onChange={(e) => onDraftChange(e.target.value)}
             onPaste={paste}
             onKeyDown={(e) => {
+              if (commandMenu) {
+                const move = e.key === "ArrowDown" ? 1 : e.key === "ArrowUp" ? -1 : 0;
+                if (move) {
+                  e.preventDefault();
+                  setCommandIndex((i) => (i + move + commandMenu.length) % commandMenu.length);
+                  return;
+                }
+                if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) {
+                  e.preventDefault();
+                  pickCommand(commandMenu[Math.min(commandIndex, commandMenu.length - 1)], e.key === "Enter");
+                  return;
+                }
+                if (e.key === "Escape") {
+                  e.preventDefault();
+                  setCommandsDismissed(draft);
+                  return;
+                }
+              }
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
                 void send();

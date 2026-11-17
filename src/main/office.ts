@@ -759,7 +759,7 @@ ${rules}`;
         }
       }
     } else if (event.type === "approval") {
-      const what = describeTool(event.toolName, chatToolInput(event.summary));
+      const what = event.questions ? event.summary : describeTool(event.toolName, chatToolInput(event.summary));
       job.approval = { id: event.id, tool: event.toolName, text: what, canAlways: event.canAlwaysAllow };
       job.speech = `Chefe, posso? ${what}`;
       this.deps.notify(`${agent.name} pede permissão`, what);
