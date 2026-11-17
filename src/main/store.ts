@@ -15,6 +15,8 @@ import type {
   MemoryInput,
   MemoryKind,
   MemoryOrigin,
+  ChatEffort,
+  ChatPermissionMode,
 } from "../shared/contracts";
 import { ftsQuery, searchableText } from "./memory";
 
@@ -297,6 +299,16 @@ export class Store {
     task.model = model;
     this.write(task);
   }
+  setPermissionMode(taskId: string, mode: ChatPermissionMode) {
+    const task = this.task(taskId);
+    task.permissionMode = mode === "default" ? null : mode;
+    this.write(task);
+  }
+  setEffort(taskId: string, effort: ChatEffort | null) {
+    const task = this.task(taskId);
+    task.effort = effort;
+    this.write(task);
+  }
   // Ids de sessão e o modelo pertencem a cada CLI: ao trocar de agente, nada disso é reaproveitado.
   setProvider(taskId: string, provider: Provider, message: string, handoff: string | null = null): Task {
     return this.atomic(() => {
@@ -305,6 +317,8 @@ export class Store {
       t.sessionId = null;
       t.chatSessionId = null;
       t.model = null;
+      t.permissionMode = null;
+      t.effort = null;
       t.handoff = handoff;
       this.write(t);
       this.event(taskId, "updated", message);

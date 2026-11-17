@@ -150,7 +150,7 @@ export function searchableText(event: ChatEvent): { who: string; text: string } 
       return event.text.trim() ? { who: "usuário", text: event.text } : null;
     case "assistant": {
       const text = event.blocks
-        .map((block) => (block.kind === "text" ? block.text : `[ferramenta ${block.name}] ${block.summary}`))
+        .flatMap((block) => (block.kind === "text" ? [block.text] : block.kind === "tool" ? [`[ferramenta ${block.name}] ${block.summary}`] : []))
         .join("\n")
         .trim();
       return text ? { who: "agente", text } : null;

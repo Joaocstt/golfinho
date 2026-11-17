@@ -1,15 +1,20 @@
 import React, { createContext, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Brain, Lock, Paperclip, Play, X } from "lucide-react";
-import type { ChatBlock, ChatEvent, ChatHistoryItem, Provider, Request } from "../shared/contracts";
+import { Brain, CornerDownLeft, Lock, Play, Plus, Square, X } from "lucide-react";
+import type { ChatBlock, ChatEvent, ChatHistoryItem, ChatEffort, ChatModelOption, ChatPermissionMode, Provider, Request } from "../shared/contracts";
 import { currentContext } from "../shared/chatContext";
+import { ModelMenu, PermissionMenu } from "./ChatMenus";
 import { absolutePathIn, asFilePath } from "./filePaths";
 import { FilePreview } from "./FilePreview";
 export interface ChatPaneProps {
   taskId: string;
   provider: string;
   model?: string | null;
+  /** Modo de permissão do Claude; null = pedir aprovação. */
+  permissionMode?: ChatPermissionMode | null;
+  /** Esforço do Claude; null = padrão do modelo. */
+  effort?: ChatEffort | null;
   draft: string;
   onDraftChange: (draft: string) => void;
   onError: (e: unknown) => void;
@@ -52,7 +57,7 @@ const SUMMARY_REQUEST =
 const RESULT_LIMIT = 600;
 const MESSAGES_PAGE = 200;
 const MAX_ATTACHMENTS = 8;
-const COMPOSER_MIN_HEIGHT = 48;
+const COMPOSER_MIN_HEIGHT = 24;
 const COMPOSER_MAX_HEIGHT = 176;
 const isImageFile = (file: File) => file.type.startsWith("image/") || /\.(png|jpe?g|gif|webp)$/i.test(file.name);
 const request = <T,>(r: Request) => window.golfinho.request(r) as Promise<T>;
@@ -197,34 +202,124 @@ function SaveToMemory({ taskId, blocks, onError }: { taskId: string; blocks: Cha
     </button>
   );
 }
-const Blocks = memo(function Blocks({ blocks }: { blocks: ChatBlock[] }) {
+type ToolResult = Extract<ChatEvent, { type: "tool_result" }>;
+const str = (value: unknown) => (typeof value === "string" ? value : "");
+// Diff simples do Edit: linhas removidas e depois as adicionadas, como no Claude Code.
+function EditDiff({ edits }: { edits: { old_string?: unknown; new_string?: unknown }[] }) {
+  return (
+    <pre className="chat-diff">
+      {edits.map((edit, i) => (
+        <React.Fragment key={i}>
+          {i > 0 && <span className="chat-diff-gap">⋯{"\n"}</span>}
+          {str(edit.old_string) &&
+            str(edit.old_string).split("\n").map((line, j) => (
+              <span key={`o${j}`} className="chat-diff-del">- {line}{"\n"}</span>
+            ))}
+          {str(edit.new_string).split("\n").map((line, j) => (
+            <span key={`n${j}`} className="chat-diff-add">+ {line}{"\n"}</span>
+          ))}
+        </React.Fragment>
+      ))}
+    </pre>
+  );
+}
+const TODO_MARK: Record<string, string> = { completed: "☑", in_progress: "◐", pending: "☐" };
+// Corpo do cartão conforme a ferramenta; null quando a entrada não acrescenta nada ao resumo.
+function toolBody(name: string, input: Record<string, unknown>): React.ReactNode {
+  if (name === "Edit" && "new_string" in input) return <EditDiff edits={[input]} />;
+  if (name === "MultiEdit" && Array.isArray(input.edits)) return <EditDiff edits={input.edits as Record<string, unknown>[]} />;
+  if (name === "Write" && typeof input.content === "string")
+    return <pre className="chat-diff">{input.content.split("\n").map((line, i) => <span key={i} className="chat-diff-add">+ {line}{"\n"}</span>)}</pre>;
+  if (name === "Bash" && typeof input.description === "string") return <p className="chat-tool-note">{input.description}</p>;
+  if (name === "TodoWrite" && Array.isArray(input.todos))
+    return (
+      <ul className="chat-todos">
+        {(input.todos as { content?: unknown; status?: unknown }[]).map((todo, i) => (
+          <li key={i} className={`chat-todo ${str(todo.status)}`}>
+            <span aria-hidden="true">{TODO_MARK[str(todo.status)] ?? "☐"}</span> {str(todo.content)}
+          </li>
+        ))}
+      </ul>
+    );
+  return null;
+}
+function ToolResultBody({ result }: { result: ToolResult }) {
+  const text = result.text.length > RESULT_LIMIT ? `${result.text.slice(0, RESULT_LIMIT)}…` : result.text;
+  return <pre className={result.isError ? "chat-result error" : "chat-result"}>{text || "(sem saída)"}</pre>;
+}
+// Cartão da ferramenta: nome e resumo; ao abrir, a entrada (diff, comando, lista) e o resultado.
+function ToolCard({ block, result }: { block: Extract<ChatBlock, { kind: "tool" }>; result?: ToolResult }) {
+  const body = block.input ? toolBody(block.name, block.input) : null;
+  const path = asFilePath(block.summary);
+  const mark = !result ? "…" : result.isError ? "✗" : "✓";
+  const todos = block.name === "TodoWrite";
+  return (
+    <details className={`chat-tool-card${result?.isError ? " error" : ""}`} open={todos || undefined}>
+      <summary className="chat-tool">
+        <span className="chat-tool-icon" aria-hidden="true">{block.id ? mark : "⚙"}</span>
+        <span className="chat-tool-name">{block.name}</span>
+        {todos ? null : path ? <FileLink path={path}>{block.summary}</FileLink> : <code>{block.summary}</code>}
+      </summary>
+      {body}
+      {result && !todos && <ToolResultBody result={result} />}
+    </details>
+  );
+}
+function Thinking({ text, live }: { text: string; live?: boolean }) {
+  return (
+    <details className="chat-thinking" open={live || undefined}>
+      <summary>{live ? "Pensando…" : "Raciocínio"}</summary>
+      <div className="chat-thinking-text">{text}</div>
+    </details>
+  );
+}
+function Markdown({ text }: { text: string }) {
+  return (
+    <div className="chat-text">
+      <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ pre: CodeBlock, code: InlineCode }}>
+        {text}
+      </ReactMarkdown>
+    </div>
+  );
+}
+const Blocks = memo(function Blocks({ blocks, results }: { blocks: ChatBlock[]; results?: Map<string, ToolResult> }) {
   return (
     <>
       {blocks.map((block, index) =>
         block.kind === "text" ? (
-          <div key={index} className="chat-text">
-            <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ pre: CodeBlock, code: InlineCode }}>
-              {block.text}
-            </ReactMarkdown>
-          </div>
+          <Markdown key={index} text={block.text} />
+        ) : block.kind === "thinking" ? (
+          <Thinking key={index} text={block.text} />
         ) : (
-          <div key={index} className="chat-tool">
-            <span className="chat-tool-icon" aria-hidden="true">⚙</span>
-            <span className="chat-tool-name">{block.name}</span>
-            {asFilePath(block.summary) ? (
-              <FileLink path={asFilePath(block.summary)!}>{block.summary}</FileLink>
-            ) : (
-              <code>{block.summary}</code>
-            )}
-          </div>
+          <ToolCard key={index} block={block} result={block.id ? results?.get(block.id) : undefined} />
         ),
       )}
     </>
   );
 });
-export function ChatPane({ taskId, provider, model, draft, onDraftChange, onError, approvalTarget, locked, onOpenFile }: ChatPaneProps) {
+export function ChatPane({ taskId, provider, model, permissionMode, effort, draft, onDraftChange, onError, approvalTarget, locked, onOpenFile }: ChatPaneProps) {
   const [preview, setPreview] = useState<string | null>(null);
   const [items, setItems] = useState<ChatHistoryItem[]>([]);
+  // Modelos informados pela CLI (com versão); enquanto não chegam, ou se falhar, fica a lista fixa.
+  const [cliModels, setCliModels] = useState<ChatModelOption[] | null>(null);
+  useEffect(() => {
+    let alive = true;
+    setCliModels(null);
+    if (provider !== "claude") return;
+    request<ChatModelOption[]>({ action: "chatModels", taskId })
+      .then((list) => {
+        if (alive && list?.length) setCliModels(list);
+      })
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [taskId, provider]);
+  const baseModels: ChatModelOption[] = cliModels ?? MODELS[provider] ?? MODELS.claude;
+  // O modelo salvo na tarefa sempre aparece, mesmo que a lista não o tenha.
+  const modelOptions = model && !baseModels.some((m) => m.value === model) ? [...baseModels, { value: model, label: model }] : baseModels;
+  // Resposta chegando token a token; some quando a mensagem completa é guardada.
+  const [live, setLive] = useState<{ text: string; thinking: string } | null>(null);
   const [attachments, setAttachments] = useState<string[]>([]);
   const [viewer, setViewer] = useState<string | null>(null);
   // Último uso de contexto do agente atual (o chat guarda esses eventos no histórico).
@@ -291,10 +386,20 @@ export function ChatPane({ taskId, provider, model, draft, onDraftChange, onErro
   useEffect(() => {
     let active = true;
     setItems([]);
+    setLive(null);
     setAttachments([]);
     const unsubscribe = window.golfinho.subscribe((signal) => {
       if (!active || signal.kind !== "chat" || signal.taskId !== taskId) return;
-      setItems((current) => merge(current, [{ seq: signal.seq, event: signal.event }]));
+      const event = signal.event;
+      if (event.type === "delta") {
+        setLive((current) => {
+          const next = current ?? { text: "", thinking: "" };
+          return event.kind === "text" ? { ...next, text: next.text + event.text } : { ...next, thinking: next.thinking + event.text };
+        });
+        return;
+      }
+      if (event.type === "assistant" || event.type === "status" || event.type === "tool_result") setLive(null);
+      setItems((current) => merge(current, [{ seq: signal.seq, event }]));
     });
     request<ChatHistoryItem[]>({ action: "chatHistory", taskId })
       .then((history) => {
@@ -324,6 +429,18 @@ export function ChatPane({ taskId, provider, model, draft, onDraftChange, onErro
   useEffect(() => {
     bottom.current?.scrollIntoView({ block: "end" });
   }, [items, busy]);
+  // Resultado de cada ferramenta pelo id: aparece dentro do cartão dela, não solto na conversa.
+  const results = useMemo(() => {
+    const map = new Map<string, ToolResult>();
+    for (const event of events) if (event.type === "tool_result" && event.toolUseId) map.set(event.toolUseId, event);
+    return map;
+  }, [events]);
+  const toolIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const event of events)
+      if (event.type === "assistant") for (const b of event.blocks) if (b.kind === "tool" && b.id) ids.add(b.id);
+    return ids;
+  }, [events]);
   const resolved = useMemo(() => {
     const map = new Map<string, "allow" | "deny">();
     for (const event of events)
@@ -431,10 +548,14 @@ export function ChatPane({ taskId, provider, model, draft, onDraftChange, onErro
                 className="chat-assistant"
                 data-agent={shownItems[i - 1]?.event.type === "user" ? (LABELS[provider] ?? provider) : undefined}
               >
-                <Blocks blocks={event.blocks} />
-                <SaveToMemory taskId={taskId} blocks={event.blocks} onError={onError} />
+                <Blocks blocks={event.blocks} results={results} />
+                {/* "Salvar na memória" só no fim da resposta, não entre uma ferramenta e outra. */}
+                {!["assistant", "tool_result", "approval", "approval_resolved"].includes(shownItems[i + 1]?.event.type ?? "") && (
+                  <SaveToMemory taskId={taskId} blocks={event.blocks} onError={onError} />
+                )}
               </div>
             );
+          if (event.type === "tool_result" && event.toolUseId && toolIds.has(event.toolUseId)) return null;
           if (event.type === "tool_result") {
             // Uma linha resumida; o conteúdo completo abre só ao clicar.
             const text = event.text.length > RESULT_LIMIT ? `${event.text.slice(0, RESULT_LIMIT)}…` : event.text;
@@ -503,14 +624,18 @@ export function ChatPane({ taskId, provider, model, draft, onDraftChange, onErro
             );
           return null;
       }),
-    [shownItems, resolved, provider, decide],
+    [shownItems, resolved, results, toolIds, provider, decide],
   );
   return (
     <OpenFile.Provider value={setPreview}>
     <div className={`chat-pane chat-${provider}`} onDragOver={dragOver} onDrop={dropFiles}>
       <div className="chat-log" ref={logRef} onScroll={onLogScroll}>
         {items.length === 0 && (
-          <p className="chat-empty">Escreva uma mensagem para começar a conversa nesta tarefa.</p>
+          <div className="chat-welcome">
+            <span className="chat-spark" aria-hidden="true">✻</span>
+            <h2>Como posso ajudar?</h2>
+            <p className="chat-empty">Escreva uma mensagem para começar a conversa nesta tarefa.</p>
+          </div>
         )}
         {items.length > shownItems.length && (
           <button type="button" className="chat-more" onClick={() => setShown((n) => n + MESSAGES_PAGE)}>
@@ -518,6 +643,18 @@ export function ChatPane({ taskId, provider, model, draft, onDraftChange, onErro
           </button>
         )}
         {messages}
+        {live && (
+          <div className="chat-assistant chat-live">
+            {live.thinking && <Thinking text={live.thinking} live={!live.text} />}
+            {live.text && <Markdown text={live.text} />}
+          </div>
+        )}
+        {busy && !live?.text && (
+          <p className="chat-busy">
+            <span className="chat-spark" aria-hidden="true">✻</span>
+            {LABELS[provider] ?? "O agente"} está pensando
+          </p>
+        )}
         <div ref={bottom} />
       </div>
       {away && (
@@ -558,81 +695,14 @@ export function ChatPane({ taskId, provider, model, draft, onDraftChange, onErro
             ))}
           </div>
         )}
-        {busy && (
-          <p className="chat-busy">
-            <span className="chat-dots" aria-hidden="true">
-              <i />
-              <i />
-              <i />
-            </span>
-            {LABELS[provider] ?? "O agente"} está pensando
-          </p>
-        )}
-        <div className="chat-tools">
-          {context && (
-          <div className="chat-context" title={`${context.used.toLocaleString("pt-BR")}${context.limit ? ` / ${context.limit.toLocaleString("pt-BR")}` : ""} tokens (última chamada)`}>
-            <span>
-              Contexto{context.limit ? ` ${Math.round((context.used / context.limit) * 100)}%` : ""}
-            </span>
-            {context.limit && (
-              <div className="chat-context-bar">
-                <i style={{ width: `${Math.min(100, (context.used / context.limit) * 100)}%` }} />
-              </div>
-            )}
-          </div>
-        )}
-          {handoff ? (
-            <span className="chat-handoff">Pedindo resumo ao agente atual…</span>
-          ) : (
-            <>
-              {pct !== null && pct >= 80 && (
-                <button disabled={isRunning} onClick={startHandoff}>
-                  Nova conversa com resumo
-                </button>
-              )}
-              {pct !== null && pct >= 80 && provider === "codex" && (
-                <button
-                  disabled={isRunning}
-                  onClick={() => request({ action: "chatCompact", taskId }).catch(onError)}
-                >
-                  Compactar
-                </button>
-              )}
-              <label className="chat-model">
-                Modelo
-                <select
-                  aria-label="Modelo do chat"
-                  value={model ?? ""}
-                  disabled={isRunning}
-                  onChange={(e) =>
-                    request({ action: "setChatModel", taskId, model: e.target.value || null }).catch(onError)
-                  }
-                >
-                  {(MODELS[provider] ?? MODELS.claude).map((m) => (
-                    <option key={m.value} value={m.value}>
-                      {m.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </>
-          )}
-        </div>
-        <div className="chat-input-row">
-          <button
-            type="button"
-            className="chat-attach"
-            aria-label="Anexar imagens"
-            title="Anexar imagens (ou cole com ⌘V / Ctrl+V)"
-            onClick={attach}
-          >
-            <Paperclip size={16} />
-          </button>
+        {/* Como no Claude Code: campo de uma linha com o enviar dentro; ações e seletores embaixo, fora da caixa. */}
+        <div className="chat-input-box">
           <textarea
             ref={composerRef}
             value={draft}
-            placeholder={`Mensagem para ${LABELS[provider] ?? "o agente"} (Enter envia, Shift+Enter quebra linha)`}
-            rows={2}
+            placeholder={items.length ? "Responder" : `Mensagem para ${LABELS[provider] ?? "o agente"}`}
+            title="Enter envia, Shift+Enter quebra linha"
+            rows={1}
             onChange={(e) => onDraftChange(e.target.value)}
             onPaste={paste}
             onKeyDown={(e) => {
@@ -643,14 +713,74 @@ export function ChatPane({ taskId, provider, model, draft, onDraftChange, onErro
             }}
           />
           {busy ? (
-            <button type="button" className="chat-stop" title="Interromper o agente" onClick={interrupt}>
-              Parar
+            <button type="button" className="chat-send chat-stop" aria-label="Parar" title="Interromper o agente" onClick={interrupt}>
+              <Square size={11} fill="currentColor" />
             </button>
           ) : (
-            <button type="submit" disabled={!draft.trim() && !attachments.length}>
-              Enviar
+            <button type="submit" className="chat-send" aria-label="Enviar" title="Enviar (Enter)" disabled={!draft.trim() && !attachments.length}>
+              <CornerDownLeft size={16} />
             </button>
           )}
+        </div>
+        <div className="chat-input-row">
+          <button
+            type="button"
+            className="chat-attach"
+            aria-label="Anexar imagens"
+            title="Anexar imagens (ou cole com ⌘V / Ctrl+V)"
+            onClick={attach}
+          >
+            <Plus size={18} strokeWidth={1.75} />
+          </button>
+          <div className="chat-tools">
+            {context && (
+            <div className="chat-context" title={`${context.used.toLocaleString("pt-BR")}${context.limit ? ` / ${context.limit.toLocaleString("pt-BR")}` : ""} tokens (última chamada)`}>
+              <span>
+                Contexto{context.limit ? ` ${Math.round((context.used / context.limit) * 100)}%` : ""}
+              </span>
+              {context.limit && (
+                <div className="chat-context-bar">
+                  <i style={{ width: `${Math.min(100, (context.used / context.limit) * 100)}%` }} />
+                </div>
+              )}
+            </div>
+          )}
+            {handoff ? (
+              <span className="chat-handoff">Pedindo resumo ao agente atual…</span>
+            ) : (
+              <>
+                {pct !== null && pct >= 80 && (
+                  <button disabled={isRunning} onClick={startHandoff}>
+                    Nova conversa com resumo
+                  </button>
+                )}
+                {pct !== null && pct >= 80 && provider === "codex" && (
+                  <button
+                    disabled={isRunning}
+                    onClick={() => request({ action: "chatCompact", taskId }).catch(onError)}
+                  >
+                    Compactar
+                  </button>
+                )}
+                <span className="chat-disclaimer">{LABELS[provider] ?? "O agente"} é uma IA e pode cometer erros.</span>
+                <ModelMenu
+                  models={modelOptions}
+                  model={model ?? null}
+                  effort={effort ?? null}
+                  canChangeModel
+                  showEffort={provider === "claude"}
+                  onModel={(value) => request({ action: "setChatModel", taskId, model: value }).catch(onError)}
+                  onEffort={(value) => request({ action: "setChatEffort", taskId, effort: value }).catch(onError)}
+                />
+                {provider === "claude" && (
+                  <PermissionMenu
+                    mode={permissionMode ?? "default"}
+                    onMode={(mode) => request({ action: "setChatPermissionMode", taskId, mode }).catch(onError)}
+                  />
+                )}
+              </>
+            )}
+          </div>
         </div>
       </form>
       )}

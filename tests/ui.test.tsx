@@ -318,13 +318,13 @@ it("mantém o rascunho do chat ao trocar de aba", async () => {
   expect((await within(workspace).findByPlaceholderText(/Mensagem para Codex/) as HTMLTextAreaElement).value)
     .toBe("rascunho que não pode sumir");
 });
-it("abre o campo do chat com altura para duas linhas", async () => {
+it("abre o campo do chat com uma linha", async () => {
   setup([editableTask]);
   fireEvent.click(await screen.findByRole("button", { name: "Editar arquivo" }));
   const workspace = screen.getByRole("region", { name: "Tarefa golfinho/edit" });
   fireEvent.click(within(workspace).getByRole("button", { name: "Chat" }));
   const composer = await within(workspace).findByPlaceholderText(/Mensagem para Codex/) as HTMLTextAreaElement;
-  expect(composer.style.height).toBe("48px");
+  expect(composer.style.height).toBe("24px");
 });
 it("notifica pergunta do Terminal em segundo plano e mantém a divisão ao abrir", async () => {
   setup([{ ...editableTask, status: "running" }, { ...editableTask, id: "other", title: "Outra tarefa", branch: "main", status: "running" }]);

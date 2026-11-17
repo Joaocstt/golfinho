@@ -20,6 +20,9 @@ vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
         } else queue.push(value);
       },
       interrupt: vi.fn(async () => undefined),
+      setPermissionMode: vi.fn(async () => undefined),
+      applyFlagSettings: vi.fn(async () => undefined),
+      setModel: vi.fn(async () => undefined),
       close: vi.fn(() => {
         finished = true;
         if (waiting) {
@@ -194,4 +197,92 @@ it("sem pacote, a mensagem segue como antes", async () => {
   manager.send("t-plain", CLAUDE, "olá", [], null);
   const first = await sdk.calls[0].prompt[Symbol.asyncIterator]().next();
   expect(first.value.message.content).toBe("olá");
+});
+it("usa o prompt e as configurações do Claude Code e pede o texto ao vivo", () => {
+  manager.send("t1", CLAUDE, "olá");
+  expect(sdk.calls[0].options.systemPrompt).toEqual({ type: "preset", preset: "claude_code" });
+  expect(sdk.calls[0].options.settingSources).toEqual(["user", "project", "local"]);
+  expect(sdk.calls[0].options.includePartialMessages).toBe(true);
+});
+it("texto e raciocínio ao vivo vão para a tela sem entrar no histórico", async () => {
+  const append = vi.fn(() => 1);
+  const seen: { seq: number; event: ChatEvent }[] = [];
+  const live = new ChatManager((_t, seq, event) => seen.push({ seq, event }), {
+    append,
+    list: () => [],
+    sessionId: () => null,
+    saveSessionId: () => undefined,
+  });
+  live.send("t1", CLAUDE, "olá");
+  const appended = append.mock.calls.length;
+  const delta = (d: unknown) => ({ type: "stream_event", parent_tool_use_id: null, event: { type: "content_block_delta", delta: d } });
+  sdk.streams[0].push(delta({ type: "thinking_delta", thinking: "hmm" }));
+  sdk.streams[0].push(delta({ type: "text_delta", text: "Oi" }));
+  sdk.streams[0].push({ type: "stream_event", parent_tool_use_id: "sub", event: { type: "content_block_delta", delta: { type: "text_delta", text: "x" } } });
+  await tick();
+  expect(seen.filter((s) => s.event.type === "delta")).toEqual([
+    { seq: -1, event: { type: "delta", kind: "thinking", text: "hmm" } },
+    { seq: -1, event: { type: "delta", kind: "text", text: "Oi" } },
+  ]);
+  expect(append.mock.calls.length).toBe(appended);
+});
+it("guarda raciocínio e a entrada da ferramenta, e liga o resultado pelo id", async () => {
+  manager.send("t1", CLAUDE, "edite");
+  const big = "x".repeat(5000);
+  sdk.streams[0].push({
+    type: "assistant",
+    message: {
+      content: [
+        { type: "thinking", thinking: "vou editar" },
+        { type: "tool_use", id: "tu1", name: "Edit", input: { file_path: "/r/a.ts", old_string: "a", new_string: big } },
+      ],
+    },
+  });
+  sdk.streams[0].push({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "tu1", content: "ok" }] } });
+  await tick();
+  const assistant = events.map((e) => e.event).find((e) => e.type === "assistant") as Extract<ChatEvent, { type: "assistant" }>;
+  expect(assistant.blocks[0]).toEqual({ kind: "thinking", text: "vou editar" });
+  const tool = assistant.blocks[1] as Extract<typeof assistant.blocks[number], { kind: "tool" }>;
+  expect(tool).toMatchObject({ kind: "tool", name: "Edit", summary: "/r/a.ts", id: "tu1" });
+  expect((tool.input!.new_string as string).length).toBe(4001);
+  expect(events.map((e) => e.event)).toContainEqual({ type: "tool_result", text: "ok", isError: false, toolUseId: "tu1" });
+});
+it("modo de permissão: abre no modo da tarefa e troca na sessão aberta", () => {
+  manager.send("t1", { ...CLAUDE, permissionMode: "acceptEdits" }, "olá");
+  expect(sdk.calls[0].options.permissionMode).toBe("acceptEdits");
+  manager.setPermissionMode("t1", "plan");
+  expect(sdk.streams[0].setPermissionMode).toHaveBeenCalledWith("plan");
+  manager.send("t1", CLAUDE, "de novo");
+  expect(sdk.calls).toHaveLength(1);
+});
+it("mostra os modelos da CLI com a versão", async () => {
+  const { toModelOptions, modelName } = await import("../src/main/chat");
+  expect(modelName("claude-opus-5-5")).toBe("Opus 5.5");
+  expect(modelName("claude-haiku-4-5-20251001")).toBe("Haiku 4.5");
+  expect(modelName("gpt-5")).toBeNull();
+  expect(
+    toModelOptions([
+      { value: "default", displayName: "Default (recommended)", resolvedModel: "claude-opus-5-5", description: "Use the default model" },
+      { value: "sonnet", displayName: "Sonnet", resolvedModel: "claude-sonnet-5-5" },
+      { value: "claude-fable-5-1[1m]", displayName: "Fable", resolvedModel: "claude-fable-5-1" },
+    ]),
+  ).toEqual([
+    { value: "", label: "Padrão (Opus 5.5)", description: "Use the default model" },
+    { value: "sonnet", label: "Sonnet 5.5" },
+    { value: "claude-fable-5-1[1m]", label: "Fable 5.1 (1M)" },
+  ]);
+});
+it("esforço: abre com o da tarefa e troca na sessão aberta", () => {
+  manager.send("t1", { ...CLAUDE, effort: "high" }, "olá");
+  expect(sdk.calls[0].options.effort).toBe("high");
+  manager.setEffort("t1", null);
+  expect(sdk.streams[0].applyFlagSettings).toHaveBeenCalledWith({ effortLevel: null });
+});
+it("modelo: troca na sessão aberta do Claude sem fechar a conversa", () => {
+  manager.send("t1", CLAUDE, "olá");
+  manager.setModel("t1", "sonnet");
+  expect(sdk.streams[0].setModel).toHaveBeenCalledWith("sonnet");
+  expect(sdk.streams[0].close).not.toHaveBeenCalled();
+  manager.send("t1", CLAUDE, "de novo");
+  expect(sdk.calls).toHaveLength(1);
 });

@@ -91,6 +91,7 @@ else {
       shells = new Shells(ptyDriver, signal);
       chat = new ChatManager((taskId, seq, event) => {
         signal({ kind: "chat", taskId, seq, event });
+        if (event.type === "delta") return;
         // Fim de cada resposta do agente: o registro da tarefa na memória é atualizado.
         if (event.type === "status" && event.state === "idle") service.remember(taskId);
         // Tarefa executada pelo Escritório: o andamento vira falas e ações na sala.

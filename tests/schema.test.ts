@@ -65,3 +65,8 @@ it("aceita setup por projeto e recusa identificador que não é de projeto", () 
       .success,
   ).toBe(false);
 });
+it("aceita só os modos de permissão conhecidos do chat", () => {
+  const taskId = "00000000-0000-4000-8000-000000000000";
+  expect(requestSchema.safeParse({ action: "setChatPermissionMode", taskId, mode: "auto" }).success).toBe(true);
+  expect(requestSchema.safeParse({ action: "setChatPermissionMode", taskId, mode: "dontAsk" }).success).toBe(false);
+});

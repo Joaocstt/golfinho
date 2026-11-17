@@ -249,10 +249,25 @@ export const requestSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("chatStop"), taskId: id }).strict(),
   z.object({ action: z.literal("chatReset"), taskId: id }).strict(),
   z.object({ action: z.literal("setChatModel"), taskId: id, model: z.string().min(1).max(200).nullable() }).strict(),
+  z
+    .object({
+      action: z.literal("setChatPermissionMode"),
+      taskId: id,
+      mode: z.enum(["default", "acceptEdits", "plan", "auto", "bypassPermissions"]),
+    })
+    .strict(),
+  z
+    .object({
+      action: z.literal("setChatEffort"),
+      taskId: id,
+      effort: z.enum(["low", "medium", "high", "xhigh", "max"]).nullable(),
+    })
+    .strict(),
   z.object({ action: z.literal("setTaskAgent"), taskId: id, provider }).strict(),
   z.object({ action: z.literal("chatCompact"), taskId: id }).strict(),
   z.object({ action: z.literal("chatInterrupt"), taskId: id }).strict(),
   z.object({ action: z.literal("chatHistory"), taskId: id }).strict(),
+  z.object({ action: z.literal("chatModels"), taskId: id }).strict(),
   z.object({ action: z.literal("endSession"), taskId: id }).strict(),
   z.object({ action: z.literal("testActivate"), taskId: id }).strict(),
   z.object({ action: z.literal("testRestore"), taskId: id }).strict(),

@@ -6,6 +6,7 @@ import type { Logs } from "./logs";
 import { agentInfo, invocation } from "./agents";
 import { interactiveShell } from "./shellCommand";
 import type { ChatManager } from "./chat";
+import { claudeModels } from "./chat";
 import type { ChatImage } from "./chatImages";
 import { checkoutOf, requireCheckout } from "./checkout";
 import type { Shells } from "./shells";
@@ -30,6 +31,7 @@ import type {
   WslAgents,
   Task,
 } from "../shared/contracts";
+import { EFFORT_LABELS, PERMISSION_LABELS } from "../shared/permissionModes";
 // O chat cita arquivos pelo caminho absoluto; o leitor da árvore só aceita caminhos relativos.
 // Fora da pasta o resultado começa com "..", e a leitura recusa.
 async function insideRoot(root: string, path: string) {
@@ -777,6 +779,8 @@ export class Service {
           cwd: root,
           executable: this.store.settings().executables[task.provider],
           model: task.model ?? null,
+          permissionMode: task.permissionMode ?? null,
+          effort: task.effort ?? null,
           // O Antigravity não aceita MCP por execução: recebe só as notas na primeira mensagem.
           // Dentro do WSL, a memória é chamada pelo endereço do Windows que a distro alcança.
           mcp:
@@ -813,13 +817,28 @@ export class Service {
         this.requireChat().decide(r.taskId, r.id, r.behavior, r.always ?? false);
         return null;
       case "setChatModel": {
+        // A tarefa fica sempre iniciada, então a troca não espera o status nem fecha a sessão:
+        // o Claude troca na hora; Codex e Antigravity usam o modelo novo a partir da próxima mensagem.
         const t = this.store.task(r.taskId);
-        if (["running", "waiting", "queued"].includes(t.status))
-          throw new Error("Aguarde a tarefa terminar antes de trocar o modelo.");
         this.store.setModel(t.id, r.model);
-        // O processo atual é encerrado; a próxima mensagem abre outro com o modelo novo e a mesma conversa.
-        this.requireChat().stop(t.id);
+        this.requireChat().setModel(t.id, r.model);
         this.store.note(t.id, `Modelo do chat: ${r.model ?? "padrão"}. A conversa continua.`);
+        this.changed();
+        return null;
+      }
+      case "setChatPermissionMode": {
+        // Vale na hora, mesmo com o agente trabalhando: a sessão aberta troca de modo.
+        this.store.setPermissionMode(r.taskId, r.mode);
+        this.requireChat().setPermissionMode(r.taskId, r.mode);
+        this.store.note(r.taskId, `Permissões do chat: ${PERMISSION_LABELS[r.mode]}.`);
+        this.changed();
+        return null;
+      }
+      case "setChatEffort": {
+        // Como o modo de permissão: vale na hora, na sessão aberta.
+        this.store.setEffort(r.taskId, r.effort);
+        this.requireChat().setEffort(r.taskId, r.effort);
+        this.store.note(r.taskId, `Esforço do chat: ${r.effort ? EFFORT_LABELS[r.effort] : "padrão"}.`);
         this.changed();
         return null;
       }
@@ -866,6 +885,13 @@ export class Service {
         return null;
       case "chatHistory":
         return this.requireChat().history(r.taskId);
+      case "chatModels": {
+        // Só o Claude informa a lista; os outros agentes ficam com a lista fixa da tela.
+        const task = this.store.task(r.taskId);
+        if (task.provider !== "claude") return [];
+        const { root } = await this.treeRoot(r.taskId);
+        return claudeModels(root, this.store.settings().executables.claude);
+      }
       case "chatPickImages":
         return this.requireChatImages().pick();
       case "chatImportImages":

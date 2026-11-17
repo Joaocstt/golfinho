@@ -181,3 +181,17 @@ it("o pacote de handoff vai no turno, mas a conversa mostra só a mensagem", asy
   expect(events).toContainEqual({ type: "user", text: "olá" });
   expect(JSON.stringify(events)).not.toContain("CONTEXTO");
 });
+it("troca de modelo vale no próximo turno, no mesmo processo", async () => {
+  session.send("olá");
+  await tick();
+  await tick();
+  session.setModel("gpt-6-sol");
+  reply(child().stdout, { method: "turn/completed", params: { turn: { id: "turn-1", status: "completed" } } });
+  await tick();
+  session.send("de novo");
+  await tick();
+  await tick();
+  expect(fake.children).toHaveLength(1);
+  const turns = child().sent.filter((m: any) => m.method === "turn/start");
+  expect(turns.at(-1).params.model).toBe("gpt-6-sol");
+});

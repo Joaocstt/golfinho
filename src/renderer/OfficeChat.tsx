@@ -53,6 +53,8 @@ export default function OfficeChat({
             taskId={task.id}
             provider={task.provider}
             model={task.model ?? null}
+            permissionMode={task.permissionMode ?? null}
+            effort={task.effort ?? null}
             draft={drafts[task.id] ?? ""}
             onDraftChange={(d) => setDrafts((all) => ({ ...all, [task.id]: d }))}
             onError={(e) => setError((e as Error)?.message ?? String(e))}

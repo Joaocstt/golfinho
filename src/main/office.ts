@@ -753,7 +753,7 @@ ${rules}`;
             job.speech = said;
             note(job, agent.name, "fala", said);
           }
-        } else {
+        } else if (block.kind === "tool") {
           job.activity = describeTool(block.name, chatToolInput(block.summary));
           note(job, agent.name, "ferramenta", job.activity, `${block.name} ${block.summary}`);
         }

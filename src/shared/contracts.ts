@@ -20,10 +20,26 @@ export interface Project {
   /** Escondido da barra lateral junto com as tarefas; aparece no filtro "Arquivadas". */
   archived?: boolean;
 }
+/** Modelo oferecido no seletor do chat; value vazio = padrão da CLI. */
+export interface ChatModelOption {
+  value: string;
+  label: string;
+  description?: string;
+  /** Níveis de esforço que o modelo aceita, quando a CLI informa. */
+  efforts?: ChatEffort[];
+}
+/** Esforço do Claude na resposta (quanto ele pensa). */
+export type ChatEffort = "low" | "medium" | "high" | "xhigh" | "max";
+/** Modo de permissão do chat do Claude: quanto o agente faz sem pedir aprovação. */
+export type ChatPermissionMode = "default" | "acceptEdits" | "plan" | "auto" | "bypassPermissions";
 export interface Task {
   id: string;
   /** Modelo escolhido no chat; null usa o padrão da CLI. */
   model?: string | null;
+  /** Modo de permissão do chat do Claude; null = "default" (pede aprovação). */
+  permissionMode?: ChatPermissionMode | null;
+  /** Esforço escolhido no chat do Claude; null = padrão do modelo. */
+  effort?: ChatEffort | null;
   projectId: string;
   title: string;
   prompt: string;
@@ -290,10 +306,13 @@ export type Request =
   | { action: "chatStop"; taskId: string }
   | { action: "chatReset"; taskId: string }
   | { action: "setChatModel"; taskId: string; model: string | null }
+  | { action: "setChatPermissionMode"; taskId: string; mode: ChatPermissionMode }
+  | { action: "setChatEffort"; taskId: string; effort: ChatEffort | null }
   | { action: "setTaskAgent"; taskId: string; provider: Provider }
   | { action: "chatCompact"; taskId: string }
   | { action: "chatInterrupt"; taskId: string }
   | { action: "chatHistory"; taskId: string }
+  | { action: "chatModels"; taskId: string }
   | { action: "saveFile"; taskId: string; path: string; content: string }
   | { action: "fileCreate"; taskId: string; path: string; kind: "file" | "directory" }
   | { action: "fileMove"; taskId: string; from: string; to: string }
@@ -373,15 +392,24 @@ export type Response =
   | ProjectRefs
   | DeleteInfo
   | ProviderQuota
+  | ChatModelOption[]
   | string
   | null;
 // Eventos do chat com o Claude (Agent SDK). A aprovação de ferramenta chega como "approval" e
 // é respondida pela ação chatDecide; o SDK fica esperando até a resposta.
-export type ChatBlock = { kind: "text"; text: string } | { kind: "tool"; name: string; summary: string };
+// No Claude, o bloco de ferramenta traz o id (para ligar ao resultado) e a entrada resumida, que
+// vira o cartão da ferramenta: diff do Edit, conteúdo do Write, comando do Bash, lista do TodoWrite.
+export type ChatBlock =
+  | { kind: "text"; text: string }
+  | { kind: "thinking"; text: string }
+  | { kind: "tool"; name: string; summary: string; id?: string; input?: Record<string, unknown> };
 export type ChatEvent =
   | { type: "user"; text: string; images?: string[] }
   | { type: "assistant"; blocks: ChatBlock[] }
-  | { type: "tool_result"; text: string; isError: boolean }
+  | { type: "tool_result"; text: string; isError: boolean; toolUseId?: string }
+  // Texto ou raciocínio chegando token a token. Só vai para a tela: não é guardado no histórico,
+  // e a mensagem completa ("assistant") substitui o que foi mostrado.
+  | { type: "delta"; kind: "text" | "thinking"; text: string }
   | { type: "approval"; id: string; toolName: string; summary: string; canAlwaysAllow: boolean }
   | { type: "approval_resolved"; id: string; behavior: "allow" | "deny" }
   | { type: "status"; state: "running" | "idle" | "error"; message?: string }

@@ -753,7 +753,7 @@ export const TaskWorkspace = forwardRef<TaskWorkspaceHandle, Props>(function Tas
               <div className="tab-body" ref={bodyRef} style={bodyStyle()}>
                 {shown("Chat") && (
                   <div className="tab-slot bare" style={place("Chat")}>
-                    <ChatPane taskId={task.id} provider={task.provider} model={task.model ?? null} draft={chatDraft} onDraftChange={setChatDraft} onError={report}
+                    <ChatPane taskId={task.id} provider={task.provider} model={task.model ?? null} permissionMode={task.permissionMode ?? null} effort={task.effort ?? null} draft={chatDraft} onDraftChange={setChatDraft} onError={report}
                       approvalTarget={approvalTarget}
                       onOpenFile={(path) =>
                         navigate(() => {

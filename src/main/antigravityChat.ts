@@ -36,6 +36,10 @@ export class AntigravityChatSession implements ChatBackend {
     private readonly emit: (event: ChatEvent) => void,
     private readonly options: ChatOptions = {},
   ) {}
+  // O modelo vai em cada turno, então a troca vale a partir da próxima mensagem, sem fechar a conversa.
+  setModel(model: string | null) {
+    this.options.model = model;
+  }
   send(text: string, images: ChatImage[] = [], wire: string = text) {
     this.emit({ type: "user", text, ...(images.length ? { images: images.map((image) => image.path) } : {}) });
     const entry = { text: wire, images };

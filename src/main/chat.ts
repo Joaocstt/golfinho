@@ -7,7 +7,15 @@ import {
   type SDKMessage,
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
-import type { ChatBlock, ChatEvent, ChatHistoryItem, Provider } from "../shared/contracts";
+import type {
+  ChatBlock,
+  ChatEffort,
+  ChatEvent,
+  ChatHistoryItem,
+  ChatModelOption,
+  ChatPermissionMode,
+  Provider,
+} from "../shared/contracts";
 import type { ChatImage } from "./chatImages";
 import { CodexChatSession } from "./codexChat";
 import { AntigravityChatSession } from "./antigravityChat";
@@ -39,6 +47,19 @@ export function wslSpawn(cwd: string, executable?: string) {
     },
   };
 }
+// Entrada da ferramenta guardada no histórico para o cartão. Textos longos são cortados: o
+// cartão mostra o começo, e o histórico não cresce com arquivos inteiros.
+const INPUT_TEXT_LIMIT = 4000;
+export function toolInput(input: Record<string, unknown>): Record<string, unknown> {
+  const trim = (value: unknown): unknown => {
+    if (typeof value === "string") return value.length > INPUT_TEXT_LIMIT ? `${value.slice(0, INPUT_TEXT_LIMIT)}…` : value;
+    if (Array.isArray(value)) return value.slice(0, 100).map(trim);
+    if (value && typeof value === "object")
+      return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([k, v]) => [k, trim(v)]));
+    return value;
+  };
+  return trim(input) as Record<string, unknown>;
+}
 function toolResultText(content: unknown): string {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
@@ -55,11 +76,69 @@ interface Pending {
 export interface ChatOptions {
   resume?: string | null;
   model?: string | null;
+  /** Modo de permissão do Claude; ausente = "default". */
+  permissionMode?: ChatPermissionMode | null;
+  /** Esforço do Claude; ausente = padrão do modelo. */
+  effort?: ChatEffort | null;
   onSession?: (id: string) => void;
   // Servidor MCP da memória do projeto; null quando a memória está desligada ou indisponível.
   mcp?: McpEndpoint | null;
   /** CLI configurada; dentro do WSL vale o comando de mesmo nome instalado na distro. */
   executable?: string;
+}
+// Modelos que a CLI do Claude oferece para esta conta (nomes com versão, como no app do Claude).
+// Abre um processo só para perguntar e fecha em seguida; a resposta fica guardada até o app fechar.
+const MODELS_TIMEOUT_MS = 20_000;
+let modelsCache: Promise<ChatModelOption[]> | null = null;
+// "claude-opus-5-5" vira "Opus 5.5": o nome com a versão, como aparece no app do Claude.
+export function modelName(id: string | undefined): string | null {
+  const m = /^claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?(?!\d)/.exec(id ?? "");
+  if (!m) return null;
+  return `${m[1][0].toUpperCase()}${m[1].slice(1)} ${m[2]}${m[3] ? `.${m[3]}` : ""}`;
+}
+export function toModelOptions(
+  list: { value: string; displayName: string; description?: string; resolvedModel?: string; supportedEffortLevels?: ChatEffort[] }[],
+): ChatModelOption[] {
+  const options = list.map((m) => {
+    const named = modelName(m.resolvedModel) ?? m.displayName ?? m.value;
+    const isDefault = m.value === "default";
+    return {
+      value: isDefault ? "" : m.value,
+      label: isDefault ? `Padrão (${named})` : `${named}${/\[1m\]/i.test(m.value) ? " (1M)" : ""}`,
+      ...(m.description ? { description: m.description } : {}),
+      ...(m.supportedEffortLevels?.length ? { efforts: m.supportedEffortLevels } : {}),
+    };
+  });
+  return options.some((m) => m.value === "") ? options : [{ value: "", label: "Padrão" }, ...options];
+}
+export function claudeModels(cwd: string, executable?: string): Promise<ChatModelOption[]> {
+  modelsCache ??= (async () => {
+    const idle = new Promise<never>(() => undefined);
+    const probe = query({
+      prompt: (async function* (): AsyncGenerator<SDKUserMessage> {
+        await idle;
+      })(),
+      options: { cwd, ...sdkExecutableOption(), ...wslSpawn(cwd, executable) },
+    });
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      const list = await Promise.race([
+        probe.supportedModels(),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error("A CLI do Claude não respondeu a lista de modelos.")), MODELS_TIMEOUT_MS);
+        }),
+      ]);
+      return toModelOptions(list);
+    } finally {
+      clearTimeout(timer);
+      probe.close();
+    }
+  })().catch((error) => {
+    // Falhou: a próxima abertura do chat tenta de novo.
+    modelsCache = null;
+    throw error;
+  });
+  return modelsCache;
 }
 // Uma conversa do Claude por tarefa. As mensagens entram por uma fila, então o SDK mantém a
 // sessão aberta entre um turno e o seguinte.
@@ -129,6 +208,21 @@ export class ChatSession {
     for (const id of [...this.pending.keys()]) this.decide(id, "deny", false);
     void this.running.interrupt().catch(() => undefined);
   }
+  // Troca o modo na sessão aberta, sem reiniciar; sem sessão, vale para a próxima mensagem.
+  setPermissionMode(mode: ChatPermissionMode) {
+    this.options.permissionMode = mode;
+    void this.running?.setPermissionMode(mode).catch(() => undefined);
+  }
+  // Modelo ao vivo: a conversa continua no mesmo processo; sem sessão, vale para a próxima mensagem.
+  setModel(model: string | null) {
+    this.options.model = model;
+    void this.running?.setModel(model ?? undefined).catch(() => undefined);
+  }
+  // Esforço ao vivo, pela camada de configurações da sessão; null volta ao padrão do modelo.
+  setEffort(effort: ChatEffort | null) {
+    this.options.effort = effort;
+    void this.running?.applyFlagSettings({ effortLevel: effort }).catch(() => undefined);
+  }
   stop() {
     this.closed = true;
     this.wake?.(null);
@@ -151,6 +245,7 @@ export class ChatSession {
         cwd: this.cwd,
         resume: this.options.resume ?? undefined,
         model: this.options.model ?? undefined,
+        ...(this.options.effort ? { effort: this.options.effort } : {}),
         ...(this.options.mcp
           ? {
               mcpServers: {
@@ -162,7 +257,14 @@ export class ChatSession {
               },
             }
           : {}),
-        permissionMode: "default",
+        // Mesmo prompt, ferramentas e configurações (CLAUDE.md, settings, skills) do Claude Code.
+        systemPrompt: { type: "preset", preset: "claude_code" },
+        settingSources: ["user", "project", "local"],
+        // Texto e raciocínio chegam token a token, como eventos "delta".
+        includePartialMessages: true,
+        permissionMode: this.options.permissionMode ?? "default",
+        // Necessário para "Liberar tudo"; só tem efeito quando a pessoa escolhe esse modo.
+        allowDangerouslySkipPermissions: true,
         canUseTool: (toolName, input, options) => this.approve(toolName, input, options),
         ...sdkExecutableOption(),
         ...wslSpawn(this.cwd, this.options.executable),
@@ -181,7 +283,16 @@ export class ChatSession {
   }
   private route(message: SDKMessage) {
     if (message.type === "system" && message.subtype === "init") this.options.onSession?.(message.session_id);
-    if (message.type === "assistant") {
+    if (message.type === "stream_event") {
+      // Só a conversa principal: subagentes não escrevem ao vivo na tela.
+      if (message.parent_tool_use_id) return;
+      const event = message.event as { type: string; delta?: { type: string; text?: string; thinking?: string } };
+      if (event.type !== "content_block_delta" || !event.delta) return;
+      if (event.delta.type === "text_delta" && event.delta.text)
+        this.emit({ type: "delta", kind: "text", text: event.delta.text });
+      else if (event.delta.type === "thinking_delta" && event.delta.thinking)
+        this.emit({ type: "delta", kind: "thinking", text: event.delta.thinking });
+    } else if (message.type === "assistant") {
       // Contexto em uso: entrada da última chamada (com cache), que é o que a janela carrega.
       const usage = message.message.usage as unknown as Record<string, number> | undefined;
       if (usage) {
@@ -191,11 +302,14 @@ export class ChatSession {
       const blocks: ChatBlock[] = [];
       for (const part of message.message.content) {
         if (part.type === "text") blocks.push({ kind: "text", text: part.text });
+        else if (part.type === "thinking" && part.thinking.trim()) blocks.push({ kind: "thinking", text: part.thinking });
         else if (part.type === "tool_use")
           blocks.push({
             kind: "tool",
             name: part.name,
             summary: summarize(part.name, part.input as Record<string, unknown>),
+            id: part.id,
+            input: toolInput(part.input as Record<string, unknown>),
           });
       }
       if (blocks.length) this.emit({ type: "assistant", blocks });
@@ -208,6 +322,7 @@ export class ChatSession {
             type: "tool_result",
             text: toolResultText(part.content),
             isError: part.is_error === true,
+            toolUseId: part.tool_use_id,
           });
       }
     } else if (message.type === "result") {
@@ -254,12 +369,18 @@ export interface ChatBackend {
   stop(): void;
   // Compactação nativa, quando a CLI tem uma. Sem ela, a conversa precisa ser refeita.
   compact?(): Promise<void>;
+  // Modo de permissão ao vivo; só o Claude tem.
+  setPermissionMode?(mode: ChatPermissionMode): void;
+  setEffort?(effort: ChatEffort | null): void;
+  setModel?(model: string | null): void;
 }
 export interface ChatTarget {
   provider: Provider;
   cwd: string;
   executable: string;
   model?: string | null;
+  permissionMode?: ChatPermissionMode | null;
+  effort?: ChatEffort | null;
   mcp?: McpEndpoint | null;
 }
 // Onde a conversa fica guardada. O ChatManager não sabe de banco: recebe estas funções.
@@ -279,6 +400,8 @@ export class ChatManager {
   ) {}
   private emitter(taskId: string): (event: ChatEvent) => void {
     return (event) => {
+      // Pedaços ao vivo vão só para a tela, sem posição no histórico.
+      if (event.type === "delta") return this.emitFor(taskId, -1, event);
       const seq = this.storage.append(taskId, event);
       this.emitFor(taskId, seq, event);
     };
@@ -290,6 +413,8 @@ export class ChatManager {
       const options: ChatOptions = {
         resume: this.storage.sessionId(taskId) || null,
         model: target.model,
+        permissionMode: target.permissionMode ?? null,
+        effort: target.effort ?? null,
         mcp: target.mcp ?? null,
         onSession: (id) => this.storage.saveSessionId(taskId, id),
       };
@@ -325,6 +450,15 @@ export class ChatManager {
   }
   decide(taskId: string, id: string, behavior: "allow" | "deny", always: boolean) {
     this.sessions.get(taskId)?.decide(id, behavior, always);
+  }
+  setPermissionMode(taskId: string, mode: ChatPermissionMode) {
+    this.sessions.get(taskId)?.setPermissionMode?.(mode);
+  }
+  setModel(taskId: string, model: string | null) {
+    this.sessions.get(taskId)?.setModel?.(model);
+  }
+  setEffort(taskId: string, effort: ChatEffort | null) {
+    this.sessions.get(taskId)?.setEffort?.(effort);
   }
   interrupt(taskId: string) {
     this.sessions.get(taskId)?.interrupt();
