@@ -185,3 +185,20 @@ it("pergunta com várias escolhas e Outro; respondida mostra a resposta", async 
   expect(await screen.findByText("→ SQLite")).toBeTruthy();
   expect(screen.queryByRole("radio")).toBeNull();
 });
+
+it("chat do Antigravity usa a marca própria em vez do símbolo do Claude", async () => {
+  const { container } = mountWith([], { provider: "antigravity" });
+  expect(container.querySelector(".chat-pane.chat-antigravity")).not.toBeNull();
+  expect(container.querySelector(".chat-welcome .agent-icon--antigravity")).not.toBeNull();
+  expect(container.querySelector(".chat-spark")).toBeNull();
+  expect(screen.getByRole("heading", { name: "Antigravity" })).toBeTruthy();
+
+  cleanup();
+  const busy = mountWith([{ type: "status", state: "running" }], { provider: "antigravity" });
+  await waitFor(() => expect(busy.container.querySelector(".chat-busy .agent-icon--antigravity")).not.toBeNull());
+  expect(busy.container.querySelector(".chat-spark")).toBeNull();
+
+  cleanup();
+  const claude = mountWith([], { provider: "claude" });
+  expect(claude.container.querySelector(".chat-welcome .chat-spark")?.textContent).toBe("✻");
+});

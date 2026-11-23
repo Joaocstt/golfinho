@@ -6,6 +6,7 @@ import type { ChatBlock, ChatCommandOption, ChatEvent, ChatHistoryItem, ChatEffo
 import { currentContext } from "../shared/chatContext";
 import { CommandMenu, ModelMenu, PermissionMenu, matchCommands } from "./ChatMenus";
 import { QuestionCard } from "./ChatQuestions";
+import { AgentIcon } from "./agentIcons";
 import { absolutePathIn, asFilePath } from "./filePaths";
 import { FilePreview } from "./FilePreview";
 export interface ChatPaneProps {
@@ -27,6 +28,24 @@ export interface ChatPaneProps {
 }
 // Cada provedor tem a sua cor de destaque, para não parecer a conversa de outro.
 const LABELS: Record<string, string> = { claude: "Claude", codex: "Codex", antigravity: "Antigravity" };
+const WELCOME_TITLES: Record<string, string> = {
+  claude: "Como posso ajudar?",
+  codex: "Codex",
+  antigravity: "Antigravity",
+};
+function isProvider(value: string): value is Provider {
+  return value === "claude" || value === "codex" || value === "antigravity";
+}
+function AgentMark({ provider, size, busy }: { provider: string; size: number; busy?: boolean }) {
+  if (provider === "claude" || !isProvider(provider)) {
+    return <span className="chat-spark" aria-hidden="true">✻</span>;
+  }
+  return (
+    <span className={busy ? "chat-busy-icon" : "chat-brand-mark"} aria-hidden="true">
+      <AgentIcon provider={provider} size={size} />
+    </span>
+  );
+}
 // Modelos oferecidos em cada CLI. Vazio = padrão da própria CLI.
 const MODELS: Record<string, { value: string; label: string }[]> = {
   claude: [
@@ -228,9 +247,13 @@ const TODO_MARK: Record<string, string> = { completed: "☑", in_progress: "◐"
 // Corpo do cartão conforme a ferramenta; null quando a entrada não acrescenta nada ao resumo.
 function toolBody(name: string, input: Record<string, unknown>): React.ReactNode {
   if (name === "Edit" && "new_string" in input) return <EditDiff edits={[input]} />;
+  if (name === "edit_file" && ("Replacement" in input || "Target" in input))
+    return <EditDiff edits={[{ old_string: input.Target, new_string: input.Replacement }]} />;
   if (name === "MultiEdit" && Array.isArray(input.edits)) return <EditDiff edits={input.edits as Record<string, unknown>[]} />;
   if (name === "Write" && typeof input.content === "string")
     return <pre className="chat-diff">{input.content.split("\n").map((line, i) => <span key={i} className="chat-diff-add">+ {line}{"\n"}</span>)}</pre>;
+  if (name === "write_file" && typeof input.Content === "string")
+    return <pre className="chat-diff">{input.Content.split("\n").map((line, i) => <span key={i} className="chat-diff-add">+ {line}{"\n"}</span>)}</pre>;
   if (name === "Bash" && typeof input.description === "string") return <p className="chat-tool-note">{input.description}</p>;
   if (name === "TodoWrite" && Array.isArray(input.todos))
     return (
@@ -673,8 +696,8 @@ export function ChatPane({ taskId, provider, model, permissionMode, effort, draf
       <div className="chat-log" ref={logRef} onScroll={onLogScroll}>
         {items.length === 0 && (
           <div className="chat-welcome">
-            <span className="chat-spark" aria-hidden="true">✻</span>
-            <h2>Como posso ajudar?</h2>
+            <AgentMark provider={provider} size={38} />
+            <h2>{WELCOME_TITLES[provider] ?? "Como posso ajudar?"}</h2>
             <p className="chat-empty">Escreva uma mensagem para começar a conversa nesta tarefa.</p>
           </div>
         )}
@@ -692,7 +715,7 @@ export function ChatPane({ taskId, provider, model, permissionMode, effort, draf
         )}
         {busy && !live?.text && (
           <p className="chat-busy">
-            <span className="chat-spark" aria-hidden="true">✻</span>
+            <AgentMark provider={provider} size={16} busy />
             {LABELS[provider] ?? "O agente"} está pensando
           </p>
         )}

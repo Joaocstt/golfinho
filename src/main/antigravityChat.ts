@@ -93,19 +93,40 @@ export class AntigravityChatSession implements ChatBackend {
     // O cartão aparece quando a ferramenta começa; o resultado vem quando ela termina (ou falha).
     if (!this.shownTools.has(key)) {
       this.shownTools.add(key);
-      const params = info.parameters ?? {};
-      const summary = String(params.CommandLine ?? params.TargetFile ?? params.AbsolutePath ?? params.path ?? short(params));
-      this.emit({ type: "assistant", blocks: [{ kind: "tool", name: String(info.name ?? step.tool_name ?? "ferramenta"), summary }] });
+      const params = info.parameters && typeof info.parameters === "object" ? (info.parameters as Record<string, unknown>) : {};
+      const summary = String(
+        params.CommandLine ??
+          params.Path ??
+          params.TargetFile ??
+          params.AbsolutePath ??
+          params.path ??
+          params.query ??
+          params.Pattern ??
+          short(params),
+      );
+      const hasInput = Object.keys(params).length > 0;
+      this.emit({
+        type: "assistant",
+        blocks: [
+          {
+            kind: "tool",
+            id: key,
+            name: String(info.name ?? step.tool_name ?? "ferramenta"),
+            summary,
+            ...(hasInput ? { input: params } : {}),
+          },
+        ],
+      });
     }
     if (step.state !== "DONE" && step.state !== "ERROR") return;
     if (this.finishedTools.has(key)) return;
     this.finishedTools.add(key);
     if (info.error) {
-      this.emit({ type: "tool_result", text: String(info.error.message ?? short(info.error)), isError: true });
+      this.emit({ type: "tool_result", toolUseId: key, text: String(info.error.message ?? short(info.error)), isError: true });
       return;
     }
     if (info.output !== undefined && info.output !== null && info.output !== "")
-      this.emit({ type: "tool_result", text: short(info.output), isError: false });
+      this.emit({ type: "tool_result", toolUseId: key, text: short(info.output), isError: false });
   }
   private finishTurn(result: Json) {
     this.rememberConversation(result.conversation_id);

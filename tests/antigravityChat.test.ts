@@ -13,10 +13,25 @@ it("traduz init, passos e resultado do stream-json do agy em eventos do chat", (
   session.handleLine('{"event":"step_update","step_update":{"conversation_id":"c-1","step_index":2,"state":"DONE","step_type":"tool","tool_info":{"name":"ler_arquivo","parameters":{"path":"a.ts"},"output":"ok"}}}');
   session.handleLine('{"event":"result","result":{"conversation_id":"c-1","status":"SUCCESS","response":"maçã\\n","num_turns":1}}');
   expect(saved).toEqual(["c-1"]);
-  expect(events).toContainEqual({ type: "assistant", blocks: [{ kind: "tool", name: "ler_arquivo", summary: "a.ts" }] });
-  expect(events).toContainEqual({ type: "tool_result", text: "ok", isError: false });
+  expect(events).toContainEqual({
+    type: "assistant",
+    blocks: [{ kind: "tool", id: "0:2", name: "ler_arquivo", summary: "a.ts", input: { path: "a.ts" } }],
+  });
+  expect(events).toContainEqual({ type: "tool_result", toolUseId: "0:2", text: "ok", isError: false });
   expect(events).toContainEqual({ type: "assistant", blocks: [{ kind: "text", text: "maçã\n" }] });
   expect(events[events.length - 1]).toEqual({ type: "status", state: "idle" });
+});
+it("usa Path como resumo legível para ferramentas de arquivo do agy", () => {
+  const events: ChatEvent[] = [];
+  const session = new AntigravityChatSession("/repo", "agy", (e) => events.push(e));
+  session.handleLine(
+    '{"event":"step_update","step_update":{"conversation_id":"c-3","step_index":4,"state":"DONE","step_type":"tool","tool_info":{"name":"read_file","parameters":{"Path":"/repo/a.ts","StartLine":1,"EndLine":20},"output":"20 lines"}}}',
+  );
+  expect(events).toContainEqual({
+    type: "assistant",
+    blocks: [{ kind: "tool", id: "0:4", name: "read_file", summary: "/repo/a.ts", input: { Path: "/repo/a.ts", StartLine: 1, EndLine: 20 } }],
+  });
+  expect(events).toContainEqual({ type: "tool_result", toolUseId: "0:4", text: "20 lines", isError: false });
 });
 it("mostra erro quando o turno falha e ignora linhas inválidas", () => {
   const events: ChatEvent[] = [];
@@ -32,7 +47,18 @@ it("mostra o cartão do comando e o motivo quando a permissão é negada (evento
   const session = new AntigravityChatSession("/repo", "agy", (e) => events.push(e));
   // Um turno de verdade: o agy só emite a linha de resultado no fim.
   for (const line of lines) session.handleLine(line);
-  expect(events).toContainEqual({ type: "assistant", blocks: [{ kind: "tool", name: "run_command", summary: "git branch --show-current" }] });
+  expect(events).toContainEqual({
+    type: "assistant",
+    blocks: [
+      {
+        kind: "tool",
+        id: expect.any(String),
+        name: "run_command",
+        summary: "git branch --show-current",
+        input: expect.objectContaining({ CommandLine: "git branch --show-current" }),
+      },
+    ],
+  });
   const denied = events.find((e) => e.type === "tool_result");
   expect(denied).toMatchObject({ type: "tool_result", isError: true });
   expect((denied as { text: string }).text).toContain("user denied permission");

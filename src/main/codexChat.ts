@@ -244,18 +244,23 @@ export class CodexChatSession implements ChatBackend {
     }
     if (method === "item/started") {
       const item = params.item ?? {};
-      if (item.type === "commandExecution")
-        this.emit({ type: "assistant", blocks: [{ kind: "tool", name: "Comando", summary: String(item.command ?? "") }] });
+      if (item.type === "commandExecution") {
+        const id = typeof item.id === "string" && item.id ? item.id : undefined;
+        this.emit({ type: "assistant", blocks: [{ kind: "tool", ...(id ? { id } : {}), name: "Comando", summary: String(item.command ?? "") }] });
+      }
     } else if (method === "item/completed") {
       const item = params.item ?? {};
       if (item.type === "agentMessage" && item.text)
         this.emit({ type: "assistant", blocks: [{ kind: "text", text: String(item.text) }] });
-      else if (item.type === "commandExecution")
+      else if (item.type === "commandExecution") {
+        const toolUseId = typeof item.id === "string" && item.id ? item.id : undefined;
         this.emit({
           type: "tool_result",
+          ...(toolUseId ? { toolUseId } : {}),
           text: String(item.aggregatedOutput ?? ""),
           isError: typeof item.exitCode === "number" && item.exitCode !== 0,
         });
+      }
       else if (item.type === "fileChange") {
         const paths = Array.isArray(item.changes)
           ? item.changes.map((change: Json) => String(change.path ?? "")).filter(Boolean).join(", ")

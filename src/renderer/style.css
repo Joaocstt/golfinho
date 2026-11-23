@@ -9374,6 +9374,7 @@ select {
   line-height: 1.65;
 }
 .chat-log > * {
+  box-sizing: border-box;
   width: 100%;
   max-width: var(--chat-column);
   margin-inline: auto;
@@ -9479,7 +9480,7 @@ select {
 .chat-tool-card,
 .chat-thinking,
 .chat-result-block {
-  margin: 2px 0;
+  margin-block: 2px;
   font-family: "Geist Variable", Geist, system-ui, sans-serif;
 }
 .chat-tool-card > summary.chat-tool,
@@ -9613,8 +9614,30 @@ select {
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .chat-spark {
+  .chat-spark,
+  .chat-busy-icon {
     animation: none;
+  }
+}
+.chat-brand-mark,
+.chat-busy-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.chat-busy-icon {
+  animation: chat-float 1.8s infinite ease-in-out;
+}
+@keyframes chat-float {
+  0%,
+  100% {
+    opacity: 0.65;
+    transform: translateY(1px) scale(0.95);
+  }
+  50% {
+    opacity: 1;
+    transform: translateY(-2px) scale(1.05);
   }
 }
 
@@ -9753,11 +9776,31 @@ select {
   font-family: "Geist Variable", Geist, system-ui, sans-serif;
 }
 .chat-pane details.chat-tool-card,
-.chat-pane details.chat-thinking {
+.chat-pane details.chat-thinking,
+.chat-pane details.chat-result-block {
   padding: 0;
   border: 0;
   background: none;
   border-radius: 0;
+}
+.chat-pane details.chat-result-block > summary {
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0 2px 22px;
+  font-family: "Geist Variable", Geist, system-ui, sans-serif;
+  font-size: 12.5px;
+  color: var(--chat-dim);
+}
+.chat-pane details.chat-result-block > summary::-webkit-details-marker {
+  display: none;
+}
+.chat-pane details.chat-result-block > summary:hover {
+  color: var(--chat-text);
+}
+.chat-pane details.chat-result-block > .chat-result {
+  margin: 4px 0 8px 22px;
 }
 .chat-assistant + .chat-assistant {
   margin-top: 2px;
@@ -9792,6 +9835,64 @@ select {
 .chat-pane.chat-claude .chat-result,
 .chat-pane.chat-claude .chat-approval code {
   background: #151515;
+}
+
+/* Identidade visual própria do Google Antigravity: base grafite-azulada fria, destaque azul
+   da marca (#4da3ff), código em azul-ciano e balão do usuário sutilmente azulado. */
+.chat-pane.chat-antigravity {
+  --chat-accent: #4da3ff;
+  --chat-surface: #1a2130;
+  --chat-user-bg: #1c2940;
+  --chat-text: #e6edf7;
+  --chat-dim: #8d9bb3;
+  --chat-line: #8ab4ff22;
+  background: #11151d;
+  color: var(--chat-text);
+}
+.chat-pane.chat-antigravity .chat-user > div:not(.chat-thumbs) {
+  border: 1px solid #4da3ff28;
+}
+.chat-pane.chat-antigravity .chat-text code {
+  color: #8cc5ff;
+  background: #4da3ff14;
+  border-color: #4da3ff2e;
+}
+.chat-pane.chat-antigravity .chat-code,
+.chat-pane.chat-antigravity .chat-diff,
+.chat-pane.chat-antigravity .chat-result,
+.chat-pane.chat-antigravity .chat-approval code {
+  background: #0c1017;
+}
+.chat-pane.chat-antigravity .chat-tool-icon {
+  color: #6cb2ff;
+}
+.chat-pane.chat-antigravity .chat-tool-card.error .chat-tool-icon {
+  color: #f07178;
+}
+.chat-pane.chat-antigravity .chat-input-box:focus-within {
+  border-color: #4da3ff66;
+  box-shadow: 0 0 0 1px #4da3ff24;
+}
+.chat-pane.chat-antigravity .chat-input textarea::placeholder {
+  color: #70809c;
+}
+.chat-pane.chat-antigravity .chat-input .chat-send:not(:disabled):not(.chat-stop) {
+  background: var(--chat-accent);
+  color: #0b1018;
+}
+.chat-pane.chat-antigravity .chat-input .chat-send:not(:disabled):not(.chat-stop):hover {
+  background: #6cb5ff;
+  color: #0b1018;
+}
+.chat-pane.chat-antigravity .chat-input .chat-send:disabled {
+  color: #5f708d;
+}
+.chat-pane.chat-antigravity .chat-menu {
+  background: #18202e;
+  border-color: #8ab4ff26;
+}
+.chat-pane.chat-antigravity .chat-brand-mark {
+  filter: drop-shadow(0 6px 18px #3186ff45);
 }
 .chat-input {
   margin: 4px auto 10px;
@@ -10200,8 +10301,8 @@ select {
   background: #ffffff0a;
 }
 .chat-pane .chat-question-option.on {
-  border-color: #d97757;
-  background: #d977571a;
+  border-color: var(--chat-accent, #d97757);
+  background: color-mix(in srgb, var(--chat-accent, #d97757) 12%, transparent);
 }
 .chat-question-mark {
   display: inline-grid;
@@ -10219,8 +10320,8 @@ select {
   border-radius: 5px;
 }
 .chat-question-option.on .chat-question-mark {
-  border-color: #d97757;
-  background: #d97757;
+  border-color: var(--chat-accent, #d97757);
+  background: var(--chat-accent, #d97757);
   color: #1c1c1c;
 }
 .chat-question-label {
