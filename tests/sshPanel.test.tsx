@@ -52,3 +52,8 @@ it("cria uma conexão nova pelo formulário", async () => {
     ]),
   );
 });
+it("libera e bloqueia a análise pela IA por servidor", async () => {
+  const props = mount();
+  fireEvent.click(screen.getByRole("button", { name: "Liberar IA em Produção" }));
+  await waitFor(() => expect(props.onSave).toHaveBeenCalledWith([{ ...connection, allowAi: true }]));
+});

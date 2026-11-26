@@ -16,6 +16,7 @@ import { basename, isAbsolute, join, relative } from "node:path";
 import { linuxCommand, wslCommands, wslPath, wslTarget } from "./wsl";
 import { findSubprojects, folderFingerprint, folderReview, isFolderProject, isFolderTask, workspaceMap, withWorkspace } from "./workspace";
 import { remoteList, remoteRead, remoteRoots, remoteStat, remoteWrite, sshArgs, sshEnv } from "./ssh";
+import { sshPromptNote, type SshMcpLink } from "./sshMcpTypes";
 import type { Vault } from "./vault";
 import { readQuota } from "./quota";
 import { buildHandoff, clip, withHandoff } from "./handoff";
@@ -94,6 +95,14 @@ export class Service {
   // Servidor MCP da memória (o mesmo que o coordenador usa para o terminal).
   useMemory(link: MemoryLink | null) {
     this.memoryLink = link;
+  }
+  private sshMcpLink: SshMcpLink | null = null;
+  // Servidor MCP de análise SSH (expõe apenas os servidores liberados pelo usuário).
+  useSshMcp(link: SshMcpLink | null) {
+    this.sshMcpLink = link;
+  }
+  sshPassword(connectionId: string): string | null {
+    return this.passwordFor(connectionId);
   }
   private memoryOn() {
     return this.store.settings().memory?.enabled !== false;
@@ -774,6 +783,7 @@ export class Service {
         // A pasta é a mesma da aba de arquivos: a worktree da tarefa, ou o projeto antes dela.
         const { root } = await this.treeRoot(r.taskId);
         const memoryOn = this.memoryOn();
+        const inWsl = process.platform === "win32" && wslPath(root) !== null;
         const target = {
           provider: task.provider,
           cwd: root,
@@ -781,30 +791,31 @@ export class Service {
           model: task.model ?? null,
           permissionMode: task.permissionMode ?? null,
           effort: task.effort ?? null,
-          // O Antigravity não aceita MCP por execução: recebe só as notas na primeira mensagem.
-          // Dentro do WSL, a memória é chamada pelo endereço do Windows que a distro alcança.
-          mcp:
-            memoryOn && task.provider !== "antigravity"
-              ? (this.memoryLink?.endpoint(task.id, process.platform === "win32" && wslPath(root) !== null) ?? null)
-              : null,
+          // O Antigravity não aceita MCP da memória por execução: recebe só as notas na primeira mensagem.
+          // Dentro do WSL, os servidores MCP são chamados pelo endereço do Windows que a distro alcança.
+          mcp: memoryOn && task.provider !== "antigravity" ? (this.memoryLink?.endpoint(task.id, inWsl) ?? null) : null,
+          sshMcp: this.sshMcpLink?.endpoint(task.id, inWsl) ?? null,
         };
         // Cada imagem é conferida aqui (pasta do app, tipo e tamanho) antes de ir para o agente.
         const images = await Promise.all((r.images ?? []).map((path) => this.requireChatImages().verify(path)));
         if (!r.text.trim() && !images.length) throw new Error("Escreva uma mensagem ou anexe uma imagem.");
+        const fresh = this.requireChat().isFresh(r.taskId);
         // O pacote de handoff vai na primeira mensagem após a troca, e só nela.
         const handoff = this.store.pendingHandoff(r.taskId);
         // A memória do projeto vai só na primeira mensagem de uma conversa nova.
         const memory =
-          memoryOn && this.requireChat().isFresh(r.taskId)
+          memoryOn && fresh
             ? prepareMemory(this.store, task.projectId, `${task.title}\n${task.prompt}\n${r.text}`, target.mcp !== null)
             : { text: null, ids: [] };
         const joined = handoff && memory.text ? withHandoff(handoff, memory.text) : (handoff ?? memory.text);
         // Pasta com vários projetos: o mapa do workspace abre a conversa nova.
         const map =
-          isFolderProject(this.store.project(task.projectId)) && this.requireChat().isFresh(r.taskId)
+          isFolderProject(this.store.project(task.projectId)) && fresh
             ? await workspaceMap(this.git, root)
             : null;
-        const preamble = map ? (joined ? withWorkspace(map, joined) : map) : joined;
+        const basePreamble = map ? (joined ? withWorkspace(map, joined) : map) : joined;
+        const sshNote = fresh && target.sshMcp ? sshPromptNote(this.store.settings().ssh) : null;
+        const preamble = sshNote ? (basePreamble ? `${basePreamble}\n\n${sshNote}` : sshNote) : basePreamble;
         this.requireChat().send(r.taskId, target, r.text, images, preamble);
         if (handoff) this.store.clearHandoff(r.taskId, "Resumo da troca de agente entregue ao chat.");
         if (memory.ids.length) {
@@ -888,6 +899,8 @@ export class Service {
         return null;
       case "chatHistory":
         return this.requireChat().history(r.taskId);
+      case "chatSearch":
+        return this.store.searchAllChats(r.query, { currentTaskId: r.taskId, limit: r.limit });
       case "chatModels": {
         // Só o Claude informa a lista; os outros agentes ficam com a lista fixa da tela.
         const task = this.store.task(r.taskId);

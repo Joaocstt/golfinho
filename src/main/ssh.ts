@@ -1,7 +1,8 @@
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import type { SshConnection, SshListing, SshRoots } from "../shared/contracts";
-const execute = promisify(execFile);
+// Criado na hora: testes que substituem child_process não precisam fornecer execFile.
+const execute: Runner = (file, args, options) => promisify(execFile)(file, args, options);
 const MAX_ENTRIES = 2000;
 // Arquivos maiores que isto não são abertos pela árvore remota.
 export const MAX_REMOTE_FILE = 512 * 1024;
@@ -119,6 +120,36 @@ export async function remoteRead(
   });
   if (content.includes("\0")) throw new Error("Arquivo binário: a visualização não é possível.");
   return content;
+}
+
+// Coleta somente leitura de saúde do servidor: SO, uptime, CPU, RAM, disco, serviços, Docker e portas.
+const SUMMARY_COMMAND = [
+  'echo "=== SISTEMA ==="',
+  "(cat /etc/os-release 2>/dev/null | grep -E '^(PRETTY_NAME|VERSION)=' || true)",
+  "uname -a 2>/dev/null || true",
+  "uptime 2>/dev/null || true",
+  'echo "=== CPU E MEMORIA ==="',
+  'echo "CPUs: $(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo ?)"',
+  "free -h 2>/dev/null || true",
+  'echo "=== DISCO ==="',
+  "df -h -x tmpfs -x devtmpfs -x squashfs 2>/dev/null || df -h 2>/dev/null || true",
+  'echo "=== SERVICOS COM FALHA ==="',
+  "(command -v systemctl >/dev/null 2>&1 && (systemctl --failed --no-pager --no-legend 2>/dev/null || true) || echo 'systemctl indisponivel')",
+  'echo "=== DOCKER ==="',
+  "(command -v docker >/dev/null 2>&1 && (docker ps -a --format 'table {{.Names}}\\t{{.Status}}\\t{{.Image}}' 2>/dev/null | head -n 40 || true) || echo 'docker indisponivel')",
+  'echo "=== PORTAS ABERTAS ==="',
+  "(ss -tulpn 2>/dev/null || netstat -tulpn 2>/dev/null || true) | head -n 30",
+  'echo "=== PROCESSOS (MEMORIA) ==="',
+  "ps -eo pid,pcpu,pmem,comm --sort=-%mem 2>/dev/null | head -n 12 || true",
+].join("; ");
+
+export async function remoteSummary(
+  connection: SshConnection,
+  password: string | null = null,
+  run: Runner = execute,
+): Promise<string> {
+  const stdout = await remoteRun(connection, SUMMARY_COMMAND, password, run);
+  return stdout.trim() || "(sem saída)";
 }
 
 // Sistemas virtuais não são discos: escondê-los deixa só o que você realmente acessa.

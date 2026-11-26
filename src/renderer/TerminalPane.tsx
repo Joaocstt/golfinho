@@ -1,5 +1,6 @@
 import { TerminalMenu } from "./TerminalMenu";
 import { clipboardToPaste, filesToPaste } from "./clipboardPaste";
+import { findShortcutLabel, isFindShortcut } from "./shortcuts";
 import React, { useEffect, useRef, useState } from "react";
 import { Terminal, type IBufferRange } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
@@ -64,7 +65,7 @@ export const terminalTheme = {
   brightWhite: "#f5f3ec",
 };
 const request = <T,>(r: Request) => window.golfinho.request(r) as Promise<T>;
-const searchOptions: ISearchOptions = {
+export const searchOptions: ISearchOptions = {
   decorations: {
     matchBackground: "#5e512c",
     activeMatchBackground: "#976e2e",
@@ -110,6 +111,10 @@ export function TerminalPane({ taskId, active = false, autoFocus = true, focusRe
   function openSearch() {
     setMenuOpen(false);
     setSearchOpen(true);
+    requestAnimationFrame(() => {
+      searchInput.current?.focus();
+      searchInput.current?.select();
+    });
   }
   function closeSearch() {
     setSearchOpen(false);
@@ -154,14 +159,19 @@ export function TerminalPane({ taskId, active = false, autoFocus = true, focusRe
   const commands = useRef({ copy, paste, zoom, openSearch });
   commands.current = { copy, paste, zoom, openSearch };
   function keyHandler(event: KeyboardEvent) {
-    if (event.type !== "keydown" || !event.ctrlKey || event.altKey || event.metaKey) return true;
+    if (event.type !== "keydown") return true;
+    if (isFindShortcut(event)) {
+      event.preventDefault();
+      commands.current.openSearch();
+      return false;
+    }
+    if (!event.ctrlKey || event.altKey || event.metaKey) return true;
     const key = event.key.toLowerCase();
     let handled = true;
     // Ctrl+C copia quando há seleção, como no Windows; sem seleção continua sendo interrupção da CLI.
     if (!event.shiftKey && key === "c" && terminalRef.current?.hasSelection()) {
       void commands.current.copy();
-    } else if (event.shiftKey && key === "f") commands.current.openSearch();
-    else if (event.shiftKey && key === "c") void commands.current.copy();
+    } else if (event.shiftKey && key === "c") void commands.current.copy();
     else if (event.shiftKey && key === "v") void commands.current.paste();
     else if (key === "+" || key === "=") commands.current.zoom(1);
     else if (key === "-") commands.current.zoom(-1);
@@ -436,7 +446,7 @@ export function TerminalPane({ taskId, active = false, autoFocus = true, focusRe
             { label: "Copiar", shortcut: "Ctrl+Shift+C", disabled: !hasSelection, onSelect: () => void commands.current.copy() },
             { label: "Colar", shortcut: "Ctrl+Shift+V", onSelect: () => void commands.current.paste() },
             { label: "Selecionar tudo", onSelect: () => terminalRef.current?.selectAll() },
-            { label: "Buscar", shortcut: "Ctrl+Shift+F", onSelect: () => commands.current.openSearch() },
+            { label: "Buscar", shortcut: findShortcutLabel(), onSelect: () => commands.current.openSearch() },
           ]}
         />
       )}
@@ -449,7 +459,7 @@ export function TerminalPane({ taskId, active = false, autoFocus = true, focusRe
         )}
         <div className="terminal-tools" ref={tools}>
           <button
-            title="Buscar no terminal (Ctrl+Shift+F)"
+            title={`Buscar no terminal (${findShortcutLabel()})`}
             aria-label="Buscar no terminal"
             aria-pressed={searchOpen}
             onClick={() => (searchOpen ? closeSearch() : openSearch())}

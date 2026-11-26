@@ -11,6 +11,7 @@ import type {
   Check,
   ChatEvent,
   ChatHistoryItem,
+  ChatSearchHit,
   Memory,
   MemoryInput,
   MemoryKind,
@@ -261,6 +262,57 @@ export class Store {
       )
       .all(match, projectId, limit)
       .map((r) => ({ seq: Number(r.seq), taskId: String(r.task_id), who: String(r.who), excerpt: String(r.excerpt) }));
+  }
+  // Busca em todas as conversas salvas no Golfinho (ignora acentos e maiúsculas, encontra trechos parciais).
+  searchAllChats(query: string, opts: { currentTaskId?: string; limit?: number } = {}): ChatSearchHit[] {
+    const normalize = (value: string) =>
+      value
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .toLowerCase();
+    const needle = normalize(query.trim());
+    if (!needle) return [];
+    const limit = opts.limit ?? 40;
+    const tasks = new Map(this.tasks().map((t) => [t.id, t]));
+    const projects = new Map(this.projects().map((p) => [p.id, p]));
+    const rows = this.db
+      .prepare("SELECT seq, task_id, project_id, who, text FROM chat_fts ORDER BY CAST(seq AS INTEGER) DESC LIMIT 15000")
+      .all();
+    const hits: ChatSearchHit[] = [];
+    for (const r of rows) {
+      const taskId = String(r.task_id);
+      const task = tasks.get(taskId);
+      if (!task) continue;
+      const raw = String(r.text);
+      const folded = normalize(raw);
+      const idx = folded.indexOf(needle);
+      if (idx < 0) continue;
+      const start = Math.max(0, idx - 55);
+      const end = Math.min(raw.length, idx + needle.length + 85);
+      const excerpt =
+        (start > 0 ? "…" : "") +
+        raw.slice(start, end).replace(/\s+/g, " ").trim() +
+        (end < raw.length ? "…" : "");
+      const project = projects.get(task.projectId);
+      hits.push({
+        taskId,
+        taskTitle: task.title,
+        projectId: task.projectId,
+        projectName: project?.name ?? "",
+        seq: Number(r.seq),
+        who: String(r.who),
+        excerpt,
+      });
+      if (hits.length >= limit * 2) break;
+    }
+    if (opts.currentTaskId) {
+      hits.sort((a, b) => {
+        const aCur = a.taskId === opts.currentTaskId ? 0 : 1;
+        const bCur = b.taskId === opts.currentTaskId ? 0 : 1;
+        return aCur - bCur || b.seq - a.seq;
+      });
+    }
+    return hits.slice(0, limit);
   }
   // Trecho da conversa de uma tarefa em volta de uma posição, só se a tarefa for do projeto.
   historyAround(projectId: string, taskId: string, seq: number, radius = 4): ChatHistoryItem[] {

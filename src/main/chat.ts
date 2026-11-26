@@ -24,12 +24,18 @@ import { CodexChatSession } from "./codexChat";
 import { AntigravityChatSession } from "./antigravityChat";
 import { withHandoff } from "./handoff";
 import { MEMORY_SERVER, type McpEndpoint } from "./memory";
+import { SSH_SERVER, type SshApprovalRequest, type SshMcpEndpoint } from "./sshMcpTypes";
 import { spawn } from "node:child_process";
 import { wslChild, wslTarget } from "./wsl";
 import { sdkExecutableOption } from "./sdkBinary";
 // Resumo curto da ferramenta para o cartão de aprovação. Comando e caminho são o que a pessoa
 // precisa ver para decidir; o resto do input fica de fora.
 export function summarize(toolName: string, input: Record<string, unknown>): string {
+  if (typeof input.servidor === "string") {
+    if (typeof input.comando === "string") return `${input.servidor}: ${input.comando}`;
+    if (typeof input.caminho === "string" && input.caminho) return `${input.servidor}: ${input.caminho}`;
+    return input.servidor;
+  }
   if (typeof input.command === "string") return input.command;
   if (typeof input.file_path === "string") return input.file_path;
   if (typeof input.path === "string") return input.path;
@@ -109,6 +115,8 @@ export interface ChatOptions {
   onSession?: (id: string) => void;
   // Servidor MCP da memória do projeto; null quando a memória está desligada ou indisponível.
   mcp?: McpEndpoint | null;
+  // Servidor MCP de análise SSH do Golfinho; expõe apenas servidores liberados pelo usuário.
+  sshMcp?: SshMcpEndpoint | null;
   /** CLI configurada; dentro do WSL vale o comando de mesmo nome instalado na distro. */
   executable?: string;
 }
@@ -307,17 +315,24 @@ export class ChatSession {
         resume: this.options.resume ?? undefined,
         model: this.options.model ?? undefined,
         ...(this.options.effort ? { effort: this.options.effort } : {}),
-        ...(this.options.mcp
-          ? {
-              mcpServers: {
-                [MEMORY_SERVER]: {
-                  type: "http" as const,
-                  url: this.options.mcp.url,
-                  headers: { Authorization: `Bearer ${this.options.mcp.token}` },
-                },
-              },
-            }
-          : {}),
+        ...(() => {
+          const mcpServers: Record<string, { type: "http"; url: string; headers: Record<string, string> }> = {};
+          if (this.options.mcp) {
+            mcpServers[MEMORY_SERVER] = {
+              type: "http",
+              url: this.options.mcp.url,
+              headers: { Authorization: `Bearer ${this.options.mcp.token}` },
+            };
+          }
+          if (this.options.sshMcp) {
+            mcpServers[SSH_SERVER] = {
+              type: "http",
+              url: this.options.sshMcp.url,
+              headers: { Authorization: `Bearer ${this.options.sshMcp.token}` },
+            };
+          }
+          return Object.keys(mcpServers).length ? { mcpServers } : {};
+        })(),
         // Mesmo prompt, ferramentas e configurações (CLAUDE.md, settings, skills) do Claude Code.
         systemPrompt: { type: "preset", preset: "claude_code" },
         settingSources: ["user", "project", "local"],
@@ -326,9 +341,10 @@ export class ChatSession {
         permissionMode: this.options.permissionMode ?? "default",
         // Necessário para "Liberar tudo"; só tem efeito quando a pessoa escolhe esse modo.
         allowDangerouslySkipPermissions: true,
-        // Já respondida pelo hook abaixo, a pergunta passa direto.
+        // Já respondida pelo hook abaixo, a pergunta passa direto. Ferramentas do MCP SSH do
+        // Golfinho passam pelo controle próprio do servidor (comandos sempre pedem confirmação lá).
         canUseTool: (toolName, input, options) =>
-          toolName === "AskUserQuestion" && input.answers
+          (toolName === "AskUserQuestion" && input.answers) || toolName.startsWith(`mcp__${SSH_SERVER}__`)
             ? Promise.resolve({ behavior: "allow", updatedInput: input })
             : this.approve(toolName, input, options),
         // As perguntas do Claude vão pelo hook PreToolUse, que roda em qualquer modo de permissão
@@ -475,6 +491,7 @@ export interface ChatTarget {
   permissionMode?: ChatPermissionMode | null;
   effort?: ChatEffort | null;
   mcp?: McpEndpoint | null;
+  sshMcp?: SshMcpEndpoint | null;
 }
 // Onde a conversa fica guardada. O ChatManager não sabe de banco: recebe estas funções.
 export interface ChatStorage {
@@ -487,6 +504,9 @@ export interface ChatStorage {
 // ao reabrir a tarefa, e a sessão é retomada pelo id guardado.
 export class ChatManager {
   private sessions = new Map<string, ChatBackend>();
+  // Aprovações abertas por servidores MCP do próprio Golfinho (ex.: ssh_executar),
+  // independentes do provedor em uso (Antigravity, Claude ou Codex).
+  private approvals = new Map<string, { taskId: string; resolve: (allowed: boolean) => void }>();
   constructor(
     private readonly emitFor: (taskId: string, seq: number, event: ChatEvent) => void,
     private readonly storage: ChatStorage,
@@ -499,6 +519,37 @@ export class ChatManager {
       this.emitFor(taskId, seq, event);
     };
   }
+  requestApproval(taskId: string, req: SshApprovalRequest): Promise<boolean> {
+    const id = randomUUID();
+    const emit = this.emitter(taskId);
+    return new Promise<boolean>((resolve) => {
+      const finish = (allowed: boolean) => {
+        if (!this.approvals.delete(id)) return;
+        emit({ type: "approval_resolved", id, behavior: allowed ? "allow" : "deny" });
+        resolve(allowed);
+      };
+      this.approvals.set(id, { taskId, resolve: finish });
+      if (req.signal) {
+        if (req.signal.aborted) {
+          finish(false);
+          return;
+        }
+        req.signal.addEventListener("abort", () => finish(false), { once: true });
+      }
+      emit({
+        type: "approval",
+        id,
+        toolName: req.toolName,
+        summary: req.summary,
+        canAlwaysAllow: false,
+      });
+    });
+  }
+  private denyApprovals(taskId: string) {
+    for (const [id, entry] of [...this.approvals.entries()]) {
+      if (entry.taskId === taskId) entry.resolve(false);
+    }
+  }
   send(taskId: string, target: ChatTarget, text: string, images: ChatImage[] = [], handoff?: string | null) {
     let session = this.sessions.get(taskId);
     if (!session) {
@@ -509,6 +560,7 @@ export class ChatManager {
         permissionMode: target.permissionMode ?? null,
         effort: target.effort ?? null,
         mcp: target.mcp ?? null,
+        sshMcp: target.sshMcp ?? null,
         onSession: (id) => this.storage.saveSessionId(taskId, id),
       };
       session =
@@ -532,7 +584,9 @@ export class ChatManager {
     if (this.sessions.has(taskId)) return this.storage.list(taskId);
     const items = this.storage.list(taskId);
     const answered = new Set(items.filter((i) => i.event.type === "approval_resolved").map((i) => (i.event as { id: string }).id));
-    const open = items.filter((i) => i.event.type === "approval" && !answered.has((i.event as { id: string }).id));
+    const open = items.filter(
+      (i) => i.event.type === "approval" && !answered.has((i.event as { id: string }).id) && !this.approvals.has((i.event as { id: string }).id),
+    );
     const last = [...items].reverse().find((i) => i.event.type === "status");
     const running = last !== undefined && last.event.type === "status" && last.event.state === "running";
     if (!open.length && !running) return items;
@@ -542,6 +596,11 @@ export class ChatManager {
     return this.storage.list(taskId);
   }
   decide(taskId: string, id: string, behavior: "allow" | "deny", always: boolean) {
+    const external = this.approvals.get(id);
+    if (external && external.taskId === taskId) {
+      external.resolve(behavior === "allow");
+      return;
+    }
     this.sessions.get(taskId)?.decide(id, behavior, always);
   }
   answer(taskId: string, id: string, answers: Record<string, string>) {
@@ -557,9 +616,11 @@ export class ChatManager {
     this.sessions.get(taskId)?.setEffort?.(effort);
   }
   interrupt(taskId: string) {
+    this.denyApprovals(taskId);
     this.sessions.get(taskId)?.interrupt();
   }
   stop(taskId: string) {
+    this.denyApprovals(taskId);
     this.sessions.get(taskId)?.stop();
     this.sessions.delete(taskId);
   }

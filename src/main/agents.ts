@@ -2,6 +2,7 @@ import { accessSync, constants } from "node:fs";
 import { delimiter, extname, isAbsolute, join } from "node:path";
 import type { Provider, Settings, AgentInfo } from "../shared/contracts";
 import { MEMORY_SERVER, MEMORY_TOKEN_ENV, type McpLaunch } from "./memory";
+import { SSH_SERVER, SSH_TOKEN_ENV } from "./sshMcpTypes";
 // Opções -c do Codex que ligam o servidor da memória (CLI e app-server aceitam as mesmas).
 export function codexMcpArgs(mcp: { url: string } | null | undefined): string[] {
   if (!mcp) return [];
@@ -10,6 +11,15 @@ export function codexMcpArgs(mcp: { url: string } | null | undefined): string[] 
     `mcp_servers.${MEMORY_SERVER}.url=${JSON.stringify(mcp.url)}`,
     "-c",
     `mcp_servers.${MEMORY_SERVER}.bearer_token_env_var=${JSON.stringify(MEMORY_TOKEN_ENV)}`,
+  ];
+}
+export function codexSshMcpArgs(mcp: { url: string } | null | undefined): string[] {
+  if (!mcp) return [];
+  return [
+    "-c",
+    `mcp_servers.${SSH_SERVER}.url=${JSON.stringify(mcp.url)}`,
+    "-c",
+    `mcp_servers.${SSH_SERVER}.bearer_token_env_var=${JSON.stringify(SSH_TOKEN_ENV)}`,
   ];
 }
 // Retomar reabre a conversa existente e por isso não reenvia o prompt: mandá-lo de

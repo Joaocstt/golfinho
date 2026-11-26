@@ -18,6 +18,7 @@ import type { Signal, Task } from "../shared/contracts";
 import { Shells } from "./shells";
 import { ChatManager } from "./chat";
 import { MemoryMcp } from "./memoryMcp";
+import { SshMcp } from "./sshMcp";
 import { ChatImages, IMAGE_EXTENSIONS } from "./chatImages";
 import { vaultFrom } from "./vault";
 import { configureAskpass, askpassFile } from "./ssh";
@@ -43,6 +44,7 @@ let shells: Shells | undefined;
 let chat: ChatManager | undefined;
 let office: Office | undefined;
 let memoryMcp: MemoryMcp | null = null;
+let sshMcp: SshMcp | null = null;
 let closing = false;
 let shutdownDone = false;
 const requests = new Set<Promise<unknown>>();
@@ -179,6 +181,20 @@ else {
         },
       }, shells, vaultFrom(safeStorage), chat, chatImages);
       service.useMemory(memoryMcp);
+      // Servidor MCP de análise SSH (expõe apenas os servidores que o usuário liberou para IA).
+      sshMcp = new SshMcp(
+        store,
+        join(home, "ssh-mcp"),
+        (connectionId) => service.sshPassword(connectionId),
+        (taskId, req) => chat!.requestApproval(taskId, req),
+      );
+      try {
+        await sshMcp.start();
+        service.useSshMcp(sshMcp);
+      } catch (error) {
+        console.error("SSH: servidor MCP não iniciou.", error);
+        sshMcp = null;
+      }
       service.useDesktop({ trash: (path) => shell.trashItem(path), reveal: (path) => shell.showItemInFolder(path) });
       // Escritório: a equipe de agentes trabalha no projeto escolhido. Quem pesquisa, escreve e
       // revisa só lê os arquivos; o agente de código executa o pedido numa tarefa do Golfinho, pelo
@@ -416,6 +432,7 @@ else {
       office?.stop();
       await coordinator?.shutdown();
       await memoryMcp?.stop();
+      await sshMcp?.stop();
       await Promise.allSettled([...requests]);
       logs?.flush();
       store?.close();

@@ -150,6 +150,7 @@ function Workspace() {
   const taskArea = useRef<HTMLDivElement>(null);
   const panels = useRef<Record<string, TaskWorkspaceHandle>>({});
   const [inspectorHost, setInspectorHost] = useState<HTMLDivElement | null>(null);
+  const [chatTarget, setChatTarget] = useState<{ taskId: string; seq: number } | null>(null);
   useEffect(() => {
     if (!permissionTarget || selected !== permissionTarget.taskId) return;
     const panel = panels.current[permissionTarget.taskId];
@@ -157,6 +158,13 @@ function Workspace() {
     panel.openPermission(permissionTarget.source, permissionTarget.approvalId);
     setPermissionTarget(null);
   }, [permissionTarget, selected, open]);
+  useEffect(() => {
+    if (!chatTarget || selected !== chatTarget.taskId) return;
+    const panel = panels.current[chatTarget.taskId];
+    if (!panel) return;
+    panel.openChatMessage(chatTarget.seq);
+    setChatTarget(null);
+  }, [chatTarget, selected, open]);
   const [dashboard, setDashboard] = useState(false);
   const [sshView, setSshView] = useState(false);
   const [helpView, setHelpView] = useState(false);
@@ -1302,7 +1310,11 @@ function Workspace() {
                   focused={selected === id} visible={splitTasks.length === 2 ? splitTasks.includes(id) : selected === id}
                   column={splitTasks.indexOf(id) === 1 ? 3 : 1} inspectorHost={inspectorHost}
                   onFocus={setSelected} onClose={closeTask} onChanged={refresh} onError={report} onDirtyChange={setDirty}
-                  onTerminalInput={answeredTerminal} />;
+                  onTerminalInput={answeredTerminal}
+                  onOpenConversation={(targetTaskId, seq) => {
+                    openTask(targetTaskId);
+                    setChatTarget({ taskId: targetTaskId, seq });
+                  }} />;
               })}
               {splitTasks.length === 2 && <div className="task-divider" role="separator"
                 aria-label="Divisão entre tarefas" aria-orientation="vertical" tabIndex={0}

@@ -118,6 +118,7 @@ export interface TaskWorkspaceHandle {
   /** true na hora quando não há alteração; com alteração, a resposta da confirmação. */
   canLeave(): boolean | Promise<boolean>;
   openPermission(source: "Terminal" | "Chat", approvalId?: string): void;
+  openChatMessage(seq: number): void;
 }
 interface Props {
   task: Task;
@@ -132,9 +133,10 @@ interface Props {
   onError: (error: unknown) => void;
   onDirtyChange: (dirty: boolean) => void;
   onTerminalInput: (taskId: string, data: string) => void;
+  onOpenConversation?: (taskId: string, seq: number) => void;
 }
 export const TaskWorkspace = forwardRef<TaskWorkspaceHandle, Props>(function TaskWorkspace(
-  { task, snapshot, focused, visible, column, inspectorHost, onFocus, onClose, onChanged, onError: report, onDirtyChange, onTerminalInput }, ref,
+  { task, snapshot, focused, visible, column, inspectorHost, onFocus, onClose, onChanged, onError: report, onDirtyChange, onTerminalInput, onOpenConversation }, ref,
 ) {
   const selected = task.id;
   const selectedRef = useRef(selected);
@@ -148,6 +150,7 @@ export const TaskWorkspace = forwardRef<TaskWorkspaceHandle, Props>(function Tas
   const [sessionMenu, setSessionMenu] = useState(false);
   const [permissionFocus, setPermissionFocus] = useState(0);
   const [approvalTarget, setApprovalTarget] = useState<{ id: string; version: number }>();
+  const [chatJumpTarget, setChatJumpTarget] = useState<{ seq: number; version: number }>();
   const resizeCleanup = useRef<() => void>(() => {});
   useEffect(() => () => resizeCleanup.current(), []);
   const detailEpoch = useRef(0);
@@ -244,6 +247,18 @@ export const TaskWorkspace = forwardRef<TaskWorkspaceHandle, Props>(function Tas
       // Se a aba de destino já está visível, as abas apenas trocam de lado:
       // o editor continua montado e deve manter sua proteção contra descarte.
       if (tab === "Arquivos" && !shown(source))
+        whenLeaving(() => {
+          setDirty(false);
+          open();
+        });
+      else open();
+    },
+    openChatMessage(seq) {
+      const open = () => {
+        selectTab("Chat");
+        setChatJumpTarget((current) => ({ seq, version: (current?.version ?? 0) + 1 }));
+      };
+      if (tab === "Arquivos" && !shown("Chat"))
         whenLeaving(() => {
           setDirty(false);
           open();
@@ -755,6 +770,9 @@ export const TaskWorkspace = forwardRef<TaskWorkspaceHandle, Props>(function Tas
                   <div className="tab-slot bare" style={place("Chat")}>
                     <ChatPane taskId={task.id} provider={task.provider} model={task.model ?? null} permissionMode={task.permissionMode ?? null} effort={task.effort ?? null} draft={chatDraft} onDraftChange={setChatDraft} onError={report}
                       approvalTarget={approvalTarget}
+                      jumpTarget={chatJumpTarget}
+                      onOpenConversation={onOpenConversation}
+                      active={focused && visible}
                       onOpenFile={(path) =>
                         navigate(() => {
                           // Somente leitura: para editar, o arquivo é aberto pela árvore.

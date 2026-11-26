@@ -1,8 +1,9 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import type { ChatEvent } from "../shared/contracts";
-import { codexMcpArgs, executablePath } from "./agents";
+import { codexMcpArgs, codexSshMcpArgs, executablePath } from "./agents";
 import { MEMORY_TOKEN_ENV } from "./memory";
+import { SSH_TOKEN_ENV } from "./sshMcpTypes";
 import { launchTarget } from "./shellCommand";
 import { linuxArg, wslChild, wslTarget } from "./wsl";
 import type { ChatBackend, ChatOptions } from "./chat";
@@ -121,14 +122,20 @@ export class CodexChatSession implements ChatBackend {
     return this.wsl ? this.wsl.linux : this.cwd;
   }
   private async launch() {
-    // A memória do projeto entra como servidor MCP só desta conversa; o token vai pelo ambiente.
+    // A memória do projeto e a análise SSH entram como servidores MCP só desta conversa; os tokens vão pelo ambiente.
     const mcp = this.options.mcp;
-    const args = ["app-server", ...codexMcpArgs(mcp)];
+    const sshMcp = this.options.sshMcp;
+    const args = ["app-server", ...codexMcpArgs(mcp), ...codexSshMcpArgs(sshMcp)];
+    const extraEnv: Record<string, string> = {
+      ...(mcp ? { [MEMORY_TOKEN_ENV]: mcp.token } : {}),
+      ...(sshMcp ? { [SSH_TOKEN_ENV]: sshMcp.token } : {}),
+    };
+    const extraKeys = Object.keys(extraEnv);
     const wsl = this.wsl;
     let child: ChildProcessWithoutNullStreams;
     if (wsl) {
-      const env = mcp ? { ...process.env, [MEMORY_TOKEN_ENV]: mcp.token } : process.env;
-      const target = wslChild(wsl, this.executable, args, env, mcp ? [MEMORY_TOKEN_ENV] : []);
+      const env = extraKeys.length ? { ...process.env, ...extraEnv } : process.env;
+      const target = wslChild(wsl, this.executable, args, env, extraKeys);
       child = spawn(target.file, target.args, { ...target.options, stdio: ["pipe", "pipe", "pipe"] });
     } else {
       const path = executablePath(this.executable);
@@ -138,7 +145,7 @@ export class CodexChatSession implements ChatBackend {
         cwd: this.cwd,
         stdio: ["pipe", "pipe", "pipe"],
         windowsHide: true,
-        ...(mcp ? { env: { ...process.env, [MEMORY_TOKEN_ENV]: mcp.token } } : {}),
+        ...(extraKeys.length ? { env: { ...process.env, ...extraEnv } } : {}),
       });
     }
     this.child = child;

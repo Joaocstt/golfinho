@@ -27,6 +27,7 @@ const settings = z
               .max(4096)
               .refine((p) => p.startsWith("/"), "Use o caminho absoluto da chave.")
               .nullable(),
+            allowAi: z.boolean().optional(),
           })
           .strict(),
       )
@@ -372,5 +373,13 @@ export const requestSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("memoryDelete"), id }).strict(),
   z
     .object({ action: z.literal("memoryFromChat"), taskId: id, text: z.string().trim().min(1).max(200_000) })
+    .strict(),
+  z
+    .object({
+      action: z.literal("chatSearch"),
+      query: z.string().trim().min(1).max(300),
+      taskId: id.optional(),
+      limit: z.number().int().min(1).max(100).optional(),
+    })
     .strict(),
 ]);

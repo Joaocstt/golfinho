@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { FolderTree, KeyRound, Lock, Plus, Server, Terminal, Trash2 } from "lucide-react";
+import { Bot, FolderTree, KeyRound, Lock, Plus, Server, Terminal, Trash2 } from "lucide-react";
 import type { SshConnection } from "../shared/contracts";
 import { Badge, Button, Field, TextInput, useConfirm } from "./ui";
 const emptyForm = { name: "", host: "", user: "", port: "22", identityFile: "" };
@@ -74,7 +74,7 @@ export function SshPanel({
         <div className="ssh-head">
           <div>
             <h1>SSH</h1>
-            <p>Conecte em servidores pelo terminal do Golfinho. Os arquivos do servidor aparecem na barra lateral.</p>
+            <p>Conecte em servidores pelo terminal do Golfinho e libere os que a IA pode analisar no chat.</p>
           </div>
           {!creating && (
             <Button variant="primary" icon={<Plus size={14} />} onClick={() => setCreating(true)}>
@@ -186,8 +186,20 @@ export function SshPanel({
                     {c.port !== 22 && `:${c.port}`}
                   </code>
                 </div>
-                {auth(c)}
+                <div className="ssh-conn-badges">
+                  {c.allowAi && (
+                    <Badge tone="brand">
+                      <Bot size={11} /> IA
+                    </Badge>
+                  )}
+                  {auth(c)}
+                </div>
               </div>
+              {c.allowAi && !c.identityFile && !passwords.includes(c.id) && (
+                <p className="ssh-ai-hint">
+                  Para a IA consultar este servidor sem travar na senha, guarde a senha no cofre ou configure uma chave privada.
+                </p>
+              )}
               <div className="ssh-conn-actions">
                 <Button
                   size="sm"
@@ -207,6 +219,19 @@ export function SshPanel({
                   onClick={() => onExpand(c)}
                 >
                   {expanded[c.id] ? "Esconder arquivos" : "Arquivos"}
+                </Button>
+                <Button
+                  size="sm"
+                  className={c.allowAi ? "ssh-ai-on" : undefined}
+                  icon={<Bot size={13} />}
+                  aria-pressed={Boolean(c.allowAi)}
+                  aria-label={c.allowAi ? `Bloquear IA em ${c.name}` : `Liberar IA em ${c.name}`}
+                  title="Permite que o Antigravity, Claude e Codex analisem este servidor no chat. Comandos sempre pedem confirmação."
+                  onClick={() =>
+                    void onSave(connections.map((x) => (x.id === c.id ? { ...x, allowAi: !x.allowAi } : x))).catch(onError)
+                  }
+                >
+                  {c.allowAi ? "IA liberada" : "Liberar IA"}
                 </Button>
                 {!c.identityFile && (
                   <Button

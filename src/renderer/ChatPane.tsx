@@ -1,14 +1,15 @@
 import React, { createContext, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Brain, CornerDownLeft, Lock, Play, Plus, Square, X } from "lucide-react";
-import type { ChatBlock, ChatCommandOption, ChatEvent, ChatHistoryItem, ChatEffort, ChatModelOption, ChatPermissionMode, Provider, Request } from "../shared/contracts";
+import { Brain, ChevronDown, ChevronUp, CornerDownLeft, Lock, Play, Plus, Search, Square, X } from "lucide-react";
+import type { ChatBlock, ChatCommandOption, ChatEvent, ChatHistoryItem, ChatEffort, ChatModelOption, ChatPermissionMode, ChatSearchHit, Provider, Request } from "../shared/contracts";
 import { currentContext } from "../shared/chatContext";
 import { CommandMenu, ModelMenu, PermissionMenu, matchCommands } from "./ChatMenus";
 import { QuestionCard } from "./ChatQuestions";
 import { AgentIcon } from "./agentIcons";
 import { absolutePathIn, asFilePath } from "./filePaths";
 import { FilePreview } from "./FilePreview";
+import { findShortcutLabel, isFindShortcut } from "./shortcuts";
 export interface ChatPaneProps {
   taskId: string;
   provider: string;
@@ -21,6 +22,12 @@ export interface ChatPaneProps {
   onDraftChange: (draft: string) => void;
   onError: (e: unknown) => void;
   approvalTarget?: { id: string; version: number };
+  /** Mensagem específica a abrir e destacar (vinda da busca entre conversas). */
+  jumpTarget?: { seq: number; version: number };
+  /** Abre outra conversa numa mensagem específica (usado na busca "Todas as conversas"). */
+  onOpenConversation?: (taskId: string, seq: number) => void;
+  /** Controla se o atalho global Ctrl+F / Cmd+F pertence a este painel de chat. */
+  active?: boolean;
   /** Chat bloqueado enquanto a sessão da tarefa não é retomada: aviso e ação no lugar do campo. */
   locked?: { message: string; actionLabel: string; onAction: () => void; busy?: boolean } | null;
   /** Abre o arquivo no editor da aba Arquivos. */
@@ -81,6 +88,36 @@ const COMPOSER_MIN_HEIGHT = 24;
 const COMPOSER_MAX_HEIGHT = 176;
 const isImageFile = (file: File) => file.type.startsWith("image/") || /\.(png|jpe?g|gif|webp)$/i.test(file.name);
 const request = <T,>(r: Request) => window.golfinho.request(r) as Promise<T>;
+function foldSearch(value: string): string {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+function eventSearchText(event: ChatEvent): string {
+  switch (event.type) {
+    case "user":
+      return event.text;
+    case "assistant":
+      return event.blocks
+        .map((b) => (b.kind === "text" || b.kind === "thinking" ? b.text : `${b.name} ${b.summary}`))
+        .join("\n");
+    case "tool_result":
+      return event.text;
+    case "approval":
+      return [
+        event.toolName,
+        event.summary,
+        ...(event.questions?.flatMap((q) => [q.header, q.question, ...q.options.map((o) => o.label)]) ?? []),
+      ].join("\n");
+    case "status":
+      return event.message ?? "";
+    case "agent_changed":
+      return `${event.from} ${event.to} ${event.handoff ?? ""}`;
+    default:
+      return "";
+  }
+}
 // Preview das imagens: o main confere o caminho e devolve um data URL; aqui só fica o cache.
 const previews = new Map<string, string>();
 function useImage(path: string) {
@@ -322,9 +359,30 @@ const Blocks = memo(function Blocks({ blocks, results }: { blocks: ChatBlock[]; 
     </>
   );
 });
-export function ChatPane({ taskId, provider, model, permissionMode, effort, draft, onDraftChange, onError, approvalTarget, locked, onOpenFile }: ChatPaneProps) {
+export function ChatPane({ taskId, provider, model, permissionMode, effort, draft, onDraftChange, onError, approvalTarget, jumpTarget, onOpenConversation, active = true, locked, onOpenFile }: ChatPaneProps) {
   const [preview, setPreview] = useState<string | null>(null);
   const [items, setItems] = useState<ChatHistoryItem[]>([]);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchScope, setSearchScope] = useState<"current" | "all">("current");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [matchIndex, setMatchIndex] = useState(0);
+  const [allHits, setAllHits] = useState<ChatSearchHit[]>([]);
+  const [allLoading, setAllLoading] = useState(false);
+  const [allActive, setAllActive] = useState(0);
+  const [pinnedSeq, setPinnedSeq] = useState<number | null>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const openChatSearch = useCallback(() => {
+    setSearchOpen(true);
+    requestAnimationFrame(() => {
+      searchInputRef.current?.focus();
+      searchInputRef.current?.select();
+    });
+  }, []);
+  const closeChatSearch = useCallback(() => {
+    setSearchOpen(false);
+    setPinnedSeq(null);
+    composerRef.current?.focus();
+  }, []);
   // Modelos informados pela CLI (com versão); enquanto não chegam, ou se falhar, fica a lista fixa.
   const [cliModels, setCliModels] = useState<ChatModelOption[] | null>(null);
   useEffect(() => {
@@ -487,6 +545,94 @@ export function ChatPane({ taskId, provider, model, permissionMode, effort, draf
       if (event.type === "assistant") for (const b of event.blocks) if (b.kind === "tool" && b.id) ids.add(b.id);
     return ids;
   }, [events]);
+  // Mapeia toolUseId → seq da mensagem do assistente para que buscas em resultados embutidos rolem até o cartão.
+  const toolOwnerSeq = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const item of items)
+      if (item.event.type === "assistant")
+        for (const b of item.event.blocks) if (b.kind === "tool" && b.id) map.set(b.id, item.seq);
+    return map;
+  }, [items]);
+  const resolveDisplaySeq = useCallback(
+    (seq: number) => {
+      const found = items.find((item) => item.seq === seq);
+      if (found?.event.type === "tool_result" && found.event.toolUseId)
+        return toolOwnerSeq.get(found.event.toolUseId) ?? seq;
+      return seq;
+    },
+    [items, toolOwnerSeq],
+  );
+  // Atalho global Ctrl+F / Cmd+F quando este chat está ativo (não rouba foco de terminal nem editor).
+  useEffect(() => {
+    if (!active) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!isFindShortcut(e)) return;
+      const target = e.target instanceof Element ? e.target : null;
+      if (target?.closest(".xterm, .monaco-editor, .shell-pane, .terminal-pane")) return;
+      e.preventDefault();
+      openChatSearch();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [active, openChatSearch]);
+  const normalizedQuery = useMemo(() => foldSearch(searchQuery.trim()), [searchQuery]);
+  const currentMatches = useMemo(() => {
+    if (!searchOpen || searchScope !== "current" || !normalizedQuery) return [];
+    const seen = new Set<number>();
+    const list: number[] = [];
+    for (const item of items) {
+      const text = eventSearchText(item.event);
+      if (!text || !foldSearch(text).includes(normalizedQuery)) continue;
+      const displaySeq =
+        item.event.type === "tool_result" && item.event.toolUseId
+          ? (toolOwnerSeq.get(item.event.toolUseId) ?? item.seq)
+          : item.seq;
+      if (!seen.has(displaySeq)) {
+        seen.add(displaySeq);
+        list.push(displaySeq);
+      }
+    }
+    return list;
+  }, [items, searchOpen, searchScope, normalizedQuery, toolOwnerSeq]);
+  const matchSet = useMemo(() => new Set(currentMatches), [currentMatches]);
+  useEffect(() => {
+    setMatchIndex(0);
+  }, [normalizedQuery, taskId, searchScope]);
+  const activeMatchSeq =
+    searchOpen && searchScope === "current" && currentMatches.length > 0
+      ? currentMatches[Math.min(matchIndex, currentMatches.length - 1)]
+      : pinnedSeq;
+  // Busca em todas as conversas do Golfinho (com pequeno debounce).
+  useEffect(() => {
+    if (!searchOpen || searchScope !== "all") return;
+    const trimmed = searchQuery.trim();
+    if (!trimmed) {
+      setAllHits([]);
+      setAllLoading(false);
+      return;
+    }
+    let alive = true;
+    setAllLoading(true);
+    const timer = setTimeout(() => {
+      request<ChatSearchHit[]>({ action: "chatSearch", query: trimmed, taskId })
+        .then((hits) => {
+          if (alive) {
+            setAllHits(Array.isArray(hits) ? hits : []);
+            setAllActive(0);
+          }
+        })
+        .catch(() => {
+          if (alive) setAllHits([]);
+        })
+        .finally(() => {
+          if (alive) setAllLoading(false);
+        });
+    }, 150);
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
+  }, [searchOpen, searchScope, searchQuery, taskId]);
   const resolved = useMemo(() => {
     const map = new Map<string, { behavior: "allow" | "deny"; answers?: Record<string, string> }>();
     for (const event of events)
@@ -559,8 +705,53 @@ export function ChatPane({ taskId, provider, model, permissionMode, effort, draf
   // Últimas mensagens; as anteriores entram com "Carregar anteriores". A lista é memorizada:
   // digitar no campo não refaz as mensagens.
   const [shown, setShown] = useState(MESSAGES_PAGE);
-  useEffect(() => setShown(MESSAGES_PAGE), [taskId]);
+  useEffect(() => {
+    setShown(MESSAGES_PAGE);
+    setPinnedSeq(null);
+  }, [taskId]);
   const shownItems = items.length > shown ? items.slice(items.length - shown) : items;
+  const revealedJump = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (!jumpTarget) return;
+    const key = `${jumpTarget.seq}:${jumpTarget.version}`;
+    if (revealedJump.current === key) return;
+    const targetSeq = resolveDisplaySeq(jumpTarget.seq);
+    const index = items.findIndex((item) => item.seq === targetSeq);
+    if (index < 0) return;
+    if (index < items.length - shown) {
+      setShown(items.length - index);
+      return;
+    }
+    setPinnedSeq(targetSeq);
+    const el = logRef.current?.querySelector<HTMLElement>(`[data-seq="${targetSeq}"]`);
+    if (el) {
+      el.scrollIntoView({ block: "center" });
+      revealedJump.current = key;
+    }
+  }, [items, shown, jumpTarget, resolveDisplaySeq]);
+  useEffect(() => {
+    if (activeMatchSeq == null) return;
+    const index = items.findIndex((item) => item.seq === activeMatchSeq);
+    if (index < 0) return;
+    if (index < items.length - shown) {
+      setShown(items.length - index);
+      return;
+    }
+    const el = logRef.current?.querySelector<HTMLElement>(`[data-seq="${activeMatchSeq}"]`);
+    el?.scrollIntoView({ block: "center" });
+  }, [activeMatchSeq, items, shown]);
+  function openHit(hit: ChatSearchHit) {
+    if (hit.taskId === taskId) {
+      const displaySeq = resolveDisplaySeq(hit.seq);
+      setPinnedSeq(displaySeq);
+      setSearchScope("current");
+      return;
+    }
+    if (onOpenConversation) {
+      setSearchOpen(false);
+      onOpenConversation(hit.taskId, hit.seq);
+    }
+  }
   const revealedApproval = useRef<string | undefined>(undefined);
   useEffect(() => {
     if (!approvalTarget) return;
@@ -579,9 +770,11 @@ export function ChatPane({ taskId, provider, model, permissionMode, effort, draf
   const messages = useMemo(
     () =>
       shownItems.map(({ seq, event }, i) => {
+          const matchClass =
+            activeMatchSeq === seq ? " chat-match chat-match-active" : matchSet.has(seq) ? " chat-match" : "";
           if (event.type === "user")
             return (
-              <div key={seq} className="chat-user">
+              <div key={seq} data-seq={seq} className={`chat-user${matchClass}`}>
                 {event.images?.length ? (
                   <div className="chat-thumbs">
                     {event.images.map((path) => (
@@ -596,7 +789,8 @@ export function ChatPane({ taskId, provider, model, permissionMode, effort, draf
             return (
               <div
                 key={seq}
-                className="chat-assistant"
+                data-seq={seq}
+                className={`chat-assistant${matchClass}`}
                 data-agent={shownItems[i - 1]?.event.type === "user" ? (LABELS[provider] ?? provider) : undefined}
               >
                 <Blocks blocks={event.blocks} results={results} />
@@ -612,7 +806,7 @@ export function ChatPane({ taskId, provider, model, permissionMode, effort, draf
             const text = event.text.length > RESULT_LIMIT ? `${event.text.slice(0, RESULT_LIMIT)}…` : event.text;
             const summary = (event.text.split("\n")[0] ?? "").slice(0, 140) || "sem saída";
             return (
-              <details key={seq} className={event.isError ? "chat-result-block error" : "chat-result-block"}>
+              <details key={seq} data-seq={seq} className={`${event.isError ? "chat-result-block error" : "chat-result-block"}${matchClass}`}>
                 <summary>
                   <span className="chat-result-mark">{event.isError ? "✗" : "✓"}</span> <ResultLine line={summary} />
                   {event.text.includes("\n") && (
@@ -626,7 +820,7 @@ export function ChatPane({ taskId, provider, model, permissionMode, effort, draf
           if (event.type === "approval" && event.questions) {
             const outcome = resolved.get(event.id);
             return (
-              <div key={seq} className="chat-approval-question" data-approval-id={event.id}>
+              <div key={seq} data-seq={seq} className={`chat-approval-question${matchClass}`} data-approval-id={event.id}>
                 <QuestionCard
                   questions={event.questions}
                   answered={outcome ? (outcome.answers ?? null) : undefined}
@@ -639,7 +833,7 @@ export function ChatPane({ taskId, provider, model, permissionMode, effort, draf
           if (event.type === "approval") {
             const outcome = resolved.get(event.id)?.behavior;
             return (
-              <div key={seq} className="chat-approval" data-approval-id={event.id}>
+              <div key={seq} data-seq={seq} className={`chat-approval${matchClass}`} data-approval-id={event.id}>
                 <div className="chat-approval-title">Permitir {event.toolName}?</div>
                 <code>{event.summary}</code>
                 {outcome ? (
@@ -660,13 +854,13 @@ export function ChatPane({ taskId, provider, model, permissionMode, effort, draf
           }
           if (event.type === "status" && event.state === "idle" && event.message)
             return (
-              <p key={seq} className="chat-note">
+              <p key={seq} data-seq={seq} className={`chat-note${matchClass}`}>
                 {event.message}
               </p>
             );
           if (event.type === "agent_changed")
             return (
-              <div key={seq}>
+              <div key={seq} data-seq={seq} className={matchClass.trim() || undefined}>
                 <div className="chat-divider" role="separator">
                   <span>
                     Agente trocado de {event.from} para {event.to}. A conversa anterior não é retomada.
@@ -682,17 +876,172 @@ export function ChatPane({ taskId, provider, model, permissionMode, effort, draf
             );
           if (event.type === "status" && event.state === "error")
             return (
-              <p key={seq} className="chat-error">
+              <p key={seq} data-seq={seq} className={`chat-error${matchClass}`}>
                 {event.message ?? "Algo deu errado."}
               </p>
             );
           return null;
       }),
-    [shownItems, resolved, results, toolIds, provider, decide],
+    [shownItems, resolved, results, toolIds, provider, decide, activeMatchSeq, matchSet],
   );
   return (
     <OpenFile.Provider value={setPreview}>
-    <div className={`chat-pane chat-${provider}`} onDragOver={dragOver} onDrop={dropFiles}>
+    <div
+      className={`chat-pane chat-${provider}`}
+      onDragOver={dragOver}
+      onDrop={dropFiles}
+      onKeyDown={(e) => {
+        if (isFindShortcut(e.nativeEvent)) {
+          e.preventDefault();
+          e.stopPropagation();
+          openChatSearch();
+        }
+      }}
+    >
+      <div className="chat-search-chrome">
+        <button
+          type="button"
+          className="chat-search-toggle"
+          title={`Buscar no chat (${findShortcutLabel()})`}
+          aria-label="Buscar no chat"
+          aria-pressed={searchOpen}
+          onClick={() => (searchOpen ? closeChatSearch() : openChatSearch())}
+        >
+          <Search size={13} />
+        </button>
+      </div>
+      {searchOpen && (
+        <div className="chat-search" role="search" aria-label="Buscar no chat">
+          <div className="chat-search-row">
+            <Search size={13} className="chat-search-icon" aria-hidden="true" />
+            <input
+              ref={searchInputRef}
+              type="search"
+              aria-label="Buscar mensagens"
+              placeholder={searchScope === "current" ? "Buscar nesta conversa…" : "Buscar em todas as conversas…"}
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") {
+                  e.preventDefault();
+                  closeChatSearch();
+                  return;
+                }
+                if (searchScope === "current" && e.key === "Enter" && currentMatches.length > 0) {
+                  e.preventDefault();
+                  const step = e.shiftKey ? -1 : 1;
+                  setMatchIndex((i) => (i + step + currentMatches.length) % currentMatches.length);
+                  return;
+                }
+                if (searchScope === "all" && allHits.length > 0) {
+                  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+                    e.preventDefault();
+                    const step = e.key === "ArrowDown" ? 1 : -1;
+                    setAllActive((i) => (i + step + allHits.length) % allHits.length);
+                    return;
+                  }
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    openHit(allHits[Math.min(allActive, allHits.length - 1)]);
+                  }
+                }
+              }}
+            />
+            <div className="chat-search-scopes" role="tablist" aria-label="Escopo da busca">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={searchScope === "current"}
+                className={searchScope === "current" ? "active" : undefined}
+                onClick={() => setSearchScope("current")}
+              >
+                Conversa
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={searchScope === "all"}
+                className={searchScope === "all" ? "active" : undefined}
+                onClick={() => setSearchScope("all")}
+              >
+                Todas
+              </button>
+            </div>
+            {searchScope === "current" ? (
+              <>
+                <span className="chat-search-count" role="status">
+                  {currentMatches.length
+                    ? `${Math.min(matchIndex, currentMatches.length - 1) + 1} de ${currentMatches.length}`
+                    : searchQuery.trim()
+                      ? "Nenhum resultado"
+                      : ""}
+                </span>
+                <button
+                  type="button"
+                  aria-label="Resultado anterior"
+                  title="Resultado anterior (Shift+Enter)"
+                  disabled={!currentMatches.length}
+                  onClick={() => setMatchIndex((i) => (i - 1 + currentMatches.length) % currentMatches.length)}
+                >
+                  <ChevronUp size={13} />
+                </button>
+                <button
+                  type="button"
+                  aria-label="Próximo resultado"
+                  title="Próximo resultado (Enter)"
+                  disabled={!currentMatches.length}
+                  onClick={() => setMatchIndex((i) => (i + 1) % currentMatches.length)}
+                >
+                  <ChevronDown size={13} />
+                </button>
+              </>
+            ) : (
+              <span className="chat-search-count" role="status">
+                {allLoading
+                  ? "Buscando…"
+                  : allHits.length
+                    ? `${allHits.length} ${allHits.length === 1 ? "resultado" : "resultados"}`
+                    : searchQuery.trim()
+                      ? "Nenhum resultado"
+                      : ""}
+              </span>
+            )}
+            <button type="button" aria-label="Fechar busca do chat" title="Fechar busca (Esc)" onClick={closeChatSearch}>
+              <X size={13} />
+            </button>
+          </div>
+          {searchScope === "all" && searchQuery.trim() && (
+            <div className="chat-search-results" role="listbox" aria-label="Resultados em todas as conversas">
+              {allHits.length === 0 && !allLoading ? (
+                <p className="chat-search-empty">Nenhuma conversa encontrada para "{searchQuery.trim()}".</p>
+              ) : (
+                allHits.map((hit, idx) => (
+                  <button
+                    key={`${hit.taskId}:${hit.seq}`}
+                    type="button"
+                    role="option"
+                    aria-selected={idx === allActive}
+                    className={`chat-search-hit${idx === allActive ? " active" : ""}`}
+                    onMouseEnter={() => setAllActive(idx)}
+                    onClick={() => openHit(hit)}
+                  >
+                    <span className="chat-search-hit-head">
+                      <strong>{hit.taskTitle}</strong>
+                      {hit.taskId === taskId ? (
+                        <em className="chat-search-hit-tag">Atual</em>
+                      ) : hit.projectName ? (
+                        <em className="chat-search-hit-project">{hit.projectName}</em>
+                      ) : null}
+                      <small>{hit.who}</small>
+                    </span>
+                    <span className="chat-search-hit-excerpt">{hit.excerpt}</span>
+                  </button>
+                ))
+              )}
+            </div>
+          )}
+        </div>
+      )}
       <div className="chat-log" ref={logRef} onScroll={onLogScroll}>
         {items.length === 0 && (
           <div className="chat-welcome">

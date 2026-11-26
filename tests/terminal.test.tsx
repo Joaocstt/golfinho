@@ -83,3 +83,18 @@ it('Ctrl+Shift+V cola o caminho da imagem da área de transferência na CLI', as
  expect(request).toHaveBeenCalledWith({ action: 'pasteImage' });
 });
 it('saída mantém viewport antigo e voltar ao fim é explícito, restaura por tarefa',async()=>{const rendered=render(<TerminalPane {...props} taskId="scroll-task"/>);await waitFor(()=>expect(terminal().write).toHaveBeenCalled());act(()=>{terminal().buffer.active.viewportY=25;terminal().scroll(25);});act(()=>signal({kind:'terminal',taskId:'scroll-task',data:'novo',offset:9}));expect(terminal().scrollToLine).toHaveBeenCalledWith(25);expect(screen.getByRole('button',{name:'Voltar ao fim do terminal'})).toBeTruthy();rendered.unmount();render(<TerminalPane {...props} taskId="scroll-task"/>);await waitFor(()=>expect(terminal().scrollToLine).toHaveBeenCalledWith(25));fireEvent.click(screen.getByRole('button',{name:'Voltar ao fim do terminal'}));expect(terminal().scrollToBottom).toHaveBeenCalled();expect(screen.queryByRole('button',{name:'Voltar ao fim do terminal'})).toBeNull();});
+it('ShellPane abre busca com Ctrl+F e Cmd+F, navega resultados e fecha com Escape',async()=>{
+ render(<ShellPane scopeKey="shell-search" openSession={async()=>'s1'} onError={vi.fn()}/>);
+ expect(terminal().key(new KeyboardEvent('keydown',{key:'f',ctrlKey:true,cancelable:true}))).toBe(false);
+ const box=await screen.findByRole('searchbox',{name:'Texto no shell'});
+ fireEvent.change(box,{target:{value:'nginx'}});
+ await waitFor(()=>expect(search().findNext).toHaveBeenCalledWith('nginx',expect.any(Object)));
+ expect(screen.getByRole('status').textContent).toContain('1 de 3');
+ fireEvent.keyDown(box,{key:'Enter',shiftKey:true});
+ expect(search().findPrevious).toHaveBeenCalled();
+ fireEvent.keyDown(box,{key:'Escape'});
+ expect(screen.queryByRole('searchbox')).toBeNull();
+ // macOS Cmd+F
+ expect(terminal().key(new KeyboardEvent('keydown',{key:'f',metaKey:true,cancelable:true}))).toBe(false);
+ expect(await screen.findByRole('searchbox',{name:'Texto no shell'})).toBeTruthy();
+});

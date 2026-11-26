@@ -33,6 +33,17 @@ it("usa Path como resumo legível para ferramentas de arquivo do agy", () => {
   });
   expect(events).toContainEqual({ type: "tool_result", toolUseId: "0:4", text: "20 lines", isError: false });
 });
+it("formata resumo de ferramentas SSH no chat do Antigravity", () => {
+  const events: ChatEvent[] = [];
+  const session = new AntigravityChatSession("/repo", "agy", (e) => events.push(e));
+  session.handleLine(
+    '{"event":"step_update","step_update":{"conversation_id":"c-4","step_index":1,"state":"DONE","step_type":"tool","tool_info":{"name":"call_mcp_tool","parameters":{"server_name":"golfinho_ssh","tool_name":"ssh_executar","arguments":{"servidor":"Produção","comando":"docker ps"}},"output":"CONTAINER"}}}',
+  );
+  expect(events).toContainEqual({
+    type: "assistant",
+    blocks: [{ kind: "tool", id: "0:1", name: "ssh_executar", summary: "Produção: docker ps", input: { servidor: "Produção", comando: "docker ps" } }],
+  });
+});
 it("mostra erro quando o turno falha e ignora linhas inválidas", () => {
   const events: ChatEvent[] = [];
   const session = new AntigravityChatSession("/repo", "agy", (e) => events.push(e));

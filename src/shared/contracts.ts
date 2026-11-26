@@ -118,6 +118,8 @@ export interface SshConnection {
   port: number;
   /** Chave privada, se houver. Senhas nunca são guardadas pelo app. */
   identityFile: string | null;
+  /** Libera este servidor para consulta pela IA no chat (comandos sempre pedem confirmação). */
+  allowAi?: boolean;
 }
 export interface SshListing {
   path: string;
@@ -328,6 +330,7 @@ export type Request =
   | { action: "chatCompact"; taskId: string }
   | { action: "chatInterrupt"; taskId: string }
   | { action: "chatHistory"; taskId: string }
+  | { action: "chatSearch"; query: string; taskId?: string; limit?: number }
   | { action: "chatModels"; taskId: string }
   | { action: "chatCommands"; taskId: string }
   | { action: "saveFile"; taskId: string; path: string; content: string }
@@ -383,6 +386,15 @@ export interface WslAgents {
   distro: string;
   available: Partial<Record<Provider, boolean>>;
 }
+export interface ChatSearchHit {
+  taskId: string;
+  taskTitle: string;
+  projectId: string;
+  projectName: string;
+  seq: number;
+  who: string;
+  excerpt: string;
+}
 export type Response =
   | OfficeState
   | OfficeDecision
@@ -405,6 +417,7 @@ export type Response =
   | Check[]
   | TerminalReplay
   | ChatHistoryItem[]
+  | ChatSearchHit[]
   | string[]
   | ProjectRefs
   | DeleteInfo

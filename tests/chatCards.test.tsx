@@ -202,3 +202,60 @@ it("chat do Antigravity usa a marca própria em vez do símbolo do Claude", asyn
   const claude = mountWith([], { provider: "claude" });
   expect(claude.container.querySelector(".chat-welcome .chat-spark")?.textContent).toBe("✻");
 });
+
+it("Ctrl+F e Cmd+F abrem busca na conversa atual e em todas as conversas", async () => {
+  const onOpenConversation = vi.fn();
+  const events: ChatEvent[] = [
+    { type: "user", text: "Verifique a configuração do Nginx" },
+    { type: "assistant", blocks: [{ kind: "text", text: "A configuração está em /etc/nginx/site.conf" }] },
+  ];
+  const items: ChatHistoryItem[] = events.map((event, i) => ({ seq: i + 1, event }));
+  const request = vi.fn(async (r: { action: string; query?: string }) => {
+    if (r.action === "chatHistory") return items;
+    if (r.action === "chatSearch") {
+      return [
+        {
+          taskId: "other-task",
+          taskTitle: "Deploy VPS",
+          projectId: "p2",
+          projectName: "Infra",
+          seq: 42,
+          who: "agente",
+          excerpt: "…recarregando configuracao do Nginx…",
+        },
+      ];
+    }
+    return null;
+  });
+  window.golfinho = {
+    request,
+    subscribe: () => () => {},
+  } as unknown as typeof window.golfinho;
+
+  const { container } = render(
+    <ChatPane taskId="t" provider="antigravity" draft="" onDraftChange={() => {}} onError={() => {}} onOpenConversation={onOpenConversation} />,
+  );
+  await screen.findByText(/Verifique a configuração/);
+
+  // Abre com Ctrl+F (Linux/Windows)
+  fireEvent.keyDown(window, { key: "f", ctrlKey: true });
+  const input = await screen.findByLabelText("Buscar mensagens");
+  fireEvent.change(input, { target: { value: "configuracao" } });
+  expect(screen.getByRole("status").textContent).toBe("1 de 2");
+  expect(container.querySelectorAll(".chat-match")).toHaveLength(2);
+  fireEvent.keyDown(input, { key: "Enter" });
+  expect(screen.getByRole("status").textContent).toBe("2 de 2");
+
+  // Fecha com Esc e reabre com Cmd+F (macOS)
+  fireEvent.keyDown(input, { key: "Escape" });
+  expect(screen.queryByLabelText("Buscar mensagens")).toBeNull();
+  fireEvent.keyDown(window, { key: "f", metaKey: true });
+  const macInput = await screen.findByLabelText("Buscar mensagens");
+
+  // Muda para "Todas" e clica num resultado de outra conversa
+  fireEvent.click(screen.getByRole("tab", { name: "Todas" }));
+  fireEvent.change(macInput, { target: { value: "nginx" } });
+  const hit = await screen.findByRole("option", { name: /Deploy VPS/ });
+  fireEvent.click(hit);
+  expect(onOpenConversation).toHaveBeenCalledWith("other-task", 42);
+});

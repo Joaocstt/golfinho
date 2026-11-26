@@ -93,16 +93,37 @@ export class AntigravityChatSession implements ChatBackend {
     // O cartão aparece quando a ferramenta começa; o resultado vem quando ela termina (ou falha).
     if (!this.shownTools.has(key)) {
       this.shownTools.add(key);
-      const params = info.parameters && typeof info.parameters === "object" ? (info.parameters as Record<string, unknown>) : {};
+      const rawParams = info.parameters && typeof info.parameters === "object" ? (info.parameters as Record<string, unknown>) : {};
+      const rawName = String(info.name ?? step.tool_name ?? "ferramenta");
+      const mcpArgs =
+        rawName === "call_mcp_tool" && rawParams.arguments && typeof rawParams.arguments === "object"
+          ? (rawParams.arguments as Record<string, unknown>)
+          : rawName === "call_mcp_tool" && rawParams.Arguments && typeof rawParams.Arguments === "object"
+            ? (rawParams.Arguments as Record<string, unknown>)
+            : null;
+      const mcpName =
+        rawName === "call_mcp_tool"
+          ? String(rawParams.tool_name ?? rawParams.ToolName ?? rawName)
+          : rawName;
+      const params = mcpArgs ?? rawParams;
+      const sshSummary =
+        typeof params.servidor === "string"
+          ? typeof params.comando === "string"
+            ? `${params.servidor}: ${params.comando}`
+            : typeof params.caminho === "string" && params.caminho
+              ? `${params.servidor}: ${params.caminho}`
+              : params.servidor
+          : null;
       const summary = String(
-        params.CommandLine ??
+        sshSummary ??
+          params.CommandLine ??
           params.Path ??
           params.TargetFile ??
           params.AbsolutePath ??
           params.path ??
           params.query ??
           params.Pattern ??
-          short(params),
+          (mcpArgs ? (Object.keys(mcpArgs).length ? short(mcpArgs) : String(rawParams.server_name ?? rawParams.ServerName ?? "")) : short(params)),
       );
       const hasInput = Object.keys(params).length > 0;
       this.emit({
@@ -111,7 +132,7 @@ export class AntigravityChatSession implements ChatBackend {
           {
             kind: "tool",
             id: key,
-            name: String(info.name ?? step.tool_name ?? "ferramenta"),
+            name: mcpName,
             summary,
             ...(hasInput ? { input: params } : {}),
           },
@@ -171,6 +192,7 @@ export class AntigravityChatSession implements ChatBackend {
       "stream-json",
       "--output-format",
       "stream-json",
+      ...(this.options.sshMcp?.agyDir ? ["--add-dir", this.options.sshMcp.agyDir] : []),
       ...(this.options.resume ? ["--conversation", this.options.resume] : []),
       ...(this.options.model ? ["--model", this.options.model] : []),
     ];

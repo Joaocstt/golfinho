@@ -1,12 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
+import { SearchAddon } from "@xterm/addon-search";
+import { ChevronDown, ChevronUp, Search, X } from "lucide-react";
 import "@xterm/xterm/css/xterm.css";
-import type { Provider, Request, Signal } from "../shared/contracts";
+import type { Request, Signal } from "../shared/contracts";
 type ShellSignal = Extract<Signal, { kind: "shell" | "shellEnded" }>;
-import { terminalTheme } from "./TerminalPane";
+import { searchOptions, terminalTheme } from "./TerminalPane";
 import { TerminalMenu } from "./TerminalMenu";
 import { clipboardToPaste, filesToPaste } from "./clipboardPaste";
+import { findShortcutLabel, isFindShortcut } from "./shortcuts";
 const request = <T,>(r: Request) => window.golfinho.request(r) as Promise<T>;
 // Aberturas em andamento por sessão, para o efeito duplicado do StrictMode reaproveitar a mesma.
 const starts = new Map<string, Promise<string>>();
@@ -24,10 +27,15 @@ export function ShellPane({
   autoFocus?: boolean;
 }) {
   const host = useRef<HTMLDivElement>(null);
+  const searchInput = useRef<HTMLInputElement>(null);
   const [ended, setEnded] = useState<number | null>(null);
   const [restart, setRestart] = useState(0);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState({ resultIndex: -1, resultCount: 0 });
   const terminalRef = useRef<Terminal | null>(null);
+  const searchRef = useRef<SearchAddon | null>(null);
   const errorRef = useRef(onError);
   errorRef.current = onError;
   const openRef = useRef(openSession);
@@ -35,6 +43,23 @@ export function ShellPane({
   const mounted = useRef(false);
   const focusAllowed = useRef(autoFocus);
   focusAllowed.current = autoFocus;
+
+  function openSearch() {
+    setMenu(null);
+    setSearchOpen(true);
+    requestAnimationFrame(() => {
+      searchInput.current?.focus();
+      searchInput.current?.select();
+    });
+  }
+  function closeSearch() {
+    setSearchOpen(false);
+    searchRef.current?.clearDecorations();
+    terminalRef.current?.focus();
+  }
+  const openSearchRef = useRef(openSearch);
+  openSearchRef.current = openSearch;
+
   useEffect(() => {
     const terminal = new Terminal({
       fontFamily:
@@ -43,12 +68,16 @@ export function ShellPane({
       cursorBlink: true,
       scrollback: 5000,
       lineHeight: 1.3,
+      allowProposedApi: true,
       theme: terminalTheme,
     });
     const fit = new FitAddon();
+    const search = new SearchAddon({ highlightLimit: 1000 });
     terminal.loadAddon(fit);
+    terminal.loadAddon(search);
     terminal.open(host.current!);
     fit.fit();
+    searchRef.current = search;
     // Uma sessão abre no máximo um processo. Em StrictMode o efeito roda duas vezes; sem
     // isto, cada prompt inicial iniciaria um agente, e dois agentes trabalhariam na mesma pasta.
     const key = `${scopeKey}#${restart}`;
@@ -79,11 +108,18 @@ export function ShellPane({
       if (shellId && !endedNow)
         void request({ action: "shellInput", shellId, data }).catch((e) => errorRef.current(e));
     });
-    // Mesmos atalhos do terminal de agentes. Colar usa a área de transferência do processo
-    // principal, e o texto entra pelo onData acima, como digitação.
+    const resultSub = search.onDidChangeResults((r) => {
+      if (alive) setResults(r);
+    });
+    // Mesmos atalhos do terminal de agentes (Ctrl+F / Cmd+F para busca em todos os SOs).
     terminal.attachCustomKeyEventHandler((event) => {
-      if (event.type !== "keydown" || !event.ctrlKey || !event.shiftKey || event.altKey || event.metaKey)
-        return true;
+      if (event.type !== "keydown") return true;
+      if (isFindShortcut(event)) {
+        event.preventDefault();
+        openSearchRef.current();
+        return false;
+      }
+      if (!event.ctrlKey || !event.shiftKey || event.altKey || event.metaKey) return true;
       const key = event.key.toLowerCase();
       if (key === "v") {
         event.preventDefault();
@@ -147,8 +183,10 @@ export function ShellPane({
       mounted.current = false;
       unsubscribe();
       typed.dispose();
+      resultSub.dispose();
       hostElement.removeEventListener("contextmenu", rightClick);
       terminalRef.current = null;
+      searchRef.current = null;
       observer.disconnect();
       if (shellId && !endedNow) {
         starts.delete(key);
@@ -157,6 +195,15 @@ export function ShellPane({
       terminal.dispose();
     };
   }, [scopeKey, restart]);
+
+  useEffect(() => {
+    if (searchOpen && query) searchRef.current?.findNext(query, { ...searchOptions, incremental: true });
+    else {
+      searchRef.current?.clearDecorations();
+      setResults({ resultIndex: -1, resultCount: 0 });
+    }
+  }, [query, searchOpen, scopeKey, restart]);
+
   function dragOver(e: React.DragEvent<HTMLDivElement>) {
     if ([...e.dataTransfer.types].includes("Files")) e.preventDefault();
   }
@@ -171,7 +218,18 @@ export function ShellPane({
     }
   }
   return (
-    <div className="shell-pane" onDragOver={dragOver} onDrop={dropFiles}>
+    <div
+      className="shell-pane"
+      onDragOver={dragOver}
+      onDrop={dropFiles}
+      onKeyDown={(e) => {
+        if (isFindShortcut(e.nativeEvent)) {
+          e.preventDefault();
+          e.stopPropagation();
+          openSearch();
+        }
+      }}
+    >
       {ended !== null && (
         <div className="shell-ended">
           O shell encerrou (código {ended}).
@@ -186,6 +244,73 @@ export function ShellPane({
         </div>
       )}
       <div ref={host} className="shell-host" />
+      <div className="shell-tools">
+        <button
+          type="button"
+          title={`Buscar no shell (${findShortcutLabel()})`}
+          aria-label="Buscar no shell"
+          aria-pressed={searchOpen}
+          onClick={() => (searchOpen ? closeSearch() : openSearch())}
+        >
+          <Search size={13} />
+        </button>
+      </div>
+      {searchOpen && (
+        <div className="terminal-search">
+          <Search size={12} />
+          <input
+            ref={searchInput}
+            type="search"
+            aria-label="Texto no shell"
+            placeholder="Buscar no histórico"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") {
+                e.preventDefault();
+                closeSearch();
+              } else if (e.key === "Enter") {
+                e.preventDefault();
+                if (e.shiftKey) searchRef.current?.findPrevious(query, searchOptions);
+                else searchRef.current?.findNext(query, searchOptions);
+              }
+            }}
+          />
+          <span role="status">
+            {results.resultCount
+              ? `${results.resultIndex >= 0 ? results.resultIndex + 1 : "—"} de ${results.resultCount}`
+              : query
+                ? "Nenhum resultado"
+                : ""}
+          </span>
+          <button
+            type="button"
+            aria-label="Resultado anterior"
+            title="Resultado anterior (Shift+Enter)"
+            disabled={!query}
+            onClick={() => searchRef.current?.findPrevious(query, searchOptions)}
+          >
+            <ChevronUp size={12} />
+          </button>
+          <button
+            type="button"
+            aria-label="Próximo resultado"
+            title="Próximo resultado (Enter)"
+            disabled={!query}
+            onClick={() => searchRef.current?.findNext(query, searchOptions)}
+          >
+            <ChevronDown size={12} />
+          </button>
+          <button
+            type="button"
+            aria-label="Fechar busca do shell"
+            title="Fechar busca (Esc)"
+            onClick={closeSearch}
+          >
+            <X size={12} />
+          </button>
+        </div>
+      )}
       {menu && (
         <TerminalMenu
           x={menu.x}
@@ -213,6 +338,7 @@ export function ShellPane({
                   .catch((e) => errorRef.current(e)),
             },
             { label: "Selecionar tudo", onSelect: () => terminalRef.current?.selectAll() },
+            { label: "Buscar", shortcut: findShortcutLabel(), onSelect: openSearch },
           ]}
         />
       )}
