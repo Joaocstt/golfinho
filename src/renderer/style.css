@@ -599,6 +599,7 @@ button.primary:hover {
   background: #909090;
 }
 .workspace {
+  --workspace-bar-height: 47px;
   display: flex;
   flex-direction: column;
   flex: 1;
@@ -607,40 +608,54 @@ button.primary:hover {
   background: #171717;
 }
 .topbar {
-  height: 34px;
-  flex-shrink: 0;
   display: flex;
-  background: #171717;
-  border-bottom: 1px solid var(--border);
   align-items: center;
+  gap: 6px;
+  height: var(--workspace-bar-height);
+  flex-shrink: 0;
+  padding: 0 10px;
+  background: var(--surface-1);
+  border-bottom: 1px solid var(--border);
 }
 .workspace-tabs {
   display: flex;
+  align-items: center;
+  gap: 6px;
   flex: 1;
   min-width: 0;
   height: 100%;
-  overflow: auto;
+  overflow-x: auto;
   scrollbar-width: none;
 }
-.workspace-tabs button {
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  color: #858585;
-  padding: 0 11px;
-  font-size: var(--text-sm);
+.workspace-shortcuts {
+  display: flex;
   flex-shrink: 0;
-  position: relative;
+  gap: 2px;
+  margin-right: 4px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
 }
-.workspace-tabs > button {
-  border-right: 1px solid var(--border);
-  min-width: 88px;
-  max-width: 240px;
+.workspace-shortcuts > button,
+.workspace-tab > button,
+.general-new > button,
+.topbar > button {
+  flex-shrink: 0;
+  height: 26px;
+  padding: 0 6px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: var(--text-sm);
 }
-/* Com tarefas ou terminais abertos, as abas fixas viram só ícone (o nome fica no tooltip). */
-.workspace-tabs.compact > button {
-  min-width: 0;
-  padding: 0 13px;
+.workspace-shortcuts > button:hover,
+.workspace-tab > button:hover,
+.general-new > button:hover,
+.topbar > button:hover {
+  background: var(--hover);
+  color: var(--fg-strong);
 }
 .workspace-tabs.compact .nav-label {
   display: none;
@@ -648,62 +663,54 @@ button.primary:hover {
 .workspace-tab {
   display: flex;
   align-items: center;
+  gap: 1px;
   flex-shrink: 0;
   max-width: 240px;
-  border-right: 1px solid var(--border);
-}
-/* O nome encolhe (com reticências) dentro do limite da aba; os botões de dividir e fechar
-   nunca encolhem nem saem da aba, senão ficam cobertos pela aba seguinte. */
-.workspace-tab {
-  overflow: hidden;
+  padding: 1px 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
 }
 .workspace-tab > button:first-child {
   flex: 0 1 auto;
   min-width: 0;
-  padding-right: 4px;
-}
-.workspace-tab > .workspace-split,
-.workspace-tab > .workspace-close {
-  flex: 0 0 auto;
+  padding-inline: 7px 4px;
 }
 .workspace-tab > button:first-child span {
-  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.workspace-tab .state-dot {
+.workspace-tab .state-dot.running {
+  border-color: var(--warning);
+  border-top-color: transparent;
+}
+.workspace-shortcuts > button.active,
+.workspace-tab.active,
+.topbar > .inspector-toggle[aria-pressed="true"] {
+  background: var(--surface-3);
+  border-color: color-mix(in srgb, var(--brand) 40%, transparent);
+  color: var(--fg-strong);
+}
+.workspace-tab.active > button:first-child {
+  color: var(--fg-strong);
+}
+.workspace-tab.visible {
+  border-color: color-mix(in srgb, var(--brand) 40%, transparent);
+}
+.workspace-tab > .workspace-close,
+.workspace-tab > .workspace-split {
+  width: 23px;
+  padding: 0;
+}
+.general-new {
+  display: flex;
   flex-shrink: 0;
 }
-.workspace-tabs button.active,
-.workspace-tab.active {
-  background: #242424;
-  color: var(--fg-strong);
-  border-bottom: 1px solid #e1e1e1;
-}
-.workspace-tab.active button {
-  color: var(--fg-strong);
-}
-.workspace-close {
-  padding: 0 7px 0 2px;
-  color: var(--fg-faint);
-  display: flex;
-  align-items: center;
-  height: 100%;
-}
-.workspace-close:hover {
-  color: var(--fg-strong);
-}
-.workspace-tabs button span {
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-.inspector-toggle {
-  height: 28px;
+.general-new > button,
+.topbar > button {
   width: 28px;
-  border: 0;
-  background: transparent;
-  margin: 0 4px;
-  color: var(--fg-muted);
-  padding: 5px;
+  padding: 0;
+  border-color: var(--border-strong);
 }
 .main-row {
   display: flex;
@@ -912,118 +919,167 @@ h1 {
   min-height: 0;
   flex: 1;
 }
-.workspace-tab.visible {
-  box-shadow: inset 0 -2px #c7a59466;
-}
-.workspace-split,
-.workspace-unsplit {
-  padding: 4px;
-  border: 0;
-  background: transparent;
-  color: var(--fg-muted);
-}
 .detail-head {
-  padding: 10px 13px 8px;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  flex-shrink: 0;
+  padding: 8px 12px;
+  background: var(--surface-3);
+  border-bottom: 1px solid var(--border);
+}
+.detail-summary,
+.detail-title,
+.detail-actions {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  background: #202124;
-  flex-shrink: 0;
-  border-bottom: 1px solid #ffffff08;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  min-width: 0;
 }
-.detail-head h2 {
+.detail-summary {
+  flex: 1;
+}
+.detail-title {
+  flex: 1 1 250px;
+  min-height: 28px;
+}
+.detail-title h2 {
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--fg-strong);
   font-size: var(--text-lg);
-  font-weight: 550;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.eyebrow {
-  color: #949494;
-  font-size: var(--text-2xs);
-  margin-bottom: 4px;
-  letter-spacing: 0.4px;
-}
-.detail-head p {
-  display: flex;
+.detail-branch {
+  display: inline-flex;
   align-items: center;
   gap: 6px;
-  line-height: 16px;
-  font-family: var(--mono);
-  font-size: var(--text-xs);
-  color: #969696;
-  margin-top: 4px;
-}
-.detail-head p span {
-  color: #737373;
-}
-.detail-head > button {
-  background: transparent;
-  border: 0;
-  padding: 3px;
+  min-width: 0;
+  max-width: 100%;
   color: var(--fg-muted);
+  font-family: var(--mono);
+  font-size: var(--text-2xs);
+  white-space: nowrap;
 }
-/* Abas e ações dividem uma faixa só; antes eram duas, empilhadas. */
-.workbar {
-  display: flex;
-  align-items: stretch;
-  justify-content: space-between;
-  gap: 10px;
-  flex-wrap: wrap;
-  background: #1a1b1e;
-  border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
-  padding-right: 8px;
+.detail-branch strong,
+.detail-branch span {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-.actions {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 5px;
-  padding: 4px 0;
-  flex-shrink: 0;
-}
-.actions button {
-  font-size: var(--text-xs);
-  padding: 4px 7px;
-  background: #2a2a2a;
-  border-color: #ffffff1a;
-}
-.actions button.primary {
-  color: #e5e5e5;
-  background: #404040;
-  border-color: #ffffff26;
+.detail-branch strong {
+  color: var(--fg);
   font-weight: 500;
 }
-.actions button svg {
-  width: 11px;
-  height: 11px;
+.detail-actions {
+  justify-content: flex-end;
+  margin-inline-start: auto;
+}
+.detail-actions:empty {
+  display: none;
+}
+.detail-actions button {
+  min-height: 28px;
+  padding: 3px 8px;
+  border-color: var(--border-strong);
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: var(--text-xs);
+}
+.detail-actions button:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--fg-strong);
+}
+.detail-actions button.primary {
+  background: var(--surface-3);
+  border-color: color-mix(in srgb, var(--brand) 40%, transparent);
+  color: var(--fg-strong);
+}
+.detail-actions .cancel-run {
+  background: var(--danger-soft);
+  border-color: color-mix(in srgb, var(--danger) 35%, transparent);
+  color: var(--danger);
+}
+.detail-actions .cancel-run:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--danger) 20%, transparent);
+}
+.detail-close {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--fg-muted);
+}
+.detail-close:hover {
+  background: var(--hover);
+  color: var(--fg-strong);
 }
 .published {
-  font-size: var(--text-sm);
   color: var(--brand);
-  padding: 4px;
+  font-size: var(--text-xs);
+}
+.workbar {
+  display: flex;
+  flex-shrink: 0;
+  min-width: 0;
+  padding: 6px 12px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+}
+.tab-group {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  gap: 6px;
+  min-width: 0;
 }
 .tabs {
   display: flex;
-  align-items: stretch;
+  align-items: center;
+  gap: 2px;
   min-width: 0;
-  padding: 0 6px;
-  flex-shrink: 1;
   overflow-x: auto;
   scrollbar-width: thin;
 }
 .tabs button {
+  flex-shrink: 0;
+  min-height: 30px;
+  padding: 3px 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
   background: transparent;
-  border: 0;
-  border-radius: 0;
-  color: #8e8e8e;
+  color: var(--fg-muted);
   font-size: var(--text-sm);
-  padding: 8px 12px;
-  border-bottom: 1px solid transparent;
+  white-space: nowrap;
 }
-.tabs button.active {
-  color: #e6e6e6;
-  border-bottom-color: #b3b3b3;
+.tabs button:hover {
+  background: var(--hover);
+  color: var(--fg-strong);
 }
-.tabs button.dragging {
+.workspace-tabs button:focus-visible,
+.tabs button:focus-visible {
+  outline-offset: -2px;
+}
+.tabs > button.active,
+.session-tab.active {
+  border-color: color-mix(in srgb, var(--brand) 40%, transparent);
+  background: var(--surface-3);
+  color: var(--fg-strong);
+}
+.tabs > button.secondary,
+.session-tab.secondary {
+  border-color: var(--border-strong);
+  background: var(--surface-2);
+}
+.tabs button.dragging,
+.session-tab.dragging {
   opacity: 0.45;
 }
 .tab-body {
@@ -1549,19 +1605,12 @@ select {
   .task-overview > button {
     grid-template-columns: minmax(90px, 1fr) 64px 76px;
   }
-  .detail-head p {
-    flex-wrap: wrap;
-  }
-  .actions button {
-    font-size: var(--text-2xs);
-    padding: 4px 5px;
-  }
 }
 @media (max-width: 880px) {
   .inspector {
     position: absolute;
     right: 0;
-    top: 34px;
+    top: var(--workspace-bar-height);
     bottom: 24px;
     width: 250px;
     z-index: 8;
@@ -1581,17 +1630,9 @@ select {
   }
 }
 @media (max-height: 550px) {
-  .detail-head {
-    padding: 5px 10px;
-  }
-  .eyebrow {
-    display: none;
-  }
-  .actions {
-    padding: 4px 8px;
-  }
-  .tabs button {
-    padding: 6px 9px;
+  .detail-head,
+  .workbar {
+    padding-block: 4px;
   }
   .terminal-host {
     min-height: 100px;
@@ -2197,22 +2238,6 @@ select {
   padding: 0;
 }
 
-/* "+" de sessões avulsas, como no Orca */
-.session-tab {
-  display: inline-flex;
-  align-items: center;
-}
-.session-close {
-  padding: 2px 4px;
-  border: 0;
-  background: transparent;
-  color: var(--muted);
-}
-.session-new {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-}
 .session-menu {
   position: absolute;
   top: 100%;
@@ -2268,27 +2293,6 @@ select {
   box-shadow: inset 0 0 0 1px var(--chip-color);
 }
 
-/* "+" fica do lado de fora da faixa com rolagem, para o menu não ser cortado */
-.workbar > .session-new {
-  align-self: center;
-}
-
-/* Abas e "+" lado a lado; só a faixa de abas tem rolagem */
-.tab-group {
-  display: flex;
-  align-items: center;
-  /* Largura mínima para a barra quebrar linha em vez de empurrar os botões para fora. */
-  flex: 1 1 280px;
-  min-width: 0;
-}
-
-/* Terminal geral: barra superior e área própria */
-.general-new {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  padding: 0 4px;
-}
 .general-pane {
   display: flex;
   flex-direction: column;
@@ -2692,9 +2696,6 @@ select {
 }
 .drop-preview.center {
   inset: 25%;
-}
-.tabs button.secondary {
-  box-shadow: inset 0 -2px 0 #ffffff59;
 }
 /* × para fechar o painel secundário, no canto superior direito dele. */
 .pane-close {
@@ -3330,34 +3331,25 @@ select {
   }
 }
 
-/* Cabeçalho da tarefa: status como pílula ao lado do título. */
-.detail-title {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-}
-.detail-title h2 {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-/* Título, status e agente na mesma linha, todos com 24px de altura. */
-.detail-title h2 {
-  line-height: 24px;
-}
 .status-pill {
-  flex-shrink: 0;
   display: inline-flex;
   align-items: center;
-  height: 22px;
+  gap: 6px;
+  flex-shrink: 0;
+  padding: 4px 7px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--fg-muted);
   font-size: var(--text-xs);
   font-weight: 500;
   line-height: 1;
-  padding: 0 9px;
-  border-radius: 999px;
-  background: #ffffff0f;
-  color: var(--fg-muted);
+}
+.status-pill::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
 }
 .task-agent-picker {
   position: relative;
@@ -3367,10 +3359,10 @@ select {
   height: 24px;
   gap: 6px;
   padding: 0 7px 0 8px;
-  border: 1px solid var(--input);
-  border-radius: 999px;
-  background: #ffffff08;
-  color: var(--fg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--fg-muted);
   font-size: var(--text-xs);
   font-weight: 500;
   line-height: 1;
@@ -3454,7 +3446,7 @@ select {
 .status-pill.running,
 .status-pill.queued,
 .status-pill.waiting {
-  background: #d4a3001f;
+  background: var(--warning-soft);
   color: var(--warning);
 }
 .status-pill.review {
@@ -3469,16 +3461,6 @@ select {
 .status-pill.interrupted {
   background: #d768681f;
   color: var(--danger);
-}
-/* Ações: só a principal fica preenchida; as outras são discretas até o hover. */
-.actions button:not(.primary) {
-  background: transparent;
-  border-color: transparent;
-  color: #a8a8a8;
-}
-.actions button:not(.primary):hover:not(:disabled) {
-  background: #ffffff0f;
-  color: #e5e5e5;
 }
 .notice.notice-compact {
   font-size: var(--text-xs);
@@ -4446,42 +4428,6 @@ select {
   border: 0;
   padding: 6px 4px;
 }
-.tabs button {
-  padding: 10px 11px;
-  font-size: var(--text-md);
-}
-.tabs button:hover:not(.active) {
-  color: #cfcfcf;
-}
-.tabs button.active {
-  color: #f2f2f2;
-  border-bottom: 2px solid #e6e6e6;
-}
-.status-pill {
-  position: relative;
-  padding: 2px 9px 2px 20px;
-  background: transparent;
-}
-.status-pill::before {
-  content: "";
-  position: absolute;
-  left: 8px;
-  top: 50%;
-  width: 6px;
-  height: 6px;
-  margin-top: -3px;
-  border-radius: 50%;
-  background: currentColor;
-}
-.status-pill.running,
-.status-pill.queued,
-.status-pill.waiting,
-.status-pill.review,
-.status-pill.completed,
-.status-pill.failed,
-.status-pill.interrupted {
-  background: transparent;
-}
 .nav-item span {
   color: #9a9a9a;
 }
@@ -4491,19 +4437,6 @@ select {
 .app.sidebar-hidden .sidebar-resize {
   display: none;
 }
-.sidebar-show {
-  flex-shrink: 0;
-  align-self: center;
-  margin-left: 6px;
-  border: 0;
-  background: transparent;
-  color: var(--fg-muted);
-  padding: 4px;
-}
-.sidebar-show:hover {
-  color: var(--fg-strong);
-}
-
 /* Memória do projeto */
 .memory-pane {
   display: flex;
@@ -5941,110 +5874,25 @@ select {
   cursor: nwse-resize;
   background: linear-gradient(135deg, transparent 0 calc(100% - 14px), var(--muted) calc(100% - 14px) calc(100% - 12px), transparent calc(100% - 12px) calc(100% - 8px), var(--muted) calc(100% - 8px) calc(100% - 6px), transparent calc(100% - 6px));
 }
-/* Cabeçalho da tarefa numa linha só, e abas com ícone. Fica no fim para valer sobre as regras antigas. */
-.detail-head {
-  gap: 12px;
-  padding: 7px 8px 7px 14px;
-}
-.detail-head .detail-title {
-  flex: 1;
-  gap: 10px;
-}
-.detail-head h2 {
-  flex-shrink: 1;
-  min-width: 40px;
-}
-.detail-branch {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  overflow: hidden;
-  color: var(--fg-subtle);
-  font-family: var(--mono);
-  font-size: var(--text-2xs);
-  white-space: nowrap;
-}
-.detail-branch svg {
-  flex-shrink: 0;
-}
-.detail-branch strong {
-  color: var(--fg-muted);
-  font-weight: 500;
-}
-.detail-branch span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.detail-head > .detail-close {
-  display: inline-grid;
-  place-items: center;
-  width: 26px;
-  height: 26px;
-  flex-shrink: 0;
-  padding: 0;
-  border-radius: 6px;
-  color: var(--fg-subtle);
-}
-.detail-head > .detail-close:hover {
-  background: var(--hover);
-  color: var(--fg-strong);
-}
-.workbar {
-  align-items: center;
-  min-height: 38px;
-  padding: 0 8px 0 4px;
-}
-.tabs {
-  align-self: stretch;
-  gap: 2px;
-}
-.tabs button,
-.session-tab > button:first-child {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 100%;
-  padding: 0 10px;
-  border: 0;
-  border-bottom: 2px solid transparent;
-  border-radius: 0;
-  color: var(--fg-subtle);
-  font-size: var(--text-sm);
-  white-space: nowrap;
-  transition: color 0.12s, background-color 0.12s;
-}
-.tabs button svg {
-  flex-shrink: 0;
-  opacity: 0.75;
-}
-.tabs button:hover:not(.active) {
-  background: var(--hover);
-  color: var(--fg);
-}
-.tabs button.active {
-  color: var(--fg-strong);
-  border-bottom: 2px solid var(--brand);
-}
-.tabs button.active svg {
-  opacity: 1;
-}
-.tabs button.secondary {
-  border-bottom-color: #ffffff59;
-  box-shadow: none;
-}
 .session-tab {
-  align-self: stretch;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
 }
-/* × da sessão só aparece ao passar o mouse ou com ela aberta. */
+.session-tab > button:first-child {
+  min-height: 28px;
+}
+.session-tab.active > button:first-child {
+  color: var(--fg-strong);
+}
 .session-tab .session-close {
   display: inline-grid;
   place-items: center;
-  width: 18px;
-  height: 18px;
-  margin: 0 4px 0 -4px;
+  width: 20px;
+  min-height: 20px;
+  margin-right: 3px;
   padding: 0;
-  border-radius: 4px;
   opacity: 0;
 }
 .session-tab:hover .session-close,
@@ -6052,40 +5900,31 @@ select {
 .session-tab .session-close:focus-visible {
   opacity: 1;
 }
-.session-tab .session-close:hover {
-  background: var(--hover);
-  color: var(--fg-strong);
-}
-.session-tab.dragging {
-  opacity: 0.45;
+.session-new {
+  position: relative;
+  display: flex;
+  flex-shrink: 0;
 }
 .session-new > button {
   display: inline-grid;
   place-items: center;
-  width: 26px;
-  height: 26px;
-  margin-left: 4px;
+  width: 28px;
+  height: 28px;
   padding: 0;
-  border: 0;
-  border-radius: 6px;
+  border-color: var(--border-strong);
+  border-radius: var(--radius-sm);
   background: transparent;
-  color: var(--fg-subtle);
+  color: var(--fg-muted);
 }
 .session-new > button:hover,
 .session-new > button[aria-expanded="true"] {
   background: var(--hover);
   color: var(--fg-strong);
 }
-.actions {
-  padding: 0;
-}
-.actions button {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 26px;
-  padding: 0 10px;
-  border-radius: 6px;
+/* Com muitas abas, o botão fica à direita e o menu abre para dentro do painel. */
+.session-new .session-menu {
+  left: auto;
+  right: 0;
 }
 .tab-menu {
   position: fixed;

@@ -14,6 +14,7 @@ import {
   Play,
   Plus,
   Search,
+  Square,
   SquareTerminal,
   Terminal,
   TerminalSquare,
@@ -446,8 +447,8 @@ export const TaskWorkspace = forwardRef<TaskWorkspaceHandle, Props>(function Tas
               hidden={!visible} style={{ gridColumn: column, gridRow: 1 }}
               onPointerDownCapture={() => onFocus(task.id)} onFocusCapture={() => onFocus(task.id)}>
               <div className="detail-head">
-                {/* Uma linha só: título, status, agente e de onde a branch saiu. */}
-                <div className="detail-title">
+                <div className="detail-summary">
+                  <div className="detail-title">
                     <h2 title={task.title}>{task.title}</h2>
                     <span className={"status-pill " + task.status}>{labels[task.status]}</span>
                     <AgentPicker
@@ -467,15 +468,63 @@ export const TaskWorkspace = forwardRef<TaskWorkspaceHandle, Props>(function Tas
                         <span>direto na pasta, sem Git</span>
                       </span>
                     ) : (
-                    <span className="detail-branch" title={`${task.branch} ← ${task.base}${task.remote ? ` · ${task.remote}` : ""}`}>
-                      <GitBranch size={12} />
-                      {task.branch !== task.title && <strong>{task.branch}</strong>}
-                      <span>
-                        {task.branch !== task.title ? "← " : "a partir de "}
-                        {task.base}{task.remote ? ` · ${task.remote}` : " · sem remoto"}
+                      <span className="detail-branch" title={`${task.branch} ← ${task.base}${task.remote ? ` · ${task.remote}` : ""}`}>
+                        <GitBranch size={12} />
+                        {task.branch !== task.title && <strong>{task.branch}</strong>}
+                        <span>
+                          {task.branch !== task.title ? "← " : "a partir de "}
+                          {task.base}{task.remote ? ` · ${task.remote}` : " · sem remoto"}
+                        </span>
                       </span>
-                    </span>
                     )}
+                  </div>
+                  <div className="detail-actions">
+                    {["draft", "failed", "cancelled", "interrupted", "review", "completed"].includes(
+                      task.status,
+                    ) && (
+                      <button
+                        disabled={busy}
+                        className="primary"
+                        title={
+                          task.sessionId
+                            ? "Reabre a conversa da CLI de onde parou, sem reenviar as instruções"
+                            : "Inicia a CLI com as instruções da tarefa, em conversa nova"
+                        }
+                        onClick={() => act("queue")}
+                      >
+                        <Play size={14} />
+                        {task.sessionId && task.branchCreated ? "Retomar sessão" : "Iniciar"}
+                      </button>
+                    )}
+                    {["running", "waiting", "queued"].includes(task.status) && (
+                      <button className="cancel-run" disabled={busy} onClick={() => act("cancel")}>
+                        <Square size={13} aria-hidden="true" />
+                        Cancelar execução
+                      </button>
+                    )}
+                    {task.worktreePath &&
+                      !["running", "waiting", "queued"].includes(task.status) &&
+                      !task.testCheckout && (
+                        <button
+                          disabled={busy}
+                          title="Coloca a pasta do projeto no código desta tarefa, para você testar. Sua branch original é guardada e volta com o botão ao lado."
+                          onClick={async () => {
+                            if (
+                              await confirm({
+                                title: "Testar esta tarefa na pasta do projeto?",
+                                message: `A pasta do projeto passa para o código de "${task.branch}". A branch atual dela é guardada e volta com o botão "Voltar". Alterações não commitadas na pasta impedem a troca.`,
+                                confirmLabel: "Testar no projeto",
+                              })
+                            )
+                              void act("testActivate");
+                          }}
+                          aria-label="Testar na pasta do projeto"
+                        >
+                          Testar no projeto
+                        </button>
+                      )}
+                    {task.published && <span className="published">Branch publicada</span>}
+                  </div>
                 </div>
                 <button className="detail-close" aria-label="Fechar tarefa" title="Fechar tarefa" onClick={() => onClose(task.id)}>
                   <X size={15} />
@@ -572,6 +621,7 @@ export const TaskWorkspace = forwardRef<TaskWorkspaceHandle, Props>(function Tas
                           key={key}
                           title="Arraste para reordenar · botão direito para escolher as abas"
                           className={state}
+                          aria-pressed={tab === key || secondTab === key}
                           draggable
                           onDragStart={(e) => dragStart(e, key)}
                           onDragEnd={dragEnd}
@@ -591,6 +641,7 @@ export const TaskWorkspace = forwardRef<TaskWorkspaceHandle, Props>(function Tas
                     >
                       <button
                         className={tab === key ? "active" : secondTab === key ? "active secondary" : ""}
+                        aria-pressed={tab === key || secondTab === key}
                         draggable
                         onDragStart={(e) => dragStart(e, key)}
                         onDragEnd={dragEnd}
@@ -677,52 +728,6 @@ export const TaskWorkspace = forwardRef<TaskWorkspaceHandle, Props>(function Tas
                     onClose={() => setTabMenu(null)}
                   />
                 )}
-                <div className="actions">
-                  {["draft", "failed", "cancelled", "interrupted", "review", "completed"].includes(
-                    task.status,
-                  ) && (
-                    <button
-                      disabled={busy}
-                      className="primary"
-                      title={
-                        task.sessionId
-                          ? "Reabre a conversa da CLI de onde parou, sem reenviar as instruções"
-                          : "Inicia a CLI com as instruções da tarefa, em conversa nova"
-                      }
-                      onClick={() => act("queue")}
-                    >
-                      <Play size={14} />
-                      {task.sessionId && task.branchCreated ? "Retomar sessão" : "Iniciar"}
-                    </button>
-                  )}
-                  {["running", "waiting", "queued"].includes(task.status) && (
-                    <button disabled={busy} onClick={() => act("cancel")}>
-                      Cancelar execução
-                    </button>
-                  )}
-                  {task.worktreePath &&
-                    !["running", "waiting", "queued"].includes(task.status) &&
-                    !task.testCheckout && (
-                      <button
-                        disabled={busy}
-                        title="Coloca a pasta do projeto no código desta tarefa, para você testar. Sua branch original é guardada e volta com o botão ao lado."
-                        onClick={async () => {
-                          if (
-                            await confirm({
-                              title: "Testar esta tarefa na pasta do projeto?",
-                              message: `A pasta do projeto passa para o código de "${task.branch}". A branch atual dela é guardada e volta com o botão "Voltar". Alterações não commitadas na pasta impedem a troca.`,
-                              confirmLabel: "Testar no projeto",
-                            })
-                          )
-                            void act("testActivate");
-                        }}
-                        aria-label="Testar na pasta do projeto"
-                      >
-                        Testar no projeto
-                      </button>
-                    )}
-                  {task.published && <span className="published">Branch publicada</span>}
-                </div>
               </div>
               {task.status === "queued" &&
                 events.at(-1)?.message.startsWith("Aguardando: a pasta do projeto") && (
